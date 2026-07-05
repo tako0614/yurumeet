@@ -1,0 +1,599 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Yurumeet | yurucommu talk client</title>
+    <meta
+      name="description"
+      content="Yurumeet は yurucommu-server を TakosUI ベースのホーム / トーク / VOOM で使うクライアントソフトウェアです。"
+    />
+    <meta property="og:title" content="Yurumeet" />
+    <meta
+      property="og:description"
+      content="yurucommu-server を TakosUI ベースのトーク UI で使うクライアントソフトウェア。"
+    />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://yurumeet.com" />
+    <link rel="icon" href="/icon.svg" type="image/svg+xml" />
+    <style>
+      @import url("https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@100..900&display=swap");
+
+      * {
+        box-sizing: border-box;
+        font-family: "Noto Sans JP", sans-serif;
+      }
+
+      body {
+        margin: 0;
+        overflow-x: hidden;
+        background: #fafaff;
+        color: #111;
+      }
+
+      a {
+        color: inherit;
+        text-decoration: none;
+      }
+
+      .wrap {
+        width: min(100%, 1180px);
+        margin: 0 auto;
+        padding: 0 48px;
+      }
+
+      .hero {
+        display: grid;
+        grid-template-columns: minmax(330px, 0.45fr) minmax(700px, 1.55fr);
+        gap: 48px;
+        align-items: center;
+        min-height: 88vh;
+        padding: 3.5rem 48px;
+      }
+
+      .brand {
+        display: inline-grid;
+        width: 58px;
+        height: 58px;
+        place-items: center;
+        border-radius: 10px;
+        background: #242428;
+        padding: 10px;
+      }
+
+      .brand img,
+      .nav-logo img {
+        display: block;
+        width: 100%;
+        height: 100%;
+        object-fit: contain;
+      }
+
+      h1 {
+        margin: 22px 0;
+        font-size: 68px;
+        line-height: 0.96;
+        letter-spacing: 0;
+      }
+
+      p {
+        color: #5f5f69;
+        font-size: 17px;
+        line-height: 1.85;
+      }
+
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        margin-top: 26px;
+      }
+
+      .pill {
+        display: inline-grid;
+        min-height: 44px;
+        place-items: center;
+        border: 1px solid #dddde8;
+        border-radius: 999px;
+        background: #fff;
+        padding: 0 18px;
+        font-weight: 850;
+      }
+
+      .pill.primary {
+        border-color: #ff3b3b;
+        background: #ff3b3b;
+        color: #fff;
+      }
+
+      .browser {
+        min-width: 0;
+        overflow: hidden;
+        border: 1px solid #dddde8;
+        border-radius: 12px;
+        background: #fff;
+        box-shadow: 0 24px 70px rgba(26, 26, 34, 0.14);
+      }
+
+      .bar {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        height: 38px;
+        border-bottom: 1px solid #dddde8;
+        padding: 0 12px;
+        background: #f0f0f5;
+      }
+
+      .bar i {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: #c0c0ca;
+      }
+
+      .mock {
+        display: grid;
+        grid-template-columns: 78px minmax(0, 1fr);
+        height: 560px;
+        overflow: hidden;
+        background: #fafaff;
+      }
+
+      .nav {
+        display: grid;
+        align-content: start;
+        gap: 12px;
+        padding: 50px 14px;
+        background: #242428;
+      }
+
+      .nav-logo {
+        display: block;
+        height: 50px;
+        border-radius: 6px;
+        background: #fafaff;
+        padding: 6px;
+      }
+
+      .nav-item {
+        display: block;
+        height: 50px;
+        border-radius: 6px;
+        color: #fff;
+        padding: 12px;
+      }
+
+      .nav-item.active {
+        background: rgba(250, 250, 255, 0.13);
+      }
+
+      .nav-item.active svg {
+        fill: #fafaff;
+      }
+
+      .nav-item svg {
+        width: 100%;
+        height: 100%;
+      }
+
+      .talk {
+        display: grid;
+        grid-template-columns: minmax(220px, 300px) minmax(0, 1fr);
+        min-width: 0;
+      }
+
+      .list {
+        padding: 12px;
+      }
+
+      .list h2 {
+        margin: 6px 0 12px;
+        font-size: 32px;
+      }
+
+      .search {
+        border-radius: 8px;
+        background: #e8e8ef;
+        padding: 8px 12px;
+        color: #777780;
+        font-size: 13px;
+      }
+
+      .room {
+        display: grid;
+        grid-template-columns: 44px minmax(0, 1fr) auto;
+        gap: 10px;
+        align-items: center;
+        height: 64px;
+        margin-top: 8px;
+        border-radius: 8px;
+        padding: 10px 8px;
+      }
+
+      .room.active {
+        background: #e8e8ef;
+      }
+
+      .avatar {
+        display: grid;
+        width: 44px;
+        height: 44px;
+        place-items: center;
+        border-radius: 50%;
+        background: linear-gradient(135deg, #ff8a8a, #ff3b3b);
+        color: #fff;
+        font-weight: 900;
+      }
+
+      .room strong,
+      .room span {
+        display: block;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .room span,
+      .room time {
+        color: #666670;
+        font-size: 12px;
+      }
+
+      .chat {
+        display: grid;
+        grid-template-rows: 54px minmax(0, 1fr) 56px;
+        margin: 12px 12px 12px 0;
+        overflow: hidden;
+        border-radius: 8px;
+        background: #f0f0f5;
+      }
+
+      .chat-head {
+        display: flex;
+        align-items: center;
+        border-bottom: 1px solid #ededf3;
+        padding: 0 18px;
+        font-size: 20px;
+        font-weight: 800;
+      }
+
+      .messages {
+        display: flex;
+        flex-direction: column;
+        justify-content: end;
+        gap: 8px;
+        padding: 18px;
+      }
+
+      .msg-row {
+        display: flex;
+        align-items: end;
+        gap: 10px;
+      }
+
+      .msg-row.mine {
+        justify-content: end;
+      }
+
+      .msg-row .avatar {
+        width: 36px;
+        height: 36px;
+        flex: 0 0 36px;
+      }
+
+      .msg-name {
+        display: block;
+        margin: 0 0 3px 10px;
+        font-size: 12px;
+      }
+
+      .bubble {
+        position: relative;
+        z-index: 1;
+        width: fit-content;
+        max-width: 76%;
+        border-radius: 12px;
+        padding: 7px 16px;
+        background: #fff;
+      }
+
+      .bubble::before {
+        position: absolute;
+        top: 0;
+        left: -10px;
+        z-index: -1;
+        width: 26px;
+        height: 26px;
+        background: url("./assets/takosui/icon_tale.svg") center / contain
+          no-repeat;
+        content: "";
+      }
+
+      .bubble.mine {
+        justify-self: end;
+        background: #ff3b3b;
+        color: #fff;
+      }
+
+      .bubble.mine::before {
+        right: -10px;
+        left: auto;
+        background-image: url("./assets/takosui/icon_tale_red.svg");
+        transform: scale(-1, 1);
+      }
+
+      .composer {
+        display: flex;
+        padding: 0 18px 12px;
+      }
+
+      .input {
+        flex: 1;
+        border-radius: 12px;
+        background: #fff;
+        padding: 10px 14px;
+        color: #777780;
+      }
+
+      .send {
+        width: 44px;
+        height: 44px;
+        border-radius: 999px;
+        background: url("./assets/takosui/clip.svg") center / 24px 24px
+          no-repeat;
+      }
+
+      section {
+        border-top: 1px solid #dddde8;
+        padding: 5rem 0;
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 14px;
+      }
+
+      .card {
+        border-radius: 8px;
+        background: #fff;
+        padding: 22px;
+      }
+
+      .card h3 {
+        margin: 0 0 8px;
+      }
+
+      h2 {
+        margin: 0 0 14px;
+        font-size: 48px;
+        line-height: 1.08;
+        letter-spacing: 0;
+      }
+
+      footer {
+        border-top: 1px solid #dddde8;
+        padding: 28px 0;
+        color: #777780;
+      }
+
+      @media (max-width: 1160px) {
+        .hero,
+        .grid {
+          grid-template-columns: 1fr;
+        }
+
+        .browser {
+          width: 100%;
+        }
+      }
+
+      @media (max-width: 900px) {
+        .mock {
+          grid-template-columns: 1fr;
+        }
+
+        .nav {
+          display: none;
+        }
+      }
+
+      @media (max-width: 620px) {
+        .wrap {
+          padding: 0 20px;
+        }
+
+        h1 {
+          font-size: 50px;
+        }
+
+        .hero {
+          padding: 1.8rem 20px 2.4rem;
+        }
+
+        .mock {
+          height: 280px;
+        }
+
+        .talk {
+          grid-template-columns: 1fr;
+        }
+
+        .chat {
+          margin: 0;
+          border-radius: 0;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="wrap hero">
+      <div>
+        <div class="brand">
+          <img src="./assets/takosui/logo.png" alt="" />
+        </div>
+        <h1>Yurumeet</h1>
+        <p>
+          yurucommu-server をホーム / トーク / VOOM で使うクライアント。
+          Yurumeet は hosted app ではなく、Takosumi、Cloudflare、
+          セルフホスト環境に置いて動かすソフトウェアです。
+        </p>
+        <div class="actions">
+          <a class="pill primary" href="#start">導入</a>
+          <a class="pill" href="#ui">UIを見る</a>
+        </div>
+      </div>
+
+      <div class="browser" id="ui">
+        <div class="bar"><i></i><i></i><i></i></div>
+        <div class="mock">
+          <aside class="nav">
+            <div class="nav-logo">
+              <img src="./assets/takosui/logo.png" alt="" />
+            </div>
+            <div class="nav-item" aria-label="ホーム">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path
+                  d="M3 10.182V22h18V10.182L12 2z"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.5"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                />
+                <rect
+                  width="6"
+                  height="8"
+                  x="9"
+                  y="14"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.5"
+                />
+              </svg>
+            </div>
+            <div class="nav-item active" aria-label="トーク">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path
+                  d="M8.824 18.588 4 21l.653-4.573C3.006 15.001 2 13.095 2 11 2 6.582 6.477 3 12 3s10 3.582 10 8-4.477 8-10 8c-1.11 0-2.178-.145-3.176-.412Z"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.5"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                />
+              </svg>
+            </div>
+            <div class="nav-item" aria-label="VOOM">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <circle
+                  cx="12"
+                  cy="12"
+                  r="9"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.5"
+                />
+                <circle
+                  cx="12"
+                  cy="12"
+                  r="3"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.5"
+                />
+              </svg>
+            </div>
+          </aside>
+          <div class="talk">
+            <div class="list">
+              <h2>トーク</h2>
+              <div class="search">トークルーム・メッセージを検索</div>
+              <div class="room active">
+                <div class="avatar">A</div>
+                <div>
+                  <strong>Aoi</strong>
+                  <span>あとで写真送るね</span>
+                </div>
+                <time>17:42</time>
+              </div>
+              <div class="room">
+                <div class="avatar">喫</div>
+                <div>
+                  <strong>喫茶づくり</strong>
+                  <span>週末のメニュー、これで行きましょう</span>
+                </div>
+                <time>16:12</time>
+              </div>
+            </div>
+            <div class="chat">
+              <div class="chat-head">Aoi</div>
+              <div class="messages">
+                <div class="msg-row">
+                  <div class="avatar">A</div>
+                  <div>
+                    <strong class="msg-name">Aoi</strong>
+                    <div class="bubble">今日のYurumeet見た?</div>
+                  </div>
+                </div>
+                <div class="msg-row mine">
+                  <div class="bubble mine">
+                    TakosUIのトーク画面をベースに戻した。
+                  </div>
+                </div>
+                <div class="msg-row">
+                  <div class="avatar">A</div>
+                  <div>
+                    <strong class="msg-name">Aoi</strong>
+                    <div class="bubble">それでいい。</div>
+                  </div>
+                </div>
+              </div>
+              <div class="composer">
+                <div class="input">メッセージを入力</div>
+                <div class="send" aria-label="ファイル"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <section>
+      <div class="wrap grid">
+        <article class="card">
+          <h3>ホーム</h3>
+          <p>友だち、グループ、Story を同じ入口にまとめる。</p>
+        </article>
+        <article class="card">
+          <h3>トーク</h3>
+          <p>TakosUI のトーク画面をそのまま中心にする。</p>
+        </article>
+        <article class="card">
+          <h3>VOOM</h3>
+          <p>yurucommu の投稿を Yurumeet の流れで見る。</p>
+        </article>
+        <article class="card">
+          <h3>Story</h3>
+          <p>Story を開いて、いいねと共有まで行う。</p>
+        </article>
+      </div>
+    </section>
+
+    <section id="start">
+      <div class="wrap">
+        <h2>自分の yurucommu-server に接続する。</h2>
+        <p>
+          Yurumeet をビルドして配信し、接続先の yurucommu-server
+          を指定します。yurumeet.com は紹介サイトで、runtime client
+          は各自の配信先で動きます。
+        </p>
+      </div>
+    </section>
+
+    <footer>
+      <div class="wrap">Yurumeet / software client for yurucommu-server</div>
+    </footer>
+  </body>
+</html>
