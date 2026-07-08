@@ -3,15 +3,15 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Yurumeet | yurucommu talk client</title>
+    <title>Yurumeet | yurucommu talk UI</title>
     <meta
       name="description"
-      content="Yurumeet は yurucommu-server を TakosUI ベースのホーム / トーク / VOOM で使うクライアントソフトウェアです。"
+      content="Yurumeet は yurucommu の同じアカウントと API を TakosUI ベースのホーム / トーク / タイムラインで開く UI です。"
     />
     <meta property="og:title" content="Yurumeet" />
     <meta
       property="og:description"
-      content="yurucommu-server を TakosUI ベースのトーク UI で使うクライアントソフトウェア。"
+      content="yurucommu の同じアカウントと API を TakosUI ベースのトーク UI で開く。"
     />
     <meta property="og:type" content="website" />
     <meta property="og:url" content="https://yurumeet.com" />
@@ -149,11 +149,12 @@
       }
 
       .nav-logo {
-        display: block;
+        display: grid;
         height: 50px;
-        border-radius: 6px;
-        background: #fafaff;
-        padding: 6px;
+        place-items: center;
+        border-radius: 50%;
+        background: transparent;
+        padding: 0;
       }
 
       .nav-item {
@@ -224,6 +225,12 @@
         background: linear-gradient(135deg, #ff8a8a, #ff3b3b);
         color: #fff;
         font-weight: 900;
+      }
+
+      .nav-logo .avatar {
+        width: 50px;
+        height: 50px;
+        font-size: 14px;
       }
 
       .room strong,
@@ -435,8 +442,9 @@
         </div>
         <h1>Yurumeet</h1>
         <p>
-          yurucommu-server をホーム / トーク / VOOM で使うクライアント。
-          Yurumeet は hosted app ではなく、Takosumi、Cloudflare、
+          yurucommu の同じアカウントと API をホーム / トーク /
+          タイムラインで開く UI。 Yurumeet は hosted app
+          ではなく、Takosumi、Cloudflare、
           セルフホスト環境に置いて動かすソフトウェアです。
         </p>
         <div class="actions">
@@ -450,7 +458,7 @@
         <div class="mock">
           <aside class="nav">
             <div class="nav-logo">
-              <img src="./assets/takosui/logo.png" alt="" />
+              <div class="avatar">M</div>
             </div>
             <div class="nav-item" aria-label="ホーム">
               <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -485,7 +493,7 @@
                 />
               </svg>
             </div>
-            <div class="nav-item" aria-label="VOOM">
+            <div class="nav-item" aria-label="timeline">
               <svg viewBox="0 0 24 24" aria-hidden="true">
                 <circle
                   cx="12"
@@ -571,8 +579,8 @@
           <p>TakosUI のトーク画面をそのまま中心にする。</p>
         </article>
         <article class="card">
-          <h3>VOOM</h3>
-          <p>yurucommu の投稿を Yurumeet の流れで見る。</p>
+          <h3>Timeline</h3>
+          <p>同じ投稿タイムラインを Yurumeet の流れで見る。</p>
         </article>
         <article class="card">
           <h3>Story</h3>
@@ -583,17 +591,18 @@
 
     <section id="start">
       <div class="wrap">
-        <h2>自分の yurucommu-server に接続する。</h2>
+        <h2>yurucommu のセットとして入れ替える。</h2>
         <p>
-          Yurumeet をビルドして配信し、接続先の yurucommu-server
-          を指定します。yurumeet.com は紹介サイトで、runtime client
-          は各自の配信先で動きます。
+          Yurumeet をビルドすると、同じ yurucommu のアカウントと API
+          をトーク中心の UI で開けます。yurumeet.com は紹介サイトで、実際の
+          Yurumeet は Takosumi / Cloudflare / self-host
+          の配信先に同梱して動きます。
         </p>
       </div>
     </section>
 
     <footer>
-      <div class="wrap">Yurumeet / software client for yurucommu-server</div>
+      <div class="wrap">Yurumeet / talk UI for the yurucommu set</div>
     </footer>
   </body>
 </html>

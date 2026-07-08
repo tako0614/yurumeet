@@ -30,31 +30,11 @@ function readStoredOrigin(): string | null {
   }
 }
 
-function isPrivateLanIpv4(host: string): boolean {
-  const parts = host.split(".").map((part) => Number(part));
-  if (
-    parts.length !== 4 ||
-    parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)
-  ) {
-    return false;
-  }
-  const [a, b] = parts;
-  return (
-    a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168)
-  );
-}
-
 function shouldUseSameOriginByDefault(): boolean {
   if (typeof window === "undefined") return false;
-  const host = window.location.hostname;
   return (
-    host === "localhost" ||
-    host === "127.0.0.1" ||
-    isPrivateLanIpv4(host) ||
-    host === "yurume.test" ||
-    host.endsWith(".yurume.test") ||
-    host === "yurumeet.test" ||
-    host.endsWith(".yurumeet.test")
+    window.location.protocol === "http:" ||
+    window.location.protocol === "https:"
   );
 }
 

@@ -5,296 +5,76 @@ import {
   createSignal,
   For,
   on,
+  onCleanup,
   Show,
 } from "solid-js";
-import { useNavigate, useSearchParams } from "@solidjs/router";
+import { A, useNavigate, useSearchParams } from "@solidjs/router";
 import {
   type Actor,
+  type ActorNote,
   type ActorStories,
+  type CommunityDetail,
   type CommunityMessage,
   type DMContact,
   type DMMessage,
+  type DMRequest,
   type Post,
   type Story,
-  createPost,
+  archiveDMConversation,
+  createCommunity,
+  createNote,
+  createStory,
+  deleteMyNote,
+  deleteStory,
+  fetchArchivedDMConversations,
+  fetchCommunities,
   fetchCommunityMessages,
-  fetchCurrentActor,
+  fetchDMContact,
   fetchDMContacts,
-  fetchSocialServerDiscovery,
+  fetchDMRequests,
+  fetchNotes,
   fetchStories,
   fetchTimeline,
   fetchUserDMMessages,
+  joinCommunity,
+  rejectDMRequest,
+  unarchiveDMConversation,
   likeStory,
-  likePost,
   markStoryViewed,
   sendCommunityMessage,
   sendUserDMMessage,
   shareStory,
   unlikeStory,
-  unlikePost,
+  uploadMedia,
 } from "@takosjp/yurucommu-api";
+import { useApp } from "./lib/app-context.tsx";
+import { useChat } from "./lib/chat-context.tsx";
 import {
-  clearYurumeetServerOrigin,
-  configureYurumeetServerOrigin,
-  normalizeServerOrigin,
-  readYurumeetServerOrigin,
-  saveYurumeetServerOrigin,
-  serverUrl,
-} from "./server-config.ts";
+  ComposeFab,
+  PostComposer,
+} from "./components/timeline/PostComposer.tsx";
+import { PostCard } from "./components/timeline/PostCard.tsx";
+import {
+  actorHandle,
+  attachmentSrc,
+  communityPath,
+  formatNoteExpiry,
+  formatPostTime,
+  formatTime,
+  profilePath,
+  titleFor,
+  UserAvatar as Avatar,
+} from "./lib/ui.tsx";
+import { StoryBar } from "./components/story/StoryBar.tsx";
 
-type AppTab = "home" | "talk" | "voom";
-type ChatMessage = DMMessage | CommunityMessage;
+type AppTab = "home" | "talk" | "timeline";
+const MAX_NOTE_LENGTH = 80;
 
-const demoActor: Actor = {
-  ap_id: "https://demo.yurucommu.local/ap/users/me",
-  username: "me@demo.yurucommu.local",
-  preferred_username: "me",
-  name: "Minato",
-  summary: null,
-  icon_url: null,
-  header_url: null,
-  follower_count: 128,
-  following_count: 74,
-  post_count: 42,
-  created_at: "2026-07-04T09:00:00.000Z",
-};
-
-const demoContacts: DMContact[] = [
-  {
-    type: "user",
-    ap_id: "https://demo.yurucommu.local/ap/users/aoi",
-    username: "aoi@demo.yurucommu.local",
-    preferred_username: "aoi",
-    name: "Aoi",
-    icon_url: null,
-    last_message: { content: "あとで写真送るね", is_mine: false },
-    last_message_at: "2026-07-04T17:42:00.000Z",
-    unread_count: 2,
-  },
-  {
-    type: "community",
-    ap_id: "https://demo.yurucommu.local/ap/groups/kissa-builders",
-    username: "kissa-builders@demo.yurucommu.local",
-    preferred_username: "kissa-builders",
-    name: "喫茶づくり",
-    icon_url: null,
-    member_count: 12,
-    last_message: {
-      content: "週末のメニュー、これで行きましょう",
-      is_mine: true,
-    },
-    last_message_at: "2026-07-04T16:12:00.000Z",
-    unread_count: 0,
-  },
-  {
-    type: "user",
-    ap_id: "https://demo.yurucommu.local/ap/users/rin",
-    username: "rin@demo.yurucommu.local",
-    preferred_username: "rin",
-    name: "Rin",
-    icon_url: null,
-    last_message: {
-      content: "VOOMに載せたメニュー見た。あれ良い。",
-      is_mine: false,
-    },
-    last_message_at: "2026-07-04T13:28:00.000Z",
-    unread_count: 0,
-  },
-];
-
-const demoMessages: Record<string, ChatMessage[]> = {
-  "https://demo.yurucommu.local/ap/users/aoi": [
-    {
-      id: "demo-aoi-1",
-      sender: {
-        ap_id: "https://demo.yurucommu.local/ap/users/aoi",
-        username: "aoi@demo.yurucommu.local",
-        preferred_username: "aoi",
-        name: "Aoi",
-        icon_url: null,
-      },
-      content: "今日のYurumeet見た?",
-      created_at: "2026-07-04T17:31:00.000Z",
-    },
-    {
-      id: "demo-aoi-2",
-      sender: demoActor,
-      content: "まずTakosUIのトーク画面をそのまま使う感じに戻す。",
-      created_at: "2026-07-04T17:34:00.000Z",
-    },
-    {
-      id: "demo-aoi-3",
-      sender: {
-        ap_id: "https://demo.yurucommu.local/ap/users/aoi",
-        username: "aoi@demo.yurucommu.local",
-        preferred_username: "aoi",
-        name: "Aoi",
-        icon_url: null,
-      },
-      content: "それでいい。変に別UI作らなくていい。",
-      created_at: "2026-07-04T17:42:00.000Z",
-    },
-  ],
-  "https://demo.yurucommu.local/ap/groups/kissa-builders": [
-    {
-      id: "demo-kissa-1",
-      sender: {
-        ap_id: "https://demo.yurucommu.local/ap/users/rin",
-        username: "rin@demo.yurucommu.local",
-        preferred_username: "rin",
-        name: "Rin",
-        icon_url: null,
-      },
-      content: "週末のメニュー、これで行きましょう",
-      created_at: "2026-07-04T16:12:00.000Z",
-    },
-  ],
-  "https://demo.yurucommu.local/ap/users/rin": [
-    {
-      id: "demo-rin-1",
-      sender: {
-        ap_id: "https://demo.yurucommu.local/ap/users/rin",
-        username: "rin@demo.yurucommu.local",
-        preferred_username: "rin",
-        name: "Rin",
-        icon_url: null,
-      },
-      content: "VOOMに載せたメニュー見た。あれ良い。",
-      created_at: "2026-07-04T13:28:00.000Z",
-    },
-  ],
-};
-
-const demoStories: ActorStories[] = [
-  {
-    actor: demoActor,
-    has_unviewed: false,
-    stories: [
-      {
-        ap_id: "demo-story-me",
-        author: demoActor,
-        attachment: {
-          type: "Document",
-          mediaType: "image/jpeg",
-          url: "",
-          r2_key: "demo-story-me.jpg",
-        },
-        caption: "TakosUIから作り直し",
-        displayDuration: "PT5S",
-        published: "2026-07-04T17:05:00.000Z",
-        end_time: "2026-07-05T17:05:00.000Z",
-        viewed: true,
-        liked: false,
-        like_count: 4,
-        share_count: 1,
-      },
-    ],
-  },
-  {
-    actor: {
-      ap_id: "https://demo.yurucommu.local/ap/users/aoi",
-      username: "aoi@demo.yurucommu.local",
-      preferred_username: "aoi",
-      name: "Aoi",
-      icon_url: null,
-    },
-    has_unviewed: true,
-    stories: [
-      {
-        ap_id: "demo-story-aoi",
-        author: {
-          ap_id: "https://demo.yurucommu.local/ap/users/aoi",
-          username: "aoi@demo.yurucommu.local",
-          preferred_username: "aoi",
-          name: "Aoi",
-          icon_url: null,
-        },
-        attachment: {
-          type: "Document",
-          mediaType: "image/jpeg",
-          url: "",
-          r2_key: "demo-story-aoi.jpg",
-        },
-        caption: "喫茶の準備中",
-        displayDuration: "PT5S",
-        published: "2026-07-04T16:21:00.000Z",
-        end_time: "2026-07-05T16:21:00.000Z",
-        viewed: false,
-        liked: false,
-        like_count: 8,
-        share_count: 2,
-      },
-    ],
-  },
-];
-
-const demoPosts: Post[] = [
-  {
-    ap_id: "demo-post-1",
-    type: "Note",
-    author: {
-      ap_id: "https://demo.yurucommu.local/ap/users/aoi",
-      username: "aoi@demo.yurucommu.local",
-      preferred_username: "aoi",
-      name: "Aoi",
-      icon_url: null,
-    },
-    content: "YurumeetのVOOMは、同じyurucommuの投稿をTakosUIの空気で見せる。",
-    summary: null,
-    attachments: [],
-    in_reply_to: null,
-    visibility: "public",
-    community_ap_id: null,
-    like_count: 18,
-    reply_count: 4,
-    announce_count: 2,
-    published: "2026-07-04T16:58:00.000Z",
-    edited_at: null,
-    liked: false,
-    bookmarked: false,
-    reposted: false,
-  },
-  {
-    ap_id: "demo-post-2",
-    type: "Note",
-    author: {
-      ap_id: "https://demo.yurucommu.local/ap/groups/kissa-builders",
-      username: "kissa-builders@demo.yurucommu.local",
-      preferred_username: "kissa-builders",
-      name: "喫茶づくり",
-      icon_url: null,
-    },
-    content: "週末は小さく集まります。参加する人はトークで教えてください。",
-    summary: null,
-    attachments: [],
-    in_reply_to: null,
-    visibility: "unlisted",
-    community_ap_id: "https://demo.yurucommu.local/ap/groups/kissa-builders",
-    like_count: 24,
-    reply_count: 7,
-    announce_count: 0,
-    published: "2026-07-04T15:24:00.000Z",
-    edited_at: null,
-    liked: true,
-    bookmarked: true,
-    reposted: false,
-  },
-];
-
-function titleFor(value: {
-  name?: string | null;
-  preferred_username?: string;
-  username?: string;
-}): string {
-  return value.name || value.preferred_username || value.username || "Yurumeet";
-}
-
-function initialFor(value: {
-  name?: string | null;
-  preferred_username?: string;
-  username?: string;
-}): string {
-  return titleFor(value).slice(0, 1).toUpperCase() || "Y";
+function normalizeTab(value: unknown): AppTab {
+  if (value === "yurucommu") return "timeline";
+  return value === "home" || value === "talk" || value === "timeline"
+    ? value
+    : "talk";
 }
 
 function contactSubtitle(contact: DMContact): string {
@@ -306,551 +86,1339 @@ function contactSubtitle(contact: DMContact): string {
     : `@${contact.preferred_username}`;
 }
 
-function actorHandle(value: {
-  preferred_username?: string;
-  username?: string;
-}) {
-  const handle = value.preferred_username || value.username || "user";
-  return handle.startsWith("@") ? handle : `@${handle}`;
+function parseStoryDuration(value: string | null | undefined): number {
+  if (!value) return 5000;
+  const match = /^PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?$/.exec(value);
+  if (!match) return 5000;
+  const hours = Number(match[1] ?? 0);
+  const minutes = Number(match[2] ?? 0);
+  const seconds = Number(match[3] ?? 0);
+  const ms = ((hours * 60 + minutes) * 60 + seconds) * 1000;
+  return Math.min(Math.max(ms || 5000, 2500), 15000);
 }
 
-function formatTime(value: string | null | undefined): string {
-  if (!value) return "";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "";
-  return new Intl.DateTimeFormat(undefined, {
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(date);
+function mediaSrc(story: Story, origin?: string | null): string | undefined {
+  return attachmentSrc(story.attachment, origin);
 }
 
-function shouldOpenInitialTalkPane(): boolean {
+function contactMatchesQuery(contact: DMContact, needle: string): boolean {
+  if (!needle) return true;
+  return `${titleFor(contact)} ${contact.username} ${contact.last_message?.content ?? ""}`
+    .toLowerCase()
+    .includes(needle);
+}
+
+function ContactRowSkeleton() {
   return (
-    typeof window !== "undefined" &&
-    window.matchMedia("(min-width: 769px)").matches
+    <li class="p-home-row-skeleton" aria-hidden="true">
+      <span class="p-home-row-skeleton-avatar" />
+      <span class="p-home-row-skeleton-lines">
+        <span />
+        <span />
+      </span>
+    </li>
   );
 }
 
-function stripHtml(value: string): string {
-  if (typeof document === "undefined") return value.replace(/<[^>]*>/g, " ");
-  const el = document.createElement("div");
-  el.innerHTML = value;
-  return el.textContent || el.innerText || "";
-}
-
-async function loadContacts(): Promise<DMContact[]> {
-  const data = await fetchDMContacts();
-  return [...data.mutual_followers, ...data.communities].sort((a, b) =>
-    (b.last_message_at ?? "").localeCompare(a.last_message_at ?? ""),
-  );
-}
-
-async function loadMessages(contact: DMContact): Promise<ChatMessage[]> {
-  if (contact.type === "community") {
-    return (await fetchCommunityMessages(contact.ap_id)).messages;
-  }
-  return (await fetchUserDMMessages(contact.ap_id)).messages;
-}
-
-function AppIcon(props: { tab: AppTab }) {
-  if (props.tab === "home") {
-    return (
+function GroupMembersMeta(props: { count: number }) {
+  return (
+    <span class="p-home-contact-meta" title={`${props.count} 人のメンバー`}>
       <svg viewBox="0 0 24 24" aria-hidden="true">
-        <path d="M3 10.182V22h18V10.182L12 2z" />
-        <rect width="6" height="8" x="9" y="14" />
+        <path d="M16 19c0-2.2-1.8-4-4-4s-4 1.8-4 4" />
+        <circle cx="12" cy="9" r="3" />
+        <path d="M20 19c0-1.7-1-3.2-2.5-3.8M17 9.2a3 3 0 0 0 0-5.4" />
       </svg>
-    );
-  }
-  if (props.tab === "talk") {
-    return (
-      <svg viewBox="0 0 24 24" aria-hidden="true">
-        <path d="M8.824 18.588 4 21l.653-4.573C3.006 15.001 2 13.095 2 11 2 6.582 6.477 3 12 3s10 3.582 10 8-4.477 8-10 8c-1.11 0-2.178-.145-3.176-.412Z" />
-      </svg>
-    );
-  }
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden="true">
-      <circle cx="12" cy="12" r="9" />
-      <circle cx="12" cy="12" r="3" />
-    </svg>
-  );
-}
-
-function Header(props: {
-  tab: AppTab;
-  hideOnMobile?: boolean;
-  onTab: (tab: AppTab) => void;
-}) {
-  const tabs: { id: AppTab; label: string }[] = [
-    { id: "home", label: "ホーム" },
-    { id: "talk", label: "トーク" },
-    { id: "voom", label: "VOOM" },
-  ];
-  return (
-    <header classList={{ "l-header": true, "is-inview": props.hideOnMobile }}>
-      <div class="l-header-logo">
-        <button
-          type="button"
-          onClick={() => props.onTab("home")}
-          aria-label="Yurumeet"
-        >
-          <span>Yurumeet</span>
-        </button>
-      </div>
-      <ul class="l-header__ul">
-        <For each={tabs}>
-          {(tab) => (
-            <li
-              classList={{
-                "l-header__ul-item": true,
-                "is-active": props.tab === tab.id,
-              }}
-            >
-              <button
-                type="button"
-                onClick={() => props.onTab(tab.id)}
-                aria-label={tab.label}
-              >
-                <AppIcon tab={tab.id} />
-                <span>{tab.label}</span>
-              </button>
-            </li>
-          )}
-        </For>
-      </ul>
-    </header>
-  );
-}
-
-function Avatar(props: {
-  value: {
-    name?: string | null;
-    preferred_username?: string;
-    username?: string;
-    icon_url?: string | null;
-  };
-}) {
-  return (
-    <span class="yc-avatar" aria-hidden="true">
-      <Show when={props.value.icon_url} fallback={initialFor(props.value)}>
-        {(src) => <img src={src()} alt="" />}
-      </Show>
+      {props.count}
     </span>
-  );
-}
-
-function StoryRow(props: {
-  stories: ActorStories[];
-  onOpen: (story: Story) => void;
-}) {
-  return (
-    <div class="p-home-stories">
-      <For each={props.stories}>
-        {(group) => (
-          <button
-            type="button"
-            classList={{ "c-story": true, "is-new": group.has_unviewed }}
-            onClick={() => props.onOpen(group.stories[0])}
-          >
-            <Avatar value={group.actor} />
-            <span>{titleFor(group.actor)}</span>
-          </button>
-        )}
-      </For>
-    </div>
   );
 }
 
 function HomeView(props: {
   actor: Actor;
   contacts: DMContact[];
-  stories: ActorStories[];
+  contactsLoading: boolean;
+  notes: ActorNote[];
+  notesLoading: boolean;
   onTalk: (contact: DMContact) => void;
-  onStory: (story: Story) => void;
+  onSaveNote: (content: string) => Promise<void>;
+  onDeleteNote: () => Promise<void>;
 }) {
+  const app = useApp();
+  const chat = useChat();
+  const navigate = useNavigate();
+  const [query, setQuery] = createSignal("");
+  const needle = () => query().trim().toLowerCase();
   const people = () =>
-    props.contacts.filter((contact) => contact.type === "user");
+    props.contacts.filter(
+      (contact) =>
+        contact.type === "user" && contactMatchesQuery(contact, needle()),
+    );
   const groups = () =>
-    props.contacts.filter((contact) => contact.type === "community");
+    props.contacts.filter(
+      (contact) =>
+        contact.type === "community" && contactMatchesQuery(contact, needle()),
+    );
+  const searching = () => needle().length > 0;
+
+  const [allCommunities, { refetch: refetchCommunities }] =
+    createResource(fetchCommunities);
+  const [creating, setCreating] = createSignal(false);
+  const [joiningId, setJoiningId] = createSignal<string | null>(null);
+  const joinedIds = () =>
+    new Set(
+      props.contacts.filter((c) => c.type === "community").map((c) => c.ap_id),
+    );
+  const discoverable = () => {
+    const joined = joinedIds();
+    return (allCommunities() ?? []).filter(
+      (c) =>
+        !c.is_member &&
+        !joined.has(c.ap_id) &&
+        contactMatchesQuery(
+          { name: c.display_name, username: c.name } as DMContact,
+          needle(),
+        ),
+    );
+  };
+
+  const joinCommunityById = async (community: CommunityDetail) => {
+    if (joiningId()) return;
+    setJoiningId(community.ap_id);
+    try {
+      const { status } = await joinCommunity(community.ap_id);
+      if (status === "joined") {
+        app.toast(`${community.display_name} に参加しました`);
+        await Promise.all([refetchCommunities(), chat.refetchContacts()]);
+      } else if (status === "pending") {
+        app.toast("参加リクエストを送りました");
+        await refetchCommunities();
+      } else {
+        app.toast("招待が必要です");
+      }
+    } catch {
+      app.toast("参加に失敗しました", "error");
+    } finally {
+      setJoiningId(null);
+    }
+  };
+
+  const onCreated = async (community: CommunityDetail) => {
+    await Promise.all([refetchCommunities(), chat.refetchContacts()]);
+    navigate(communityPath(community.ap_id));
+  };
+
   return (
-    <main class="p-home">
-      <section class="p-home-profile">
+    <section class="p-home">
+      <A class="p-home-account" href="/profile">
         <Avatar value={props.actor} />
-        <div>
-          <p>Yurumeet</p>
-          <h1>{titleFor(props.actor)}</h1>
-          <span>{props.actor.username}</span>
+        <div class="p-home-account-main">
+          <strong>{titleFor(props.actor)}</strong>
+          <span>{actorHandle(props.actor)}</span>
         </div>
-      </section>
-      <StoryRow stories={props.stories} onOpen={props.onStory} />
+        <svg
+          class="p-home-account-chevron"
+          viewBox="0 0 24 24"
+          aria-hidden="true"
+        >
+          <polyline points="9 6 15 12 9 18" />
+        </svg>
+      </A>
+      <label class="p-home-search">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <circle cx="11" cy="11" r="7" />
+          <path d="m16 16 5 5" />
+        </svg>
+        <input
+          type="search"
+          name="homeSearch"
+          value={query()}
+          onInput={(event) => setQuery(event.currentTarget.value)}
+          placeholder="友だち・グループを検索"
+          aria-label="友だち・グループを検索"
+        />
+      </label>
+      <HomeNoteBar
+        actor={props.actor}
+        notes={props.notes}
+        loading={props.notesLoading}
+        onSave={props.onSaveNote}
+        onDelete={props.onDeleteNote}
+      />
       <section class="p-home-section">
-        <h2>友だち</h2>
+        <div class="p-home-section-head">
+          <h2>友だち</h2>
+          <span>{people().length}</span>
+        </div>
         <ul>
-          <For
-            each={people()}
-            fallback={<li class="p-home-empty">まだ友だちはありません</li>}
-          >
-            {(contact) => (
-              <li>
-                <button type="button" onClick={() => props.onTalk(contact)}>
-                  <Avatar value={contact} />
-                  <span>{titleFor(contact)}</span>
-                  <small>{contactSubtitle(contact)}</small>
-                </button>
-              </li>
-            )}
-          </For>
-        </ul>
-      </section>
-      <section class="p-home-section">
-        <h2>グループ</h2>
-        <ul>
-          <For
-            each={groups()}
+          <Show
+            when={!props.contactsLoading}
             fallback={
-              <li class="p-home-empty">参加中のグループはありません</li>
+              <>
+                <ContactRowSkeleton />
+                <ContactRowSkeleton />
+              </>
             }
           >
-            {(contact) => (
-              <li>
-                <button type="button" onClick={() => props.onTalk(contact)}>
-                  <Avatar value={contact} />
-                  <span>{titleFor(contact)}</span>
-                  <small>{contactSubtitle(contact)}</small>
-                </button>
-              </li>
-            )}
-          </For>
+            <For
+              each={people()}
+              fallback={
+                <li class="p-home-empty">
+                  {searching()
+                    ? "一致する友だちはいません"
+                    : "まだ友だちはいません"}
+                </li>
+              }
+            >
+              {(contact) => (
+                <li>
+                  <button type="button" onClick={() => props.onTalk(contact)}>
+                    <Avatar value={contact} />
+                    <span class="p-home-contact-main">
+                      <strong>{titleFor(contact)}</strong>
+                      <small>
+                        {contact.last_message?.content ||
+                          contactSubtitle(contact)}
+                      </small>
+                    </span>
+                    <Show when={(contact.unread_count ?? 0) > 0}>
+                      <em>{contact.unread_count}</em>
+                    </Show>
+                  </button>
+                </li>
+              )}
+            </For>
+          </Show>
         </ul>
       </section>
-    </main>
+      <section class="p-home-section">
+        <div class="p-home-section-head">
+          <h2>グループ</h2>
+          <span>{groups().length}</span>
+          <button
+            type="button"
+            class="p-home-section-add"
+            aria-label="グループを作成"
+            onClick={() => setCreating(true)}
+          >
+            <PlusIcon />
+          </button>
+        </div>
+        <ul>
+          <Show when={!props.contactsLoading} fallback={<ContactRowSkeleton />}>
+            <For
+              each={groups()}
+              fallback={
+                <li class="p-home-empty">
+                  {searching()
+                    ? "一致するグループはありません"
+                    : "参加中のグループはありません"}
+                </li>
+              }
+            >
+              {(contact) => (
+                <li>
+                  <button type="button" onClick={() => props.onTalk(contact)}>
+                    <Avatar value={contact} />
+                    <span class="p-home-contact-main">
+                      <strong>{titleFor(contact)}</strong>
+                      <small>
+                        {contact.last_message?.content ||
+                          contactSubtitle(contact)}
+                      </small>
+                    </span>
+                    <Show
+                      when={(contact.unread_count ?? 0) > 0}
+                      fallback={
+                        <GroupMembersMeta count={contact.member_count ?? 0} />
+                      }
+                    >
+                      <em>{contact.unread_count}</em>
+                    </Show>
+                  </button>
+                </li>
+              )}
+            </For>
+          </Show>
+        </ul>
+        <Show when={discoverable().length > 0}>
+          <div class="p-home-subhead">見つける</div>
+          <ul>
+            <For each={discoverable()}>
+              {(community) => (
+                <li>
+                  <A
+                    href={communityPath(community.ap_id)}
+                    class="p-home-discover-row"
+                  >
+                    <Avatar
+                      value={{
+                        name: community.display_name,
+                        icon_url: community.icon_url,
+                      }}
+                    />
+                    <span class="p-home-contact-main">
+                      <strong>{community.display_name}</strong>
+                      <small>
+                        {community.summary ||
+                          `${community.member_count} メンバー`}
+                      </small>
+                    </span>
+                    <button
+                      type="button"
+                      class="p-home-join"
+                      disabled={
+                        joiningId() === community.ap_id ||
+                        community.join_status === "pending"
+                      }
+                      onClick={(event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        void joinCommunityById(community);
+                      }}
+                    >
+                      {community.join_status === "pending"
+                        ? "リクエスト済み"
+                        : community.join_policy === "invite"
+                          ? "招待制"
+                          : "参加"}
+                    </button>
+                  </A>
+                </li>
+              )}
+            </For>
+          </ul>
+        </Show>
+      </section>
+      <Show when={creating()}>
+        <CommunityCreateModal
+          onClose={() => setCreating(false)}
+          onCreated={onCreated}
+        />
+      </Show>
+    </section>
   );
 }
 
-function TalkView(props: {
-  actor: Actor;
-  contacts: DMContact[];
-  selected: DMContact | null;
-  messages: ChatMessage[];
-  loading: boolean;
-  onSelect: (contact: DMContact) => void;
-  onBack: () => void;
-  onSend: (content: string) => Promise<void>;
+function CommunityCreateModal(props: {
+  onClose: () => void;
+  onCreated: (community: CommunityDetail) => void | Promise<void>;
 }) {
-  const [query, setQuery] = createSignal("");
+  const app = useApp();
+  const [name, setName] = createSignal("");
+  const [displayName, setDisplayName] = createSignal("");
+  const [summary, setSummary] = createSignal("");
+  const [saving, setSaving] = createSignal(false);
+  const slug = () =>
+    name()
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9_]/g, "");
+  const canSave = () => slug().length > 0 && !saving();
+
+  const submit = async (event: Event) => {
+    event.preventDefault();
+    if (!canSave()) return;
+    setSaving(true);
+    try {
+      const community = await createCommunity({
+        name: slug(),
+        display_name: displayName().trim() || undefined,
+        summary: summary().trim() || undefined,
+      });
+      app.toast("グループを作成しました");
+      props.onClose();
+      await props.onCreated(community);
+    } catch {
+      app.toast("グループの作成に失敗しました", "error");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div
+      class="p-composer"
+      role="dialog"
+      aria-modal="true"
+      aria-label="グループを作成"
+    >
+      <button
+        type="button"
+        class="p-composer-dismiss"
+        aria-label="閉じる"
+        onClick={props.onClose}
+      />
+      <form class="p-composer-panel" onSubmit={submit}>
+        <div class="p-composer-head">
+          <button
+            type="button"
+            class="p-composer-close"
+            onClick={props.onClose}
+            aria-label="閉じる"
+          >
+            <CloseIcon />
+          </button>
+          <strong>グループを作成</strong>
+          <button type="submit" class="p-composer-submit" disabled={!canSave()}>
+            {saving() ? "作成中" : "作成"}
+          </button>
+        </div>
+        <div class="p-edit-body">
+          <div class="p-edit-fields">
+            <label class="p-edit-field">
+              <span>ID (英数字)</span>
+              <input
+                type="text"
+                value={name()}
+                onInput={(e) => setName(e.currentTarget.value)}
+                placeholder="my_group"
+                autofocus
+              />
+              <Show when={name().trim() && slug()}>
+                <small class="p-edit-field-hint">@{slug()}</small>
+              </Show>
+            </label>
+            <label class="p-edit-field">
+              <span>表示名</span>
+              <input
+                type="text"
+                value={displayName()}
+                onInput={(e) => setDisplayName(e.currentTarget.value)}
+                placeholder="マイグループ"
+              />
+            </label>
+            <label class="p-edit-field">
+              <span>説明</span>
+              <textarea
+                value={summary()}
+                onInput={(e) => setSummary(e.currentTarget.value)}
+                rows={3}
+                placeholder="どんなグループ?"
+              />
+            </label>
+          </div>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+function PlusIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M12 5v14M5 12h14" />
+    </svg>
+  );
+}
+
+function CloseIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M6 6l12 12M18 6 6 18" />
+    </svg>
+  );
+}
+
+function HomeNoteTile(props: {
+  actor: {
+    name?: string | null;
+    preferred_username?: string;
+    username?: string;
+    icon_url?: string | null;
+  };
+  content: string;
+  add?: boolean;
+  onClick?: () => void;
+}) {
+  return (
+    <button type="button" class="p-home-note-tile" onClick={props.onClick}>
+      <span class="p-home-note-bubble-slot">
+        <span
+          classList={{
+            "p-home-note-bubble": true,
+            "is-add": !!props.add,
+          }}
+        >
+          <p>{props.content}</p>
+          <span class="p-home-note-tail" aria-hidden="true" />
+        </span>
+      </span>
+      <span class="p-home-note-avatar">
+        <Avatar value={props.actor} />
+        <Show when={props.add}>
+          <span class="p-home-note-plus">
+            <PlusIcon />
+          </span>
+        </Show>
+      </span>
+      <span class="p-home-note-name">{titleFor(props.actor)}</span>
+    </button>
+  );
+}
+
+function HomeNoteBar(props: {
+  actor: Actor;
+  notes: ActorNote[];
+  loading: boolean;
+  onSave: (content: string) => Promise<void>;
+  onDelete: () => Promise<void>;
+}) {
+  const navigate = useNavigate();
+  const [editorOpen, setEditorOpen] = createSignal(false);
   const [draft, setDraft] = createSignal("");
+  const [saving, setSaving] = createSignal(false);
+  const [error, setError] = createSignal<string | null>(null);
+  const myNote = () =>
+    props.notes.find(
+      (note) => note.is_mine || note.actor.ap_id === props.actor.ap_id,
+    );
+  const otherNotes = () =>
+    props.notes.filter((note) => note.actor.ap_id !== props.actor.ap_id);
+  const canSave = () =>
+    draft().trim().length > 0 &&
+    draft().trim().length <= MAX_NOTE_LENGTH &&
+    !saving();
+
+  const openEditor = () => {
+    setDraft(myNote()?.content ?? "");
+    setError(null);
+    setEditorOpen(true);
+  };
+
+  const save = async () => {
+    const content = draft().trim();
+    if (!canSave()) return;
+    setSaving(true);
+    setError(null);
+    try {
+      await props.onSave(content);
+      setEditorOpen(false);
+    } catch (err) {
+      console.error("Failed to save note:", err);
+      setError("ノートの保存に失敗しました");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const remove = async () => {
+    if (!myNote() || saving()) return;
+    setSaving(true);
+    setError(null);
+    try {
+      await props.onDelete();
+      setEditorOpen(false);
+    } catch (err) {
+      console.error("Failed to delete note:", err);
+      setError("ノートの削除に失敗しました");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <section class="p-home-note-bar" aria-label="ノート">
+      <Show
+        when={!props.loading}
+        fallback={
+          <div class="p-home-note-scroll" aria-hidden="true">
+            <span class="p-home-note-skeleton" />
+            <span class="p-home-note-skeleton" />
+            <span class="p-home-note-skeleton" />
+          </div>
+        }
+      >
+        <div class="p-home-note-scroll">
+          <HomeNoteTile
+            actor={props.actor}
+            content={myNote()?.content ?? "ノートを書く"}
+            add={!myNote()}
+            onClick={openEditor}
+          />
+          <For each={otherNotes()}>
+            {(note) => (
+              <HomeNoteTile
+                actor={note.actor}
+                content={note.content}
+                onClick={() => navigate(profilePath(note.actor.ap_id))}
+              />
+            )}
+          </For>
+        </div>
+      </Show>
+
+      <Show when={editorOpen()}>
+        <div
+          class="p-note-editor"
+          role="dialog"
+          aria-modal="true"
+          aria-label="ノート"
+        >
+          <button
+            type="button"
+            class="p-note-editor-dismiss"
+            aria-label="閉じる"
+            onClick={() => setEditorOpen(false)}
+          />
+          <form
+            class="p-note-editor-panel"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void save();
+            }}
+          >
+            <div class="p-note-editor-head">
+              <h2>ノート</h2>
+              <button
+                type="button"
+                onClick={() => setEditorOpen(false)}
+                aria-label="閉じる"
+              >
+                <CloseIcon />
+              </button>
+            </div>
+            <textarea
+              value={draft()}
+              maxLength={MAX_NOTE_LENGTH}
+              onInput={(event) => setDraft(event.currentTarget.value)}
+              placeholder="いまの一言"
+              autofocus
+            />
+            <Show when={myNote()?.expires_at}>
+              {(expiry) => (
+                <p class="p-note-editor-expiry">{formatNoteExpiry(expiry())}</p>
+              )}
+            </Show>
+            <Show when={error()}>
+              {(message) => <p class="p-note-editor-error">{message()}</p>}
+            </Show>
+            <div class="p-note-editor-actions">
+              <span
+                classList={{
+                  "is-limit": draft().trim().length >= MAX_NOTE_LENGTH,
+                }}
+              >
+                {draft().trim().length} / {MAX_NOTE_LENGTH}
+              </span>
+              <div>
+                <Show when={myNote()}>
+                  <button type="button" disabled={saving()} onClick={remove}>
+                    削除
+                  </button>
+                </Show>
+                <button type="submit" disabled={!canSave()}>
+                  {saving() ? "保存中" : "保存"}
+                </button>
+              </div>
+            </div>
+          </form>
+        </div>
+      </Show>
+    </section>
+  );
+}
+
+function TalkListPane(props: {
+  contacts: DMContact[];
+  contactsLoading: boolean;
+  selected: DMContact | null;
+  onSelect: (contact: DMContact) => void;
+}) {
+  const app = useApp();
+  const chat = useChat();
+  const [query, setQuery] = createSignal("");
+  const [view, setView] = createSignal<"list" | "requests" | "archived">(
+    "list",
+  );
+  const searching = () => query().trim().length > 0;
   const contacts = createMemo(() => {
     const needle = query().trim().toLowerCase();
     if (!needle) return props.contacts;
     return props.contacts.filter((contact) =>
-      `${titleFor(contact)} ${contact.username} ${contact.last_message?.content ?? ""}`
-        .toLowerCase()
-        .includes(needle),
+      contactMatchesQuery(contact, needle),
     );
   });
-  const send = async () => {
-    const content = draft().trim();
-    if (!content) return;
-    await props.onSend(content);
-    setDraft("");
+
+  const [requests, { refetch: refetchRequests }] =
+    createResource(fetchDMRequests);
+  const [archived, { refetch: refetchArchived }] = createResource(
+    () => (view() === "archived" ? "load" : false),
+    () => fetchArchivedDMConversations(),
+  );
+  const [busyId, setBusyId] = createSignal<string | null>(null);
+
+  const openRequest = async (request: DMRequest) => {
+    try {
+      const contact = await fetchDMContact(request.sender.ap_id);
+      if (contact) {
+        chat.selectContact(contact);
+        chat.refetchContacts();
+        void refetchRequests();
+        setView("list");
+      }
+    } catch {
+      app.toast("トークを開けませんでした", "error");
+    }
+  };
+
+  const rejectRequest = async (request: DMRequest) => {
+    if (busyId()) return;
+    setBusyId(request.sender.ap_id);
+    try {
+      await rejectDMRequest(request.sender.ap_id);
+      void refetchRequests();
+      app.toast("リクエストを拒否しました");
+    } catch {
+      app.toast("操作に失敗しました", "error");
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const archive = async (contact: DMContact) => {
+    if (busyId()) return;
+    setBusyId(contact.ap_id);
+    try {
+      await archiveDMConversation(contact.ap_id);
+      if (props.selected?.ap_id === contact.ap_id) chat.selectContact(null);
+      chat.refetchContacts();
+      app.refreshBadges();
+      app.toast("アーカイブしました");
+    } catch {
+      app.toast("操作に失敗しました", "error");
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const unarchive = async (contact: DMContact) => {
+    if (busyId()) return;
+    setBusyId(contact.ap_id);
+    try {
+      await unarchiveDMConversation(contact.ap_id);
+      void refetchArchived();
+      chat.refetchContacts();
+      app.toast("アーカイブから戻しました");
+    } catch {
+      app.toast("操作に失敗しました", "error");
+    } finally {
+      setBusyId(null);
+    }
   };
 
   return (
-    <main classList={{ "p-talk": true, "is-inview": !!props.selected }}>
-      <div class="p-talk-list">
+    <section class="p-talk-rooms-pane">
+      <Show
+        when={view() === "list"}
+        fallback={
+          <button
+            type="button"
+            class="p-talk-subhead"
+            onClick={() => setView("list")}
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <polyline points="14 18 8 12 14 6" />
+            </svg>
+            {view() === "requests" ? "メッセージリクエスト" : "アーカイブ済み"}
+          </button>
+        }
+      >
         <h1 class="p-talk-list-title">トーク</h1>
+      </Show>
+
+      <Show when={view() === "list"}>
         <div class="p-talk-list-search">
           <label>
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <circle cx="11" cy="11" r="7" />
+              <path d="m16 16 5 5" />
+            </svg>
             <input
               name="talkSearch"
-              type="text"
+              type="search"
               placeholder="トークルーム・メッセージを検索"
               value={query()}
               onInput={(event) => setQuery(event.currentTarget.value)}
             />
           </label>
         </div>
-        <div class="p-talk-list-rooms">
-          <ul class="p-talk-list-rooms__ul">
-            <For
-              each={contacts()}
-              fallback={<li class="p-home-empty">まだトークはありません</li>}
-            >
-              {(contact) => (
-                <li
-                  classList={{
-                    "c-talk-rooms": true,
-                    "is-active": props.selected?.ap_id === contact.ap_id,
-                  }}
-                >
-                  <button type="button" onClick={() => props.onSelect(contact)}>
-                    <span class="c-talk-rooms-icon">
-                      <Avatar value={contact} />
-                    </span>
-                    <span class="c-talk-rooms-box">
-                      <span class="c-talk-rooms-name">
-                        <span>{titleFor(contact)}</span>
+        <div class="p-talk-chips">
+          <button
+            type="button"
+            class="p-talk-chip"
+            onClick={() => setView("requests")}
+          >
+            リクエスト
+            <Show when={(requests()?.length ?? 0) > 0}>
+              <em>{requests()?.length}</em>
+            </Show>
+          </button>
+          <button
+            type="button"
+            class="p-talk-chip"
+            onClick={() => setView("archived")}
+          >
+            アーカイブ
+          </button>
+        </div>
+      </Show>
+
+      <div class="p-talk-list-rooms">
+        <Show when={view() === "list"}>
+          <Show
+            when={!props.contactsLoading}
+            fallback={
+              <ul class="p-talk-list-rooms__ul" aria-hidden="true">
+                <For each={[0, 1, 2, 3, 4]}>{() => <ContactRowSkeleton />}</For>
+              </ul>
+            }
+          >
+            <ul class="p-talk-list-rooms__ul">
+              <For
+                each={contacts()}
+                fallback={
+                  <li class="p-home-empty">
+                    {searching()
+                      ? "一致するトークはありません"
+                      : "まだトークはありません"}
+                  </li>
+                }
+              >
+                {(contact) => (
+                  <li
+                    classList={{
+                      "c-talk-rooms": true,
+                      "is-active": props.selected?.ap_id === contact.ap_id,
+                    }}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => props.onSelect(contact)}
+                    >
+                      <span class="c-talk-rooms-icon">
+                        <Avatar value={contact} />
                       </span>
-                      <span class="c-talk-rooms-msg">
-                        <span>
-                          {contact.last_message?.content ||
-                            contactSubtitle(contact)}
+                      <span class="c-talk-rooms-box">
+                        <span class="c-talk-rooms-name">
+                          <span>{titleFor(contact)}</span>
+                          <Show when={contact.last_message_at}>
+                            <time class="c-talk-rooms-time">
+                              {formatTime(contact.last_message_at)}
+                            </time>
+                          </Show>
+                        </span>
+                        <span class="c-talk-rooms-msg">
+                          <span>
+                            <Show when={contact.last_message?.is_mine}>
+                              あなた:{" "}
+                            </Show>
+                            {contact.last_message?.content ||
+                              contactSubtitle(contact)}
+                          </span>
                         </span>
                       </span>
-                    </span>
-                    <Show when={(contact.unread_count ?? 0) > 0}>
-                      <span class="c-talk-rooms-badge">
-                        {contact.unread_count}
-                      </span>
+                      <Show when={(contact.unread_count ?? 0) > 0}>
+                        <span class="c-talk-rooms-badge">
+                          {contact.unread_count}
+                        </span>
+                      </Show>
+                    </button>
+                    <Show when={contact.type === "user"}>
+                      <button
+                        type="button"
+                        class="c-talk-rooms-archive"
+                        aria-label="アーカイブ"
+                        disabled={busyId() === contact.ap_id}
+                        onClick={() => void archive(contact)}
+                      >
+                        <svg viewBox="0 0 24 24" aria-hidden="true">
+                          <rect x="3" y="4" width="18" height="4" rx="1" />
+                          <path d="M5 8v11a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8M10 12h4" />
+                        </svg>
+                      </button>
                     </Show>
-                  </button>
+                  </li>
+                )}
+              </For>
+            </ul>
+          </Show>
+        </Show>
+
+        <Show when={view() === "requests"}>
+          <ul class="p-talk-list-rooms__ul">
+            <For
+              each={requests() ?? []}
+              fallback={
+                <li class="p-home-empty">メッセージリクエストはありません</li>
+              }
+            >
+              {(request) => (
+                <li class="c-talk-request">
+                  <A
+                    href={profilePath(request.sender.ap_id)}
+                    class="c-talk-request-who"
+                  >
+                    <Avatar value={request.sender} />
+                    <span>
+                      <strong>{titleFor(request.sender)}</strong>
+                      <small>{request.content}</small>
+                    </span>
+                  </A>
+                  <div class="c-talk-request-actions">
+                    <button
+                      type="button"
+                      class="is-primary"
+                      onClick={() => void openRequest(request)}
+                    >
+                      開く
+                    </button>
+                    <button
+                      type="button"
+                      disabled={busyId() === request.sender.ap_id}
+                      onClick={() => void rejectRequest(request)}
+                    >
+                      拒否
+                    </button>
+                  </div>
                 </li>
               )}
             </For>
           </ul>
-        </div>
-      </div>
+        </Show>
 
-      <div class="p-talk-chat">
-        <div class="p-talk-chat-container">
+        <Show when={view() === "archived"}>
+          <ul class="p-talk-list-rooms__ul">
+            <Show
+              when={!archived.loading}
+              fallback={<li class="p-home-empty">読み込み中...</li>}
+            >
+              <For
+                each={archived() ?? []}
+                fallback={<li class="p-home-empty">アーカイブはありません</li>}
+              >
+                {(contact) => (
+                  <li class="c-talk-rooms">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        chat.selectContact(contact);
+                        setView("list");
+                      }}
+                    >
+                      <span class="c-talk-rooms-icon">
+                        <Avatar value={contact} />
+                      </span>
+                      <span class="c-talk-rooms-box">
+                        <span class="c-talk-rooms-name">
+                          <span>{titleFor(contact)}</span>
+                        </span>
+                        <span class="c-talk-rooms-msg">
+                          <span>{contactSubtitle(contact)}</span>
+                        </span>
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      class="c-talk-rooms-archive"
+                      aria-label="アーカイブから戻す"
+                      disabled={busyId() === contact.ap_id}
+                      onClick={() => void unarchive(contact)}
+                    >
+                      <svg viewBox="0 0 24 24" aria-hidden="true">
+                        <path d="M3 7v12a1 1 0 0 0 1 1h16a1 1 0 0 0 1-1V7" />
+                        <path d="M1 5h22v2H1zM12 11v6M9 14l3-3 3 3" />
+                      </svg>
+                    </button>
+                  </li>
+                )}
+              </For>
+            </Show>
+          </ul>
+        </Show>
+      </div>
+    </section>
+  );
+}
+
+function TimelinePostSkeleton() {
+  return (
+    <article class="c-timeline-post c-timeline-skeleton" aria-hidden="true">
+      <header>
+        <span class="c-timeline-skeleton-avatar" />
+        <div>
+          <span class="c-timeline-skeleton-line is-name" />
+          <span class="c-timeline-skeleton-line is-handle" />
+        </div>
+      </header>
+      <span class="c-timeline-skeleton-line is-body" />
+      <span class="c-timeline-skeleton-line is-body is-short" />
+    </article>
+  );
+}
+
+function TimelineView(props: {
+  actor: Actor;
+  posts: Post[];
+  postsLoading: boolean;
+  postsError: boolean;
+  hasMore: boolean;
+  loadingMore: boolean;
+  onLoadMore: () => void;
+  origin?: string | null;
+  stories: ActorStories[];
+  onStory: (actorStories: ActorStories, index: number) => void;
+  onAddStory: () => void;
+  onRetry: () => void;
+  onPatchPost: (apId: string, patch: (post: Post) => Post) => void;
+  onRemovePost: (apId: string) => void;
+}) {
+  let sentinel: HTMLDivElement | undefined;
+  createEffect(() => {
+    const el = sentinel;
+    if (!el || typeof IntersectionObserver === "undefined") return;
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) props.onLoadMore();
+    });
+    observer.observe(el);
+    onCleanup(() => observer.disconnect());
+  });
+  return (
+    <section class="p-timeline">
+      <StoryBar
+        actor={props.actor}
+        actorStories={props.stories}
+        labels={{ yourStory: "あなた", addStory: "ストーリー" }}
+        renderAvatar={(actor) => <Avatar value={actor} />}
+        onStoryClick={props.onStory}
+        onAddStory={props.onAddStory}
+      />
+      <div class="p-timeline-feed">
+        <Show
+          when={!props.postsLoading || props.posts.length > 0}
+          fallback={
+            <>
+              <TimelinePostSkeleton />
+              <TimelinePostSkeleton />
+              <TimelinePostSkeleton />
+            </>
+          }
+        >
           <Show
-            when={props.selected}
+            when={!(props.postsError && props.posts.length === 0)}
             fallback={
-              <div class="p-talk-chat-empty">
-                <p>トークを選択</p>
+              <div class="p-timeline-state">
+                <p>タイムラインを読み込めませんでした</p>
+                <button type="button" onClick={() => props.onRetry()}>
+                  再読み込み
+                </button>
               </div>
             }
           >
-            {(contact) => (
-              <>
-                <div class="p-talk-chat-title">
-                  <button
-                    class="p-talk-chat-prev"
-                    type="button"
-                    onClick={props.onBack}
-                    aria-label="戻る"
-                  >
-                    <svg viewBox="0 0 24 24" aria-hidden="true">
-                      <polyline points="14 18 8 12 14 6 14 6" />
-                    </svg>
-                  </button>
-                  <p>{titleFor(contact())}</p>
+            <For
+              each={props.posts}
+              fallback={
+                <div class="p-timeline-state">
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M4 5h16M4 12h16M4 19h10" />
+                  </svg>
+                  <p>まだ投稿はありません</p>
                 </div>
-                <div class="p-talk-chat-main">
-                  <ul class="p-talk-chat-main__ul">
-                    <li class="c-talk-date">
-                      <div class="c-talk-chat-date-box">
-                        <p>今日</p>
-                      </div>
-                    </li>
-                    <Show
-                      when={!props.loading}
-                      fallback={<li class="p-home-empty">読み込み中...</li>}
-                    >
-                      <For each={props.messages}>
-                        {(message, index) => {
-                          const mine =
-                            message.sender.ap_id === props.actor.ap_id;
-                          return (
-                            <li
-                              classList={{
-                                "c-talk-chat": true,
-                                self: mine,
-                                other: !mine,
-                                primary:
-                                  index() === 0 ||
-                                  props.messages[index() - 1]?.sender.ap_id !==
-                                    message.sender.ap_id,
-                                subsequent:
-                                  index() > 0 &&
-                                  props.messages[index() - 1]?.sender.ap_id ===
-                                    message.sender.ap_id,
-                              }}
-                            >
-                              <div class="c-talk-chat-box">
-                                <Show
-                                  when={
-                                    !mine &&
-                                    (index() === 0 ||
-                                      props.messages[index() - 1]?.sender
-                                        .ap_id !== message.sender.ap_id)
-                                  }
-                                >
-                                  <div class="c-talk-chat-icon">
-                                    <Avatar value={message.sender} />
-                                  </div>
-                                </Show>
-                                <Show when={mine}>
-                                  <div class="c-talk-chat-date">
-                                    <p>{formatTime(message.created_at)}</p>
-                                  </div>
-                                </Show>
-                                <div class="c-talk-chat-right">
-                                  <Show
-                                    when={
-                                      !mine &&
-                                      (index() === 0 ||
-                                        props.messages[index() - 1]?.sender
-                                          .ap_id !== message.sender.ap_id)
-                                    }
-                                  >
-                                    <div class="c-talk-chat-name">
-                                      <p>{titleFor(message.sender)}</p>
-                                    </div>
-                                  </Show>
-                                  <div class="c-talk-chat-msg">
-                                    <p>{message.content}</p>
-                                  </div>
-                                </div>
-                                <Show when={!mine}>
-                                  <div class="c-talk-chat-date">
-                                    <p>{formatTime(message.created_at)}</p>
-                                  </div>
-                                </Show>
-                              </div>
-                            </li>
-                          );
-                        }}
-                      </For>
-                    </Show>
-                  </ul>
-                </div>
-                <div class="p-talk-chat-send">
-                  <form
-                    class="p-talk-chat-send__form"
-                    onSubmit={(event) => {
-                      event.preventDefault();
-                      void send();
-                    }}
-                  >
-                    <div class="p-talk-chat-send__msg">
-                      <div class="p-talk-chat-send__dummy" aria-hidden="true">
-                        {draft() + "\u200b"}
-                      </div>
-                      <label>
-                        <textarea
-                          class="p-talk-chat-send__textarea"
-                          name="message"
-                          placeholder="メッセージを入力"
-                          value={draft()}
-                          onInput={(event) =>
-                            setDraft(event.currentTarget.value)
-                          }
-                        />
-                      </label>
-                    </div>
-                    <button
-                      class="p-talk-chat-send__file"
-                      type="submit"
-                      aria-label="送信"
-                    >
-                      <span aria-hidden="true"></span>
-                    </button>
-                  </form>
-                </div>
-              </>
-            )}
-          </Show>
-        </div>
-      </div>
-    </main>
-  );
-}
-
-function VoomView(props: {
-  actor: Actor;
-  posts: Post[];
-  stories: ActorStories[];
-  onStory: (story: Story) => void;
-  onPost: (content: string) => Promise<void>;
-  onLike: (post: Post) => Promise<void>;
-}) {
-  const [draft, setDraft] = createSignal("");
-  const submit = async () => {
-    const content = draft().trim();
-    if (!content) return;
-    await props.onPost(content);
-    setDraft("");
-  };
-  return (
-    <main class="p-voom">
-      <h1 class="p-talk-list-title">VOOM</h1>
-      <StoryRow stories={props.stories} onOpen={props.onStory} />
-      <form
-        class="p-voom-compose"
-        onSubmit={(event) => {
-          event.preventDefault();
-          void submit();
-        }}
-      >
-        <Avatar value={props.actor} />
-        <textarea
-          name="post"
-          value={draft()}
-          onInput={(event) => setDraft(event.currentTarget.value)}
-          placeholder="いま共有したいこと"
-        />
-        <button type="submit">投稿</button>
-      </form>
-      <div class="p-voom-feed">
-        <For
-          each={props.posts}
-          fallback={<p class="p-home-empty">まだ投稿はありません</p>}
-        >
-          {(post) => (
-            <article class="c-voom-post">
-              <header>
-                <Avatar value={post.author} />
-                <div>
-                  <strong>{titleFor(post.author)}</strong>
-                  <span>{actorHandle(post.author)}</span>
-                </div>
-              </header>
-              <p>{stripHtml(post.content)}</p>
-              <footer>
+              }
+            >
+              {(post) => (
+                <PostCard
+                  post={post}
+                  origin={props.origin}
+                  currentActorApId={props.actor.ap_id}
+                  onPatch={props.onPatchPost}
+                  onRemove={props.onRemovePost}
+                />
+              )}
+            </For>
+            <Show when={props.hasMore}>
+              <div class="p-timeline-more" ref={(el) => (sentinel = el)}>
                 <button
                   type="button"
-                  classList={{ "is-active": post.liked }}
-                  onClick={() => void props.onLike(post)}
+                  disabled={props.loadingMore}
+                  onClick={() => props.onLoadMore()}
                 >
-                  いいね {post.like_count || ""}
+                  {props.loadingMore ? "読み込み中…" : "もっと見る"}
                 </button>
-                <span>コメント {post.reply_count || ""}</span>
-                <span>シェア {post.announce_count || ""}</span>
-              </footer>
-            </article>
-          )}
-        </For>
+              </div>
+            </Show>
+          </Show>
+        </Show>
       </div>
-    </main>
+    </section>
   );
 }
 
-function StoryModal(props: {
-  story: Story | null;
+function StoryViewerModal(props: {
+  actor: Actor;
+  actorStories: ActorStories[];
+  initialActorIndex: number | null;
+  origin?: string | null;
   onClose: () => void;
   onLike?: (story: Story) => Promise<void>;
   onShare?: (story: Story) => Promise<void>;
+  onMarkViewed?: (story: Story) => Promise<void>;
+  onDelete?: (story: Story) => Promise<void>;
+  onReply?: (story: Story) => void;
 }) {
+  const app = useApp();
+  const [actorIndex, setActorIndex] = createSignal(0);
+  const [storyIndex, setStoryIndex] = createSignal(0);
+  const [mediaError, setMediaError] = createSignal(false);
+  const [paused, setPaused] = createSignal(false);
+
+  createEffect(() => {
+    const next = props.initialActorIndex;
+    if (next === null || props.actorStories.length === 0) return;
+    setActorIndex(Math.min(Math.max(next, 0), props.actorStories.length - 1));
+    setStoryIndex(0);
+    setMediaError(false);
+    setPaused(false);
+  });
+
+  const currentActorStories = createMemo(
+    () => props.actorStories[actorIndex()] ?? null,
+  );
+  const currentStory = createMemo(
+    () => currentActorStories()?.stories[storyIndex()] ?? null,
+  );
+  const storyCount = createMemo(
+    () => currentActorStories()?.stories.length ?? 0,
+  );
+  const isOwnStory = createMemo(
+    () => currentActorStories()?.actor.ap_id === props.actor.ap_id,
+  );
+
+  const goNext = () => {
+    const group = currentActorStories();
+    if (!group) return props.onClose();
+    if (storyIndex() < group.stories.length - 1) {
+      setStoryIndex(storyIndex() + 1);
+      setMediaError(false);
+      return;
+    }
+    if (actorIndex() < props.actorStories.length - 1) {
+      setActorIndex(actorIndex() + 1);
+      setStoryIndex(0);
+      setMediaError(false);
+      return;
+    }
+    props.onClose();
+  };
+
+  const goPrev = () => {
+    if (storyIndex() > 0) {
+      setStoryIndex(storyIndex() - 1);
+      setMediaError(false);
+      return;
+    }
+    if (actorIndex() > 0) {
+      const previousIndex = actorIndex() - 1;
+      const previousStories = props.actorStories[previousIndex]?.stories ?? [];
+      setActorIndex(previousIndex);
+      setStoryIndex(Math.max(previousStories.length - 1, 0));
+      setMediaError(false);
+      return;
+    }
+    setStoryIndex(0);
+    setMediaError(false);
+  };
+
+  const handleDelete = async () => {
+    const story = currentStory();
+    if (!story || !props.onDelete) return;
+    setPaused(true);
+    const ok = await app.confirm({
+      title: "ストーリーを削除",
+      message: "このストーリーを削除しますか?",
+      confirmLabel: "削除",
+      danger: true,
+    });
+    if (!ok) {
+      setPaused(false);
+      return;
+    }
+    try {
+      await props.onDelete(story);
+    } finally {
+      setPaused(false);
+    }
+  };
+
+  // Auto-advance timer that supports hold-to-pause: each story change starts a
+  // fresh countdown, and toggling `paused` halts/resumes it from the time that
+  // was actually remaining (so the progress bar and timer stay in sync).
+  createEffect(
+    on([storyIndex, actorIndex, () => props.initialActorIndex], () => {
+      if (props.initialActorIndex === null) return;
+      const story = currentStory();
+      setMediaError(false);
+      if (!story) return;
+      if (!story.viewed) {
+        void props.onMarkViewed?.(story).catch(() => undefined);
+      }
+      let remaining = parseStoryDuration(story.displayDuration);
+      let startedAt = performance.now();
+      let timer = 0;
+      const run = () => {
+        startedAt = performance.now();
+        timer = window.setTimeout(goNext, remaining);
+      };
+      const halt = () => {
+        window.clearTimeout(timer);
+        remaining = Math.max(0, remaining - (performance.now() - startedAt));
+      };
+      createEffect(() => (paused() ? halt() : run()));
+      onCleanup(() => window.clearTimeout(timer));
+    }),
+  );
+
+  createEffect(() => {
+    if (props.initialActorIndex === null) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "ArrowLeft") goPrev();
+      else if (event.key === "ArrowRight") goNext();
+      else if (event.key === "Escape") props.onClose();
+    };
+    document.addEventListener("keydown", onKey);
+    onCleanup(() => document.removeEventListener("keydown", onKey));
+  });
+
   return (
-    <Show when={props.story}>
+    <Show when={props.initialActorIndex !== null && currentStory()}>
       {(story) => (
-        <div class="p-story-modal" role="dialog" aria-modal="true">
-          <section>
+        <div
+          class="p-story-viewer"
+          role="dialog"
+          aria-modal="true"
+          aria-label="ストーリービューア"
+        >
+          <section class="p-story-viewer-panel">
             <button
               class="p-story-close"
               type="button"
               onClick={props.onClose}
               aria-label="閉じる"
             >
-              x
+              <CloseIcon />
             </button>
-            <div class="p-story-card">
+            <div class="p-story-progress" aria-hidden="true">
+              <For each={currentActorStories()?.stories ?? []}>
+                {(_, index) => (
+                  <span
+                    classList={{
+                      "is-done": index() < storyIndex(),
+                      "is-active": index() === storyIndex(),
+                    }}
+                  >
+                    <Show when={index() === storyIndex()}>
+                      <i
+                        class="p-story-progress-fill"
+                        style={{
+                          "animation-duration": `${parseStoryDuration(
+                            story().displayDuration,
+                          )}ms`,
+                          "animation-play-state": paused()
+                            ? "paused"
+                            : "running",
+                        }}
+                      />
+                    </Show>
+                  </span>
+                )}
+              </For>
+            </div>
+            <header class="p-story-viewer-head">
+              <A
+                class="p-story-viewer-author"
+                href={profilePath(currentActorStories()!.actor.ap_id)}
+                onClick={() => props.onClose()}
+              >
+                <Avatar value={currentActorStories()!.actor} />
+                <div>
+                  <strong>{titleFor(currentActorStories()!.actor)}</strong>
+                  <span>{formatPostTime(story().published)}</span>
+                </div>
+              </A>
               <Show
-                when={story().attachment.url}
+                when={isOwnStory()}
+                fallback={<em>{formatPostTime(story().published)}</em>}
+              >
+                <em>あなた</em>
+                <button
+                  class="p-story-delete"
+                  type="button"
+                  aria-label="ストーリーを削除"
+                  onClick={() => void handleDelete()}
+                >
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6" />
+                  </svg>
+                </button>
+              </Show>
+            </header>
+            <div
+              class="p-story-card"
+              onPointerDown={() => setPaused(true)}
+              onPointerUp={() => setPaused(false)}
+              onPointerLeave={() => setPaused(false)}
+              onPointerCancel={() => setPaused(false)}
+            >
+              <button
+                class="p-story-zone is-prev"
+                type="button"
+                onClick={goPrev}
+                aria-label="前のストーリー"
+              />
+              <button
+                class="p-story-zone is-next"
+                type="button"
+                onClick={goNext}
+                aria-label="次のストーリー"
+              />
+              <Show
+                when={mediaSrc(story(), props.origin)}
                 fallback={<strong>{story().caption || "Story"}</strong>}
               >
-                {(src) => <img src={src()} alt="" />}
+                {(src) => (
+                  <Show
+                    when={
+                      !mediaError() &&
+                      story().attachment.mediaType.startsWith("video/")
+                    }
+                    fallback={
+                      <Show
+                        when={!mediaError()}
+                        fallback={
+                          <strong>メディアを読み込めませんでした</strong>
+                        }
+                      >
+                        <img
+                          src={src()}
+                          alt=""
+                          onError={() => setMediaError(true)}
+                        />
+                      </Show>
+                    }
+                  >
+                    <video
+                      src={src()}
+                      autoplay
+                      muted
+                      playsinline
+                      onError={() => setMediaError(true)}
+                    />
+                  </Show>
+                )}
+              </Show>
+              <Show when={storyCount() > 1}>
+                <span class="p-story-count">
+                  {storyIndex() + 1} / {storyCount()}
+                </span>
               </Show>
             </div>
             <p>{story().caption}</p>
@@ -868,6 +1436,18 @@ function StoryModal(props: {
               >
                 シェア {story().share_count || ""}
               </button>
+              <Show when={!isOwnStory() && props.onReply}>
+                <button
+                  type="button"
+                  class="p-story-reply"
+                  onClick={() => {
+                    props.onReply?.(story());
+                    props.onClose();
+                  }}
+                >
+                  メッセージ
+                </button>
+              </Show>
             </div>
           </section>
         </div>
@@ -876,449 +1456,302 @@ function StoryModal(props: {
   );
 }
 
-function ServerConnect(props: { onConnect: (origin: string) => void }) {
-  const [value, setValue] = createSignal("");
+function StoryComposerModal(props: {
+  open: boolean;
+  onClose: () => void;
+  onSuccess: () => Promise<void> | void;
+}) {
+  const [file, setFile] = createSignal<File | null>(null);
+  const [caption, setCaption] = createSignal("");
+  const [saving, setSaving] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
-  const connect = () => {
-    const origin = normalizeServerOrigin(value());
-    if (!origin) {
-      setError("yurucommu-server の URL を入力してください。");
-      return;
-    }
-    saveYurumeetServerOrigin(origin);
-    configureYurumeetServerOrigin(origin);
-    props.onConnect(origin);
+
+  const reset = () => {
+    setFile(null);
+    setCaption("");
+    setError(null);
+    setSaving(false);
   };
-  return (
-    <main class="p-connect">
-      <section>
-        <div class="l-header-logo connect-logo">
-          <span>Y</span>
-        </div>
-        <h1>Yurumeet</h1>
-        <p>
-          yurucommu-server を TakosUI ベースのホーム / トーク / VOOM で使う。
-        </p>
-        <form
-          onSubmit={(event) => {
-            event.preventDefault();
-            connect();
-          }}
-        >
-          <input
-            value={value()}
-            onInput={(event) => setValue(event.currentTarget.value)}
-            placeholder="https://your-yurucommu.example"
-          />
-          <button type="submit">接続</button>
-        </form>
-        <Show when={error()}>
-          {(message) => <p class="p-connect-error">{message()}</p>}
-        </Show>
-      </section>
-    </main>
-  );
-}
 
-function SignedOut(props: { origin: string }) {
-  const [password, setPassword] = createSignal("");
-  const [error, setError] = createSignal<string | null>(null);
-  const [submitting, setSubmitting] = createSignal(false);
+  const close = () => {
+    if (saving()) return;
+    reset();
+    props.onClose();
+  };
 
-  const login = async () => {
-    const value = password().trim();
-    if (!value) {
-      setError("パスワードを入力してください。");
-      return;
-    }
-    setSubmitting(true);
+  const submit = async () => {
+    const selected = file();
+    if (!selected || saving()) return;
+    setSaving(true);
     setError(null);
     try {
-      const response = await fetch(serverUrl(props.origin, "/api/auth/login"), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ password: value }),
+      const uploaded = await uploadMedia(selected);
+      await createStory({
+        attachment: {
+          url: uploaded.url,
+          r2_key: uploaded.r2_key,
+          content_type: uploaded.content_type,
+        },
+        displayDuration: selected.type.startsWith("video/") ? "PT10S" : "PT5S",
+        caption: caption().trim() || undefined,
       });
-      if (!response.ok) {
-        setError("ログインできませんでした。");
-        return;
-      }
-      window.location.reload();
-    } catch {
-      setError("ログインできませんでした。");
-    } finally {
-      setSubmitting(false);
+      await props.onSuccess();
+      reset();
+      props.onClose();
+    } catch (err) {
+      console.error("Failed to create story:", err);
+      setError("Story の作成に失敗しました");
+      setSaving(false);
     }
   };
 
   return (
-    <main class="p-connect">
-      <section>
-        <h1>サインイン</h1>
-        <p>この yurucommu-server のアカウントで Yurumeet を開きます。</p>
+    <Show when={props.open}>
+      <div
+        class="p-story-composer"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Story 作成"
+      >
+        <button
+          type="button"
+          class="p-story-composer-dismiss"
+          aria-label="閉じる"
+          onClick={close}
+        />
         <form
+          class="p-story-composer-panel"
           onSubmit={(event) => {
             event.preventDefault();
-            void login();
+            void submit();
           }}
         >
-          <input
-            type="password"
-            value={password()}
-            onInput={(event) => setPassword(event.currentTarget.value)}
-            placeholder="パスワード"
-            autocomplete="current-password"
+          <div class="p-story-composer-head">
+            <h2>Story 作成</h2>
+            <button type="button" onClick={close} aria-label="閉じる">
+              <CloseIcon />
+            </button>
+          </div>
+          <label class="p-story-file">
+            <span>{file()?.name ?? "写真・動画を選択"}</span>
+            <input
+              type="file"
+              accept="image/jpeg,image/png,image/gif,image/webp,video/mp4,video/webm"
+              onInput={(event) => {
+                setFile(event.currentTarget.files?.[0] ?? null);
+                setError(null);
+              }}
+            />
+          </label>
+          <textarea
+            value={caption()}
+            maxLength={120}
+            placeholder="キャプション"
+            onInput={(event) => setCaption(event.currentTarget.value)}
           />
-          <button type="submit" disabled={submitting()}>
-            {submitting() ? "ログイン中" : "ログイン"}
-          </button>
+          <Show when={error()}>
+            {(message) => <p class="p-story-composer-error">{message()}</p>}
+          </Show>
+          <div class="p-story-composer-actions">
+            <span>{caption().trim().length} / 120</span>
+            <button type="submit" disabled={!file() || saving()}>
+              {saving() ? "投稿中" : "投稿"}
+            </button>
+          </div>
         </form>
-        <Show when={error()}>
-          {(message) => <p class="p-connect-error">{message()}</p>}
-        </Show>
-      </section>
-    </main>
-  );
-}
-
-function DemoApp() {
-  const [searchParams] = useSearchParams();
-  const [tab, setTab] = createSignal<AppTab>(
-    (searchParams.tab as AppTab) || "talk",
-  );
-  const [contacts] = createSignal(demoContacts);
-  const initialContact = () => {
-    const c = searchParams.c;
-    if (typeof c === "string" && c) {
-      return (
-        demoContacts.find((contact) => contact.ap_id === c) ??
-        demoContacts[0] ??
-        null
-      );
-    }
-    return tab() === "talk" && shouldOpenInitialTalkPane()
-      ? demoContacts[0]
-      : null;
-  };
-  const [selected, setSelected] = createSignal<DMContact | null>(
-    initialContact(),
-  );
-  const [messages, setMessages] = createSignal<ChatMessage[]>(
-    demoMessages[initialContact()?.ap_id ?? ""] ?? [],
-  );
-  const [posts, setPosts] = createSignal<Post[]>(demoPosts);
-  const [story, setStory] = createSignal<Story | null>(null);
-
-  const setStoryLike = async (target: Story) => {
-    setStory({
-      ...target,
-      liked: !target.liked,
-      like_count: (target.like_count ?? 0) + (target.liked ? -1 : 1),
-    });
-  };
-
-  const setStoryShare = async (target: Story) => {
-    setStory({
-      ...target,
-      share_count: (target.share_count ?? 0) + 1,
-    });
-  };
-
-  const openTalk = (contact: DMContact) => {
-    setTab("talk");
-    setSelected(contact);
-    setMessages(demoMessages[contact.ap_id] ?? []);
-  };
-
-  const send = async (content: string) => {
-    const contact = selected();
-    if (!contact) return;
-    setMessages((current) => [
-      ...current,
-      {
-        id: `demo-${Date.now()}`,
-        sender: demoActor,
-        content,
-        created_at: new Date().toISOString(),
-      },
-    ]);
-  };
-
-  const post = async (content: string) => {
-    setPosts((current) => [
-      {
-        ...demoPosts[0],
-        ap_id: `demo-${Date.now()}`,
-        author: demoActor,
-        content,
-        published: new Date().toISOString(),
-        like_count: 0,
-        liked: false,
-      },
-      ...current,
-    ]);
-  };
-
-  return (
-    <>
-      <Header
-        tab={tab()}
-        hideOnMobile={tab() === "talk" && !!selected()}
-        onTab={setTab}
-      />
-      <div class="wrapper">
-        <Show when={tab() === "home"}>
-          <HomeView
-            actor={demoActor}
-            contacts={contacts()}
-            stories={demoStories}
-            onTalk={openTalk}
-            onStory={setStory}
-          />
-        </Show>
-        <Show when={tab() === "talk"}>
-          <TalkView
-            actor={demoActor}
-            contacts={contacts()}
-            selected={selected()}
-            messages={messages()}
-            loading={false}
-            onSelect={openTalk}
-            onBack={() => setSelected(null)}
-            onSend={send}
-          />
-        </Show>
-        <Show when={tab() === "voom"}>
-          <VoomView
-            actor={demoActor}
-            posts={posts()}
-            stories={demoStories}
-            onStory={setStory}
-            onPost={post}
-            onLike={async (target) => {
-              setPosts((current) =>
-                current.map((item) =>
-                  item.ap_id === target.ap_id
-                    ? {
-                        ...item,
-                        liked: !item.liked,
-                        like_count: item.like_count + (item.liked ? -1 : 1),
-                      }
-                    : item,
-                ),
-              );
-            }}
-          />
-        </Show>
       </div>
-      <StoryModal
-        story={story()}
-        onClose={() => setStory(null)}
-        onLike={setStoryLike}
-        onShare={setStoryShare}
-      />
-    </>
+    </Show>
   );
 }
 
 export default function App() {
-  const [searchParams] = useSearchParams();
-  if (searchParams.demo === "1") return <DemoApp />;
-
-  const initialServerOrigin = readYurumeetServerOrigin();
-  if (initialServerOrigin) configureYurumeetServerOrigin(initialServerOrigin);
-
+  const app = useApp();
+  const chat = useChat();
   const navigate = useNavigate();
-  const [tab, setTab] = createSignal<AppTab>(
-    (searchParams.tab as AppTab) || "talk",
-  );
-  const [serverOrigin, setServerOrigin] = createSignal<string | null>(
-    initialServerOrigin,
-  );
-  const [actor, { refetch: refetchActor }] = createResource(
-    serverOrigin,
-    fetchCurrentActor,
-  );
-  const authedOrigin = createMemo(() =>
-    serverOrigin() && actor() ? serverOrigin() : null,
-  );
-  const [discovery, { refetch: refetchDiscovery }] = createResource(
-    serverOrigin,
-    fetchSocialServerDiscovery,
-  );
-  const [contacts, { refetch: refetchContacts }] = createResource(
-    authedOrigin,
-    loadContacts,
-  );
-  const [timeline, { refetch: refetchTimeline }] = createResource(
-    authedOrigin,
-    () => fetchTimeline({ limit: 30 }),
-  );
+  const [searchParams] = useSearchParams();
+  const tab = (): AppTab => normalizeTab(searchParams.tab);
+
+  const [feedPosts, setFeedPosts] = createSignal<Post[]>([]);
+  const [feedLoading, setFeedLoading] = createSignal(true);
+  const [feedError, setFeedError] = createSignal(false);
+  const [feedCursor, setFeedCursor] = createSignal<string | null>(null);
+  const [feedHasMore, setFeedHasMore] = createSignal(false);
+  const [loadingMore, setLoadingMore] = createSignal(false);
+
+  const loadFeed = async () => {
+    setFeedLoading(true);
+    setFeedError(false);
+    try {
+      const page = await fetchTimeline({ limit: 30 });
+      setFeedPosts(page.posts);
+      setFeedCursor(page.nextCursor);
+      setFeedHasMore(page.hasMore);
+    } catch {
+      setFeedError(true);
+    } finally {
+      setFeedLoading(false);
+    }
+  };
+
+  const loadMoreFeed = async () => {
+    const cursor = feedCursor();
+    if (loadingMore() || !feedHasMore() || !cursor) return;
+    setLoadingMore(true);
+    try {
+      const page = await fetchTimeline({ limit: 30, before: cursor });
+      const seen = new Set(feedPosts().map((p) => p.ap_id));
+      setFeedPosts((prev) => [
+        ...prev,
+        ...page.posts.filter((p) => !seen.has(p.ap_id)),
+      ]);
+      setFeedCursor(page.nextCursor);
+      setFeedHasMore(page.hasMore);
+    } catch {
+      app.toast("読み込みに失敗しました", "error");
+    } finally {
+      setLoadingMore(false);
+    }
+  };
+
+  createEffect(on(app.origin, () => void loadFeed()));
+
   const [stories, { refetch: refetchStories }] = createResource(
-    authedOrigin,
+    app.origin,
     () => fetchStories(),
   );
-  const [selected, setSelected] = createSignal<DMContact | null>(null);
-  const [messages, setMessages] = createSignal<ChatMessage[]>([]);
-  const [messagesLoading, setMessagesLoading] = createSignal(false);
-  const [story, setStory] = createSignal<Story | null>(null);
-  const [didAutoSelectContact, setDidAutoSelectContact] = createSignal(false);
-
-  const connectServer = (origin: string) => {
-    setServerOrigin(origin);
-    void refetchActor();
-    void refetchDiscovery();
-  };
-
-  createEffect(
-    on(selected, async (contact) => {
-      if (!contact) {
-        setMessages([]);
-        return;
-      }
-      setMessagesLoading(true);
-      try {
-        setMessages(await loadMessages(contact));
-      } finally {
-        setMessagesLoading(false);
-      }
-    }),
+  const [notes, { refetch: refetchNotes }] = createResource(app.origin, () =>
+    fetchNotes(),
   );
+  const [storyViewerActorIndex, setStoryViewerActorIndex] = createSignal<
+    number | null
+  >(null);
+  const [storyComposerOpen, setStoryComposerOpen] = createSignal(false);
+  const [postComposerOpen, setPostComposerOpen] = createSignal(false);
 
-  createEffect(() => {
-    if (
-      didAutoSelectContact() ||
-      tab() !== "talk" ||
-      selected() ||
-      !shouldOpenInitialTalkPane()
-    ) {
-      return;
-    }
-    const firstContact = contacts()?.[0];
-    if (!firstContact) return;
-    setDidAutoSelectContact(true);
-    setSelected(firstContact);
-  });
-
-  const openTalk = (contact: DMContact) => {
-    setTab("talk");
-    setSelected(contact);
+  const openStoryGroup = (group: ActorStories) => {
+    const actualIndex = (stories() ?? []).findIndex(
+      (item) => item.actor.ap_id === group.actor.ap_id,
+    );
+    if (actualIndex >= 0) setStoryViewerActorIndex(actualIndex);
   };
 
-  const openStory = (selectedStory: Story) => {
-    setStory(selectedStory);
-    if (!selectedStory.viewed) {
-      void markStoryViewed(selectedStory.ap_id)
-        .then(() => refetchStories())
-        .catch(() => undefined);
-    }
+  const patchTimelinePost = (apId: string, patch: (post: Post) => Post) => {
+    setFeedPosts((prev) =>
+      prev.map((post) => (post.ap_id === apId ? patch(post) : post)),
+    );
   };
 
-  const send = async (content: string) => {
-    const contact = selected();
-    if (!contact) return;
-    if (contact.type === "community")
-      await sendCommunityMessage(contact.ap_id, content);
-    else await sendUserDMMessage(contact.ap_id, content);
-    setMessages(await loadMessages(contact));
-    await refetchContacts();
+  const removeTimelinePost = (apId: string) => {
+    setFeedPosts((prev) => prev.filter((post) => post.ap_id !== apId));
   };
 
   return (
-    <Show
-      when={serverOrigin()}
-      fallback={<ServerConnect onConnect={connectServer} />}
-    >
-      {(origin) => (
-        <Show when={actor()} fallback={<SignedOut origin={origin()} />}>
-          {(currentActor) => (
-            <>
-              <Header
-                tab={tab()}
-                hideOnMobile={tab() === "talk" && !!selected()}
-                onTab={(nextTab) => {
-                  setTab(nextTab);
-                  navigate(`/?tab=${nextTab}`, { replace: true });
-                }}
-              />
-              <div class="wrapper">
-                <Show when={tab() === "home"}>
-                  <HomeView
-                    actor={currentActor()}
-                    contacts={contacts() ?? []}
-                    stories={stories() ?? []}
-                    onTalk={openTalk}
-                    onStory={openStory}
-                  />
-                </Show>
-                <Show when={tab() === "talk"}>
-                  <TalkView
-                    actor={currentActor()}
-                    contacts={contacts() ?? []}
-                    selected={selected()}
-                    messages={messages()}
-                    loading={messagesLoading() || contacts.loading}
-                    onSelect={openTalk}
-                    onBack={() => setSelected(null)}
-                    onSend={send}
-                  />
-                </Show>
-                <Show when={tab() === "voom"}>
-                  <VoomView
-                    actor={currentActor()}
-                    posts={timeline()?.posts ?? []}
-                    stories={stories() ?? []}
-                    onStory={openStory}
-                    onPost={async (content) => {
-                      await createPost({ content, visibility: "public" });
-                      await refetchTimeline();
-                    }}
-                    onLike={async (post) => {
-                      if (post.liked) await unlikePost(post.ap_id);
-                      else await likePost(post.ap_id);
-                      await refetchTimeline();
-                    }}
-                  />
-                </Show>
-              </div>
-              <button
-                type="button"
-                class="server-switch"
-                onClick={() => {
-                  clearYurumeetServerOrigin();
-                  setServerOrigin(null);
-                }}
-              >
-                {discovery()?.server.name ?? "Yurucommu Server"}
-              </button>
-              <StoryModal
-                story={story()}
-                onClose={() => setStory(null)}
-                onLike={async (target) => {
-                  const result = target.liked
-                    ? await unlikeStory(target.ap_id)
-                    : await likeStory(target.ap_id);
-                  setStory({
-                    ...target,
-                    liked: result.liked,
-                    like_count: result.like_count,
-                  });
-                  await refetchStories();
-                }}
-                onShare={async (target) => {
-                  const result = await shareStory(target.ap_id);
-                  setStory({
-                    ...target,
-                    share_count: result.share_count,
-                  });
-                  await refetchStories();
-                }}
-              />
-            </>
-          )}
-        </Show>
-      )}
-    </Show>
+    <>
+      <Show when={tab() === "home"}>
+        <HomeView
+          actor={app.actor()}
+          contacts={chat.contacts()}
+          contactsLoading={chat.contactsLoading()}
+          notes={notes() ?? []}
+          notesLoading={notes.loading}
+          onTalk={chat.selectContact}
+          onSaveNote={async (content) => {
+            await createNote({ content });
+            await refetchNotes();
+          }}
+          onDeleteNote={async () => {
+            await deleteMyNote();
+            await refetchNotes();
+          }}
+        />
+      </Show>
+      <Show when={tab() === "talk"}>
+        <TalkListPane
+          contacts={chat.contacts()}
+          contactsLoading={chat.contactsLoading()}
+          selected={chat.selected()}
+          onSelect={chat.selectContact}
+        />
+      </Show>
+      <Show when={tab() === "timeline"}>
+        <TimelineView
+          actor={app.actor()}
+          posts={feedPosts()}
+          postsLoading={feedLoading()}
+          postsError={feedError()}
+          hasMore={feedHasMore()}
+          loadingMore={loadingMore()}
+          onLoadMore={() => void loadMoreFeed()}
+          origin={app.origin()}
+          stories={stories() ?? []}
+          onStory={openStoryGroup}
+          onAddStory={() => setStoryComposerOpen(true)}
+          onRetry={() => void loadFeed()}
+          onPatchPost={patchTimelinePost}
+          onRemovePost={removeTimelinePost}
+        />
+      </Show>
+      <StoryViewerModal
+        actor={app.actor()}
+        actorStories={stories() ?? []}
+        initialActorIndex={storyViewerActorIndex()}
+        origin={app.origin()}
+        onClose={() => {
+          setStoryViewerActorIndex(null);
+          void refetchStories();
+        }}
+        onMarkViewed={async (target) => {
+          await markStoryViewed(target.ap_id);
+          await refetchStories();
+        }}
+        onLike={async (target) => {
+          if (target.liked) await unlikeStory(target.ap_id);
+          else await likeStory(target.ap_id);
+          await refetchStories();
+        }}
+        onShare={async (target) => {
+          await shareStory(target.ap_id);
+          await refetchStories();
+        }}
+        onDelete={async (target) => {
+          try {
+            await deleteStory(target.ap_id);
+            setStoryViewerActorIndex(null);
+            await refetchStories();
+            app.toast("ストーリーを削除しました");
+          } catch {
+            app.toast("削除に失敗しました", "error");
+          }
+        }}
+        onReply={(target) => {
+          void (async () => {
+            try {
+              const contact = await fetchDMContact(target.author.ap_id);
+              if (contact) {
+                chat.selectContact(contact);
+                navigate("/?tab=talk");
+              }
+            } catch {
+              app.toast("トークを開けませんでした", "error");
+            }
+          })();
+        }}
+      />
+      <StoryComposerModal
+        open={storyComposerOpen()}
+        onClose={() => setStoryComposerOpen(false)}
+        onSuccess={async () => {
+          await refetchStories();
+        }}
+      />
+      <Show when={tab() === "timeline"}>
+        <ComposeFab onClick={() => setPostComposerOpen(true)} />
+      </Show>
+      <PostComposer
+        open={postComposerOpen()}
+        onClose={() => setPostComposerOpen(false)}
+        onPosted={(post) => setFeedPosts((prev) => [post, ...prev])}
+      />
+    </>
   );
 }
