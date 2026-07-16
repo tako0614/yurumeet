@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 import { randomUUID } from "node:crypto";
+import { existsSync } from "node:fs";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { argv, env } from "node:process";
@@ -191,8 +192,39 @@ export function buildInstallArgs(): string[] {
   return ["bun", "install", "--frozen-lockfile", "--ignore-scripts"];
 }
 
-export function coreMigrationsDir(): string {
-  return join("node_modules", "@takosjp", "yurucommu-core", "migrations");
+export function hasCoreMigrationsDir(
+  sourceEnv: Record<string, string | undefined> = env,
+): boolean {
+  try {
+    coreMigrationsDir(sourceEnv);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function shouldInstallDependenciesBeforeRelease(input: {
+  readonly migrationsOnly: boolean;
+  readonly coreMigrationsAvailable: boolean;
+}): boolean {
+  return !input.migrationsOnly || !input.coreMigrationsAvailable;
+}
+
+export function coreMigrationsDir(
+  sourceEnv: Record<string, string | undefined> = env,
+): string {
+  const override = sourceEnv.YURUCOMMU_CORE_MIGRATIONS_DIR?.trim();
+  if (override) return override;
+  const packageDir = join(
+    "node_modules",
+    "@takosjp",
+    "yurucommu-core",
+    "migrations",
+  );
+  if (existsSync(packageDir)) return packageDir;
+  throw new Error(
+    "Could not find @takosjp/yurucommu-core migrations. Run bun install before activation or set YURUCOMMU_CORE_MIGRATIONS_DIR explicitly.",
+  );
 }
 
 export function buildD1ExecuteTemplate(configPath: string): string[] {
@@ -328,7 +360,16 @@ async function main(args = argv.slice(2)): Promise<void> {
 
       if (!migrationsOnly) {
         warnIfReadinessWillBeIncomplete(config);
+      }
+      if (
+        shouldInstallDependenciesBeforeRelease({
+          migrationsOnly,
+          coreMigrationsAvailable: hasCoreMigrationsDir(),
+        })
+      ) {
         await run(buildInstallArgs());
+      }
+      if (!migrationsOnly) {
         await run(["bun", "run", "build:takos-worker"]);
       }
       if (shouldSkipD1Migrations(env.YURUCOMMU_SKIP_D1_MIGRATIONS)) {

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.1 - 2026-07-16
+
+- Make Takosumi migration-only activation materialize core dependencies on a fresh runner checkout.
+
 ## 0.1.0 - 2026-07-16
 
 - Ship the first Yurumeet talk-first fullstack Worker release.
