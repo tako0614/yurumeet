@@ -5,8 +5,9 @@
     "": {
       "name": "@takosjp/yurumeet",
       "dependencies": {
-        "@takosjp/yurucommu-api": "^3.0.0",
-        "@takosjp/yurucommu-core": "^3.0.1",
+        "@solidjs/router": "^0.15.0",
+        "@takosjp/yurucommu-api": "^3.1.0",
+        "@takosjp/yurucommu-core": "^3.1.0",
         "solid-js": "^1.9.0",
       },
       "devDependencies": {
@@ -324,11 +325,13 @@
 
     "@smithy/types": ["@smithy/types@4.15.1", "", { "dependencies": { "tslib": "^2.6.2" } }, "sha512-x3L0XSACF6UYzKpa9biqiRMgvH5+wnFFew9Tm/grFYqgaupPwx/+ojDPpPJM8dZON3S9tjz5U+PQYsCBd1Mw5Q=="],
 
+    "@solidjs/router": ["@solidjs/router@0.15.4", "", { "peerDependencies": { "solid-js": "^1.8.6" } }, "sha512-WOpgg9a9T638cR+5FGbFi/IV4l2FpmBs1GpIMSPa0Ce9vyJN7Wts+X2PqMf9IYn0zUj2MlSJtm1gp7/HI/n5TQ=="],
+
     "@speed-highlight/core": ["@speed-highlight/core@1.2.17", "", {}, "sha512-Z92FwKpCtfaW1V0jTU/fh3QzYEZN8wDwrzRIBoADCJfn4mJCNcJN/XegifX7BDrQ8/h9Xh/JnbyMchL0FqXrkg=="],
 
-    "@takosjp/yurucommu-api": ["@takosjp/yurucommu-api@3.0.0", "", {}, "sha512-fJXYaGgOczmsnIWkA0foXrHYKuC4C7s3q6PjC3XtohTxp2wZuG3Ymx3iimMeeHLUAIVWGHhbBXyK/onkzOTjnA=="],
+    "@takosjp/yurucommu-api": ["@takosjp/yurucommu-api@3.2.0", "", {}, "sha512-NN9ghO4M6M/X970yqNNtz6jzEvpteizqoQWpN1ysMRS/dyY+zOh4i5gNmSljHPooSAxXmplHlCdu3iop7fuosw=="],
 
-    "@takosjp/yurucommu-core": ["@takosjp/yurucommu-core@3.0.1", "", { "dependencies": { "@aws-sdk/client-s3": "^3.971.0", "@libsql/client": "^0.17.0", "better-sqlite3": "^12.4.1", "drizzle-orm": "^0.45.1", "fdir": "^6.5.0", "hono": "^4.12.9", "picomatch": "^4.0.4", "tinyglobby": "^0.2.16" } }, "sha512-sa9IVFL+TpbSLPqukXJE2g6yysbjpoZECppGgw5R0FmWwkc6ny52b30tjTnlSVniUnxAYkZPmVgZLCH2kxB2cQ=="],
+    "@takosjp/yurucommu-core": ["@takosjp/yurucommu-core@3.2.0", "", { "dependencies": { "@aws-sdk/client-s3": "^3.971.0", "@libsql/client": "^0.17.0", "better-sqlite3": "^12.4.1", "drizzle-orm": "^0.45.1", "fdir": "^6.5.0", "hono": "^4.12.9", "picomatch": "^4.0.4", "tinyglobby": "^0.2.16" } }, "sha512-Rzv31Tt+ZJG+jy31Sx7iGIo+GH778XfFXP4akt/c8U4Lo5zA+nr6iPNJ+dACjoX61ZxV7GWDot7rzrenWVJ3+w=="],
 
     "@types/babel__core": ["@types/babel__core@7.20.5", "", { "dependencies": { "@babel/parser": "^7.20.7", "@babel/types": "^7.20.7", "@types/babel__generator": "*", "@types/babel__template": "*", "@types/babel__traverse": "*" } }, "sha512-qoQprZvz5wQFJwMDqeseRXWv3rqMvhgpbXFfVyWhbx9X47POIA6i/+dXefEmZKoAgOaTdaIgNSMqMIU61yRyzA=="],
 

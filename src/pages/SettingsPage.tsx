@@ -3,11 +3,16 @@ import { A } from "@solidjs/router";
 import {
   type AccountInfo,
   type Actor,
+  type BrowserNotificationPushState,
   deleteAccount,
+  disableBrowserNotificationPush,
+  enableBrowserNotificationPush,
   fetchAccounts,
   fetchBlockedUsers,
   fetchMutedUsers,
+  getBrowserNotificationPushState,
   logout,
+  refreshBrowserNotificationPush,
   switchAccount,
   unblockUser,
   unmuteUser,
@@ -15,6 +20,11 @@ import {
 import { PageLayout, PageHeader } from "../components/PageLayout.tsx";
 import { useApp } from "../lib/app-context.tsx";
 import { fullHandle, profilePath, titleFor, UserAvatar } from "../lib/ui.tsx";
+import {
+  clearYurumeBrowserPushBeforeSignOut,
+  resolveYurumeBrowserPushConfig,
+  yurumeBrowserPushConfig,
+} from "../lib/browser-push.ts";
 
 export default function SettingsPage() {
   const app = useApp();
@@ -23,6 +33,13 @@ export default function SettingsPage() {
   const [blocked, setBlocked] = createSignal<Actor[]>([]);
   const [muted, setMuted] = createSignal<Actor[]>([]);
   const [busy, setBusy] = createSignal(false);
+  const [pushConfig, setPushConfig] =
+    createSignal<ReturnType<typeof yurumeBrowserPushConfig>>(null);
+  const [pushState, setPushState] =
+    createSignal<BrowserNotificationPushState>("unconfigured");
+  const [pushBusy, setPushBusy] = createSignal(false);
+  const [pushConfigResolved, setPushConfigResolved] = createSignal(false);
+  const [pushRegistrationError, setPushRegistrationError] = createSignal(false);
 
   onMount(() => {
     void fetchAccounts()
@@ -37,7 +54,44 @@ export default function SettingsPage() {
     void fetchMutedUsers()
       .then(setMuted)
       .catch(() => {});
+    void (async () => {
+      try {
+        const config = await resolveYurumeBrowserPushConfig();
+        setPushConfig(config);
+        let state = await getBrowserNotificationPushState(config);
+        if (config && state === "enabled") {
+          state = await refreshBrowserNotificationPush(config);
+        }
+        setPushState(state);
+      } catch {
+        setPushRegistrationError(true);
+        setPushState("disabled");
+      } finally {
+        setPushConfigResolved(true);
+      }
+    })();
   });
+
+  const handleTogglePush = async () => {
+    const config = pushConfig();
+    if (!config || pushBusy()) return;
+    setPushBusy(true);
+    setPushRegistrationError(false);
+    try {
+      const next =
+        pushState() === "enabled"
+          ? await disableBrowserNotificationPush(config)
+          : (await enableBrowserNotificationPush(config)).state;
+      setPushState(next);
+      if (next === "enabled") app.toast("プッシュ通知を有効にしました");
+      if (next === "disabled") app.toast("プッシュ通知を無効にしました");
+    } catch {
+      setPushRegistrationError(true);
+      app.toast("プッシュ通知の設定に失敗しました", "error");
+    } finally {
+      setPushBusy(false);
+    }
+  };
 
   const handleSwitch = async (apId: string) => {
     if (apId === currentApId() || busy()) return;
@@ -59,6 +113,7 @@ export default function SettingsPage() {
     });
     if (!ok) return;
     try {
+      await clearYurumeBrowserPushBeforeSignOut();
       await logout();
     } catch {
       /* reload anyway */
@@ -75,6 +130,7 @@ export default function SettingsPage() {
     });
     if (!ok) return;
     try {
+      await clearYurumeBrowserPushBeforeSignOut();
       await deleteAccount();
       window.location.reload();
     } catch {
@@ -145,6 +201,40 @@ export default function SettingsPage() {
         </section>
 
         <section class="p-settings-section">
+          <h2>通知</h2>
+          <div class="p-settings-account">
+            <span class="p-settings-account-main">
+              <strong>プッシュ通知</strong>
+              <small>
+                {!pushConfigResolved()
+                  ? "通知設定を確認中です"
+                  : pushRegistrationError()
+                    ? "サーバーへの登録を確認できませんでした"
+                    : pushStateLabel(pushState())}
+              </small>
+            </span>
+            <button
+              type="button"
+              class="p-settings-btn"
+              disabled={
+                pushBusy() ||
+                !pushConfigResolved() ||
+                pushState() === "unsupported" ||
+                pushState() === "unconfigured" ||
+                pushState() === "denied"
+              }
+              onClick={() => void handleTogglePush()}
+            >
+              {pushBusy()
+                ? "更新中"
+                : pushState() === "enabled"
+                  ? "無効にする"
+                  : "有効にする"}
+            </button>
+          </div>
+        </section>
+
+        <section class="p-settings-section">
           <h2>プライバシー</h2>
           <h3>ブロック中のユーザー</h3>
           <For each={blocked()} fallback={<p class="p-settings-empty">なし</p>}>
@@ -180,6 +270,21 @@ export default function SettingsPage() {
       </div>
     </PageLayout>
   );
+}
+
+function pushStateLabel(state: BrowserNotificationPushState): string {
+  switch (state) {
+    case "enabled":
+      return "このブラウザで有効です";
+    case "disabled":
+      return "このブラウザでは無効です";
+    case "denied":
+      return "ブラウザの通知設定でブロックされています";
+    case "unconfigured":
+      return "この環境では通知配信が設定されていません";
+    default:
+      return "このブラウザはプッシュ通知に対応していません";
+  }
 }
 
 function ModRow(props: {

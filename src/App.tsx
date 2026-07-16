@@ -14,9 +14,7 @@ import {
   type ActorNote,
   type ActorStories,
   type CommunityDetail,
-  type CommunityMessage,
   type DMContact,
-  type DMMessage,
   type DMRequest,
   type Post,
   type Story,
@@ -28,27 +26,23 @@ import {
   deleteStory,
   fetchArchivedDMConversations,
   fetchCommunities,
-  fetchCommunityMessages,
   fetchDMContact,
-  fetchDMContacts,
   fetchDMRequests,
   fetchNotes,
   fetchStories,
   fetchTimeline,
-  fetchUserDMMessages,
   joinCommunity,
   rejectDMRequest,
   unarchiveDMConversation,
   likeStory,
   markStoryViewed,
-  sendCommunityMessage,
-  sendUserDMMessage,
   shareStory,
   unlikeStory,
   uploadMedia,
 } from "@takosjp/yurucommu-api";
 import { useApp } from "./lib/app-context.tsx";
 import { useChat } from "./lib/chat-context.tsx";
+import { DialogA11y } from "./lib/dialog.tsx";
 import {
   ComposeFab,
   PostComposer,
@@ -58,9 +52,10 @@ import {
   actorHandle,
   attachmentSrc,
   communityPath,
+  contactSubtitle,
+  formatListTime,
   formatNoteExpiry,
   formatPostTime,
-  formatTime,
   profilePath,
   titleFor,
   UserAvatar as Avatar,
@@ -75,15 +70,6 @@ function normalizeTab(value: unknown): AppTab {
   return value === "home" || value === "talk" || value === "timeline"
     ? value
     : "talk";
-}
-
-function contactSubtitle(contact: DMContact): string {
-  if (contact.type === "community") {
-    return contact.member_count ? `${contact.member_count} members` : "Group";
-  }
-  return contact.username.startsWith("@")
-    ? contact.username
-    : `@${contact.preferred_username}`;
 }
 
 function parseStoryDuration(value: string | null | undefined): number {
@@ -263,9 +249,15 @@ function HomeView(props: {
               each={people()}
               fallback={
                 <li class="p-home-empty">
-                  {searching()
-                    ? "一致する友だちはいません"
-                    : "まだ友だちはいません"}
+                  <Show
+                    when={!searching()}
+                    fallback={<>一致する友だちはいません</>}
+                  >
+                    まだ友だちはいません
+                    <A class="p-home-empty-cta" href="/?tab=timeline">
+                      タイムラインで友だちを探す
+                    </A>
+                  </Show>
                 </li>
               }
             >
@@ -435,13 +427,16 @@ function CommunityCreateModal(props: {
     }
   };
 
+  let dialogRoot: HTMLDivElement | undefined;
   return (
     <div
       class="p-composer"
       role="dialog"
       aria-modal="true"
       aria-label="グループを作成"
+      ref={(el) => (dialogRoot = el)}
     >
+      <DialogA11y root={() => dialogRoot} onClose={props.onClose} />
       <button
         type="button"
         class="p-composer-dismiss"
@@ -568,6 +563,7 @@ function HomeNoteBar(props: {
   const [draft, setDraft] = createSignal("");
   const [saving, setSaving] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
+  let noteDialogRoot: HTMLDivElement | undefined;
   const myNote = () =>
     props.notes.find(
       (note) => note.is_mine || note.actor.ap_id === props.actor.ap_id,
@@ -653,7 +649,12 @@ function HomeNoteBar(props: {
           role="dialog"
           aria-modal="true"
           aria-label="ノート"
+          ref={(el) => (noteDialogRoot = el)}
         >
+          <DialogA11y
+            root={() => noteDialogRoot}
+            onClose={() => setEditorOpen(false)}
+          />
           <button
             type="button"
             class="p-note-editor-dismiss"
@@ -836,7 +837,7 @@ function TalkListPane(props: {
             <input
               name="talkSearch"
               type="search"
-              placeholder="トークルーム・メッセージを検索"
+              placeholder="トークを検索"
               value={query()}
               onInput={(event) => setQuery(event.currentTarget.value)}
             />
@@ -903,7 +904,7 @@ function TalkListPane(props: {
                           <span>{titleFor(contact)}</span>
                           <Show when={contact.last_message_at}>
                             <time class="c-talk-rooms-time">
-                              {formatTime(contact.last_message_at)}
+                              {formatListTime(contact.last_message_at)}
                             </time>
                           </Show>
                         </span>
@@ -1092,6 +1093,21 @@ function TimelineView(props: {
         onStoryClick={props.onStory}
         onAddStory={props.onAddStory}
       />
+      <div class="p-timeline-toolbar">
+        <button
+          type="button"
+          class="p-timeline-refresh"
+          disabled={props.postsLoading}
+          onClick={() => props.onRetry()}
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6" />
+          </svg>
+          {props.postsLoading && props.posts.length > 0
+            ? "更新中…"
+            : "最新に更新"}
+        </button>
+      </div>
       <div class="p-timeline-feed">
         <Show
           when={!props.postsLoading || props.posts.length > 0}
@@ -1157,6 +1173,7 @@ function StoryViewerModal(props: {
   actor: Actor;
   actorStories: ActorStories[];
   initialActorIndex: number | null;
+  initialStoryIndex?: number;
   origin?: string | null;
   onClose: () => void;
   onLike?: (story: Story) => Promise<void>;
@@ -1174,8 +1191,18 @@ function StoryViewerModal(props: {
   createEffect(() => {
     const next = props.initialActorIndex;
     if (next === null || props.actorStories.length === 0) return;
-    setActorIndex(Math.min(Math.max(next, 0), props.actorStories.length - 1));
-    setStoryIndex(0);
+    const nextActorIndex = Math.min(
+      Math.max(next, 0),
+      props.actorStories.length - 1,
+    );
+    const storyCount = props.actorStories[nextActorIndex]?.stories.length ?? 0;
+    setActorIndex(nextActorIndex);
+    setStoryIndex(
+      Math.min(
+        Math.max(props.initialStoryIndex ?? 0, 0),
+        Math.max(storyCount - 1, 0),
+      ),
+    );
     setMediaError(false);
     setPaused(false);
   });
@@ -1277,17 +1304,18 @@ function StoryViewerModal(props: {
     }),
   );
 
+  // Escape close + focus trap live in DialogA11y; this handles the arrows.
   createEffect(() => {
     if (props.initialActorIndex === null) return;
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "ArrowLeft") goPrev();
       else if (event.key === "ArrowRight") goNext();
-      else if (event.key === "Escape") props.onClose();
     };
     document.addEventListener("keydown", onKey);
     onCleanup(() => document.removeEventListener("keydown", onKey));
   });
 
+  let viewerRoot: HTMLDivElement | undefined;
   return (
     <Show when={props.initialActorIndex !== null && currentStory()}>
       {(story) => (
@@ -1296,7 +1324,9 @@ function StoryViewerModal(props: {
           role="dialog"
           aria-modal="true"
           aria-label="ストーリービューア"
+          ref={(el) => (viewerRoot = el)}
         >
+          <DialogA11y root={() => viewerRoot} onClose={props.onClose} />
           <section class="p-story-viewer-panel">
             <button
               class="p-story-close"
@@ -1500,19 +1530,22 @@ function StoryComposerModal(props: {
       props.onClose();
     } catch (err) {
       console.error("Failed to create story:", err);
-      setError("Story の作成に失敗しました");
+      setError("ストーリーの作成に失敗しました");
       setSaving(false);
     }
   };
 
+  let dialogRoot: HTMLDivElement | undefined;
   return (
     <Show when={props.open}>
       <div
         class="p-story-composer"
         role="dialog"
         aria-modal="true"
-        aria-label="Story 作成"
+        aria-label="ストーリー作成"
+        ref={(el) => (dialogRoot = el)}
       >
+        <DialogA11y root={() => dialogRoot} onClose={close} />
         <button
           type="button"
           class="p-story-composer-dismiss"
@@ -1527,7 +1560,7 @@ function StoryComposerModal(props: {
           }}
         >
           <div class="p-story-composer-head">
-            <h2>Story 作成</h2>
+            <h2>ストーリー作成</h2>
             <button type="button" onClick={close} aria-label="閉じる">
               <CloseIcon />
             </button>
@@ -1568,7 +1601,7 @@ export default function App() {
   const app = useApp();
   const chat = useChat();
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const tab = (): AppTab => normalizeTab(searchParams.tab);
 
   const [feedPosts, setFeedPosts] = createSignal<Post[]>([]);
@@ -1577,6 +1610,7 @@ export default function App() {
   const [feedCursor, setFeedCursor] = createSignal<string | null>(null);
   const [feedHasMore, setFeedHasMore] = createSignal(false);
   const [loadingMore, setLoadingMore] = createSignal(false);
+  let feedLoadedAt = 0;
 
   const loadFeed = async () => {
     setFeedLoading(true);
@@ -1589,9 +1623,18 @@ export default function App() {
     } catch {
       setFeedError(true);
     } finally {
+      feedLoadedAt = Date.now();
       setFeedLoading(false);
     }
   };
+
+  // The feed otherwise only loads once per session: refresh it when the user
+  // returns to the timeline tab after it has gone stale.
+  const FEED_STALE_MS = 60_000;
+  createEffect(() => {
+    if (tab() !== "timeline" || feedLoading()) return;
+    if (Date.now() - feedLoadedAt > FEED_STALE_MS) void loadFeed();
+  });
 
   const loadMoreFeed = async () => {
     const cursor = feedCursor();
@@ -1625,6 +1668,7 @@ export default function App() {
   const [storyViewerActorIndex, setStoryViewerActorIndex] = createSignal<
     number | null
   >(null);
+  const [storyViewerStoryIndex, setStoryViewerStoryIndex] = createSignal(0);
   const [storyComposerOpen, setStoryComposerOpen] = createSignal(false);
   const [postComposerOpen, setPostComposerOpen] = createSignal(false);
 
@@ -1632,7 +1676,40 @@ export default function App() {
     const actualIndex = (stories() ?? []).findIndex(
       (item) => item.actor.ap_id === group.actor.ap_id,
     );
-    if (actualIndex >= 0) setStoryViewerActorIndex(actualIndex);
+    if (actualIndex >= 0) {
+      setStoryViewerStoryIndex(0);
+      setStoryViewerActorIndex(actualIndex);
+    }
+  };
+
+  // Notification targets use `/?story=<AP id>`. Resolve the exact active story
+  // from the already-loaded story bar data; expired/deleted stories safely
+  // degrade to the normal home view.
+  createEffect(() => {
+    const raw = searchParams.story;
+    const storyApId = Array.isArray(raw) ? raw[0] : raw;
+    const groups = stories() ?? [];
+    if (!storyApId || stories.loading || stories.error) return;
+    for (const [actorIndex, group] of groups.entries()) {
+      const storyIndex = group.stories.findIndex(
+        (story) => story.ap_id === storyApId,
+      );
+      if (storyIndex < 0) continue;
+      setStoryViewerStoryIndex(storyIndex);
+      setStoryViewerActorIndex(actorIndex);
+      return;
+    }
+
+    setSearchParams({ story: undefined }, { replace: true });
+  });
+
+  const closeStoryViewer = () => {
+    setStoryViewerActorIndex(null);
+    setStoryViewerStoryIndex(0);
+    if (searchParams.story) {
+      setSearchParams({ story: undefined }, { replace: true });
+    }
+    void refetchStories();
   };
 
   const patchTimelinePost = (apId: string, patch: (post: Post) => Post) => {
@@ -1695,11 +1772,9 @@ export default function App() {
         actor={app.actor()}
         actorStories={stories() ?? []}
         initialActorIndex={storyViewerActorIndex()}
+        initialStoryIndex={storyViewerStoryIndex()}
         origin={app.origin()}
-        onClose={() => {
-          setStoryViewerActorIndex(null);
-          void refetchStories();
-        }}
+        onClose={closeStoryViewer}
         onMarkViewed={async (target) => {
           await markStoryViewed(target.ap_id);
           await refetchStories();
@@ -1716,8 +1791,7 @@ export default function App() {
         onDelete={async (target) => {
           try {
             await deleteStory(target.ap_id);
-            setStoryViewerActorIndex(null);
-            await refetchStories();
+            closeStoryViewer();
             app.toast("ストーリーを削除しました");
           } catch {
             app.toast("削除に失敗しました", "error");
@@ -1728,8 +1802,8 @@ export default function App() {
             try {
               const contact = await fetchDMContact(target.author.ap_id);
               if (contact) {
-                chat.selectContact(contact);
                 navigate("/?tab=talk");
+                chat.selectContact(contact);
               }
             } catch {
               app.toast("トークを開けませんでした", "error");

@@ -23,7 +23,7 @@ export function ServerConnect(props: { onConnect: (origin: string) => void }) {
     <main class="p-connect">
       <section>
         <div class="connect-logo">
-          <span>Y</span>
+          <span>yurumeet</span>
         </div>
         <h1>Yurumeet</h1>
         <p>
@@ -89,7 +89,7 @@ export function SignedOut(props: { origin: string }) {
     <main class="p-connect">
       <section>
         <div class="connect-logo">
-          <span>Y</span>
+          <span>yurumeet</span>
         </div>
         <h1>サインイン</h1>
         <p>この yurucommu のアカウントで Yurumeet を開きます。</p>

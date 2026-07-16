@@ -15,6 +15,7 @@ import {
   unrepostPost,
 } from "@takosjp/yurucommu-api";
 import { useApp } from "../../lib/app-context.tsx";
+import { createEscapeClose, DialogA11y } from "../../lib/dialog.tsx";
 import {
   actorHandle,
   attachmentSrc,
@@ -159,6 +160,8 @@ export function PostCard(props: {
   const body = () => stripHtml(props.post.content).trim();
   const hidden = () => !!props.post.summary && !cwRevealed();
   const openDetail = () => navigate(postPath(props.post.ap_id));
+
+  createEscapeClose(menuOpen, () => setMenuOpen(false));
 
   const toggleLike = async () => {
     if (liking()) return;
@@ -508,13 +511,16 @@ function EditPostModal(props: {
     }
   };
 
+  let dialogRoot: HTMLDivElement | undefined;
   return (
     <div
       class="p-composer"
       role="dialog"
       aria-modal="true"
       aria-label="投稿を編集"
+      ref={(el) => (dialogRoot = el)}
     >
+      <DialogA11y root={() => dialogRoot} onClose={props.onClose} />
       <button
         type="button"
         class="p-composer-dismiss"

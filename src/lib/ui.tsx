@@ -24,6 +24,24 @@ export function actorHandle(value: ActorLike): string {
   return handle.startsWith("@") ? handle : `@${handle}`;
 }
 
+/** Secondary line for a conversation/contact row. */
+export function contactSubtitle(contact: {
+  type?: "user" | "community";
+  username?: string;
+  preferred_username?: string;
+  member_count?: number;
+}): string {
+  if (contact.type === "community") {
+    return contact.member_count
+      ? `${contact.member_count}人のメンバー`
+      : "グループ";
+  }
+  const username = contact.username ?? "";
+  return username.startsWith("@")
+    ? username
+    : `@${contact.preferred_username ?? username}`;
+}
+
 /** Full federated handle `@user@domain` when a domain can be derived. */
 export function fullHandle(value: ActorLike): string {
   const username = value.username ?? "";
@@ -49,14 +67,43 @@ export function formatPostTime(value: string | null | undefined): string {
   if (Number.isNaN(date.getTime())) return "";
   const diffMs = Date.now() - date.getTime();
   const minutes = Math.max(0, Math.floor(diffMs / 60000));
-  if (minutes < 1) return "now";
-  if (minutes < 60) return `${minutes}m`;
+  if (minutes < 1) return "今";
+  if (minutes < 60) return `${minutes}分`;
   const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h`;
+  if (hours < 24) return `${hours}時間`;
   const days = Math.floor(hours / 24);
-  if (days < 7) return `${days}d`;
+  if (days < 7) return `${days}日`;
   return new Intl.DateTimeFormat(undefined, {
     month: "short",
+    day: "numeric",
+  }).format(date);
+}
+
+/**
+ * Timestamp for a conversation-list row: time of day for today, "昨日" for
+ * yesterday, month/day within the last year, otherwise a full date. (A bare
+ * HH:MM reads as "today" for rows that are actually weeks old.)
+ */
+export function formatListTime(value: string | null | undefined): string {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  const startOfDay = (x: Date) =>
+    new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const diffDays = Math.round(
+    (startOfDay(new Date()) - startOfDay(date)) / 86400000,
+  );
+  if (diffDays <= 0) return formatTime(value);
+  if (diffDays === 1) return "昨日";
+  if (diffDays < 365) {
+    return new Intl.DateTimeFormat(undefined, {
+      month: "numeric",
+      day: "numeric",
+    }).format(date);
+  }
+  return new Intl.DateTimeFormat(undefined, {
+    year: "numeric",
+    month: "numeric",
     day: "numeric",
   }).format(date);
 }

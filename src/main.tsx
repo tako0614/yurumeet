@@ -10,11 +10,13 @@ import {
   Show,
   type JSX,
 } from "solid-js";
+import { DialogA11y } from "./lib/dialog.tsx";
 import { Route, Router } from "@solidjs/router";
 import {
   fetchCurrentActor,
   fetchDMUnreadCount,
   fetchUnreadCount,
+  refreshBrowserNotificationPush,
 } from "@takosjp/yurucommu-api";
 import App from "./App.tsx";
 import { ServerConnect, SignedOut } from "./components/AuthScreens.tsx";
@@ -31,6 +33,7 @@ import {
   configureYurumeetServerOrigin,
   readYurumeetServerOrigin,
 } from "./server-config.ts";
+import { resolveYurumeBrowserPushConfig } from "./lib/browser-push.ts";
 import "./styles.css";
 
 const PostDetailPage = lazy(() => import("./pages/PostDetailPage.tsx"));
@@ -99,7 +102,13 @@ function AppRoot(props: { children?: JSX.Element }) {
     });
   });
   createEffect(() => {
-    if (actor()) refreshBadges();
+    if (!actor()) return;
+    refreshBadges();
+    void resolveYurumeBrowserPushConfig()
+      .then((config) =>
+        config ? refreshBrowserNotificationPush(config) : undefined,
+      )
+      .catch(() => {});
   });
 
   const toast = (message: string, tone: ToastTone = "info") => {
@@ -194,20 +203,7 @@ function ConfirmHost(props: {
   state: { options: ConfirmOptions; resolve: (value: boolean) => void } | null;
   onSettle: (value: boolean) => void;
 }) {
-  let confirmBtn: HTMLButtonElement | undefined;
-  createEffect(() => {
-    if (!props.state) return;
-    // Move focus into the dialog and trap Escape/Tab while it is open.
-    queueMicrotask(() => confirmBtn?.focus());
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        props.onSettle(false);
-      }
-    };
-    document.addEventListener("keydown", onKey);
-    onCleanup(() => document.removeEventListener("keydown", onKey));
-  });
+  let dialogRoot: HTMLDivElement | undefined;
   return (
     <Show when={props.state}>
       {(state) => (
@@ -223,7 +219,12 @@ function ConfirmHost(props: {
             role="alertdialog"
             aria-modal="true"
             aria-label={state().options.title}
+            ref={(el) => (dialogRoot = el)}
           >
+            <DialogA11y
+              root={() => dialogRoot}
+              onClose={() => props.onSettle(false)}
+            />
             <strong>{state().options.title}</strong>
             <Show when={state().options.message}>
               <p>{state().options.message}</p>
@@ -238,7 +239,7 @@ function ConfirmHost(props: {
               </button>
               <button
                 type="button"
-                ref={(el) => (confirmBtn = el)}
+                autofocus
                 classList={{
                   "yc-confirm-ok": true,
                   "is-danger": !!state().options.danger,

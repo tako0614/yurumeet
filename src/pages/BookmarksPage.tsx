@@ -10,14 +10,21 @@ export default function BookmarksPage() {
   const [posts, setPosts] = createSignal<Post[]>([]);
   const [loading, setLoading] = createSignal(true);
   const [error, setError] = createSignal(false);
+  const [cursor, setCursor] = createSignal<string | null>(null);
+  const [hasMore, setHasMore] = createSignal(false);
+  const [loadingMore, setLoadingMore] = createSignal(false);
 
   const load = () => {
     setLoading(true);
     setError(false);
+    setCursor(null);
+    setHasMore(false);
     void (async () => {
       try {
         const page = await fetchBookmarks({ limit: 30 });
         setPosts(page.posts);
+        setCursor(page.nextCursor);
+        setHasMore(page.hasMore);
       } catch {
         setError(true);
       } finally {
@@ -26,6 +33,26 @@ export default function BookmarksPage() {
     })();
   };
   onMount(load);
+
+  const loadMore = async () => {
+    const before = cursor();
+    if (loadingMore() || !hasMore() || !before) return;
+    setLoadingMore(true);
+    try {
+      const page = await fetchBookmarks({ limit: 30, before });
+      const seen = new Set(posts().map((p) => p.ap_id));
+      setPosts((prev) => [
+        ...prev,
+        ...page.posts.filter((p) => !seen.has(p.ap_id)),
+      ]);
+      setCursor(page.nextCursor);
+      setHasMore(page.hasMore);
+    } catch {
+      app.toast("読み込みに失敗しました", "error");
+    } finally {
+      setLoadingMore(false);
+    }
+  };
 
   const patchPost = (apId: string, patch: (p: Post) => Post) =>
     setPosts((prev) => prev.map((p) => (p.ap_id === apId ? patch(p) : p)));
@@ -76,6 +103,17 @@ export default function BookmarksPage() {
                 />
               )}
             </For>
+            <Show when={hasMore()}>
+              <div class="p-timeline-more">
+                <button
+                  type="button"
+                  disabled={loadingMore()}
+                  onClick={() => void loadMore()}
+                >
+                  {loadingMore() ? "読み込み中…" : "もっと見る"}
+                </button>
+              </div>
+            </Show>
           </Show>
         </Show>
       </div>

@@ -4,7 +4,7 @@ terraform {
   required_providers {
     cloudflare = {
       source  = "cloudflare/cloudflare"
-      version = "~> 5.0"
+      version = "= 5.19.1"
     }
     http = {
       source  = "hashicorp/http"
@@ -103,6 +103,39 @@ variable "takosumi_accounts_client_id" {
   default     = ""
 }
 
+variable "notification_push_gateway_url" {
+  description = "Optional public HTTPS notify endpoint for the stateless notification push gateway."
+  type        = string
+  default     = ""
+
+  validation {
+    condition = trimspace(var.notification_push_gateway_url) == "" || (
+      can(regex("^https://[A-Za-z0-9][A-Za-z0-9.-]*\\.[A-Za-z0-9-]+(:443)?(/[^[:space:]#]*)?(\\?[^[:space:]#]*)?$", trimspace(var.notification_push_gateway_url))) &&
+      !can(regex("^https://[0-9]+(\\.[0-9]+){3}(:443)?(/|$)", trimspace(var.notification_push_gateway_url))) &&
+      !can(regex("^https://[^/:?#]+\\.(localhost|local|internal|home|lan)(:443)?(/|$)", lower(trimspace(var.notification_push_gateway_url))))
+    )
+    error_message = "notification_push_gateway_url must be empty or a public-DNS https URL using the default/443 port."
+  }
+}
+
+variable "notification_push_gateway_token" {
+  description = "Optional bearer used only by the Yurumeet Worker when calling the exact notification_push_gateway_url."
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "notification_push_web_push_public_key" {
+  description = "Optional public base64url VAPID P-256 key exposed to browser clients for Web Push subscription."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = trimspace(var.notification_push_web_push_public_key) == "" || can(regex("^B[A-P][A-Za-z0-9_-]{85}$", trimspace(var.notification_push_web_push_public_key)))
+    error_message = "notification_push_web_push_public_key must be empty or an unpadded 87-character base64url uncompressed P-256 public key."
+  }
+}
+
 variable "cloudflare_workers_subdomain" {
   description = "Cloudflare workers.dev subdomain used to derive launch_url for Worker-dev deployments."
   type        = string
@@ -121,9 +154,20 @@ variable "enable_cloudflare_worker_script" {
 }
 
 variable "worker_bundle_path" {
-  description = "Local path to the prebuilt Worker module JS file used when worker_bundle_url is empty."
+  description = "Local path to a source-built Worker module JS file. Used only when worker_release_tag and worker_bundle_url are both empty."
   type        = string
   default     = "dist/takos-worker.js"
+}
+
+variable "worker_release_tag" {
+  description = "GitHub release tag whose takosumi-artifact.json selects the default Worker bundle and SHA-256. Set empty to use worker_bundle_path."
+  type        = string
+  default     = "v0.1.0"
+
+  validation {
+    condition     = trimspace(var.worker_release_tag) == "" || can(regex("^v[0-9]+\\.[0-9]+\\.[0-9]+([-+][0-9A-Za-z.-]+)?$", trimspace(var.worker_release_tag)))
+    error_message = "worker_release_tag must be empty or a SemVer-like Git tag beginning with v."
+  }
 }
 
 variable "worker_bundle_url" {
@@ -205,13 +249,17 @@ locals {
   cloudflare_resources_enabled  = var.enable_cloudflare_resources
   cloudflare_worker_enabled     = local.cloudflare_resources_enabled && var.enable_cloudflare_worker_script
   cloudflare_route_enabled      = local.cloudflare_worker_enabled && trimspace(var.cloudflare_route_zone_id) != "" && trimspace(var.cloudflare_route_pattern) != ""
-  worker_bundle_url             = trimspace(var.worker_bundle_url)
+  worker_release_tag            = trimspace(var.worker_release_tag)
+  worker_bundle_explicit_url    = trimspace(var.worker_bundle_url)
+  worker_bundle_uses_manifest   = local.cloudflare_worker_enabled && local.worker_bundle_explicit_url == "" && local.worker_release_tag != ""
+  worker_release_manifest       = local.worker_bundle_uses_manifest ? jsondecode(data.http.worker_release_manifest[0].response_body) : null
+  worker_bundle_url             = local.worker_bundle_explicit_url != "" ? local.worker_bundle_explicit_url : try(local.worker_release_manifest.artifact.url, "")
   worker_bundle_uses_url        = local.cloudflare_worker_enabled && local.worker_bundle_url != ""
-  worker_bundle_sha256_input    = trimspace(var.worker_bundle_sha256)
+  worker_bundle_sha256_input    = trimspace(var.worker_bundle_sha256) != "" ? trimspace(var.worker_bundle_sha256) : (local.worker_bundle_uses_manifest ? try(local.worker_release_manifest.artifact.sha256, "") : "")
   worker_bundle_expected_sha256 = startswith(local.worker_bundle_sha256_input, "sha256:") ? replace(local.worker_bundle_sha256_input, "sha256:", "") : local.worker_bundle_sha256_input
   worker_bundle_local_path      = startswith(var.worker_bundle_path, "/") ? var.worker_bundle_path : "${path.module}/${var.worker_bundle_path}"
   worker_bundle_body            = local.worker_bundle_uses_url ? data.http.worker_bundle[0].response_body : null
-  worker_bundle_content_sha256  = local.cloudflare_worker_enabled ? (local.worker_bundle_uses_url ? sha256(data.http.worker_bundle[0].response_body) : filesha256(local.worker_bundle_local_path)) : null
+  worker_bundle_content_sha256  = local.cloudflare_worker_enabled ? (local.worker_bundle_uses_url ? sha256(data.http.worker_bundle[0].response_body) : (local.worker_bundle_uses_manifest ? null : filesha256(local.worker_bundle_local_path))) : null
   worker_assets_enabled         = local.cloudflare_worker_enabled && var.enable_worker_assets && !local.worker_bundle_uses_url
   resource_prefix               = var.project_name
   worker_name                   = trimspace(var.worker_name) != "" ? trimspace(var.worker_name) : local.resource_prefix
@@ -222,12 +270,35 @@ locals {
   has_takosumi_accounts_oidc    = trimspace(var.takosumi_accounts_issuer_url) != "" && trimspace(var.takosumi_accounts_client_id) != ""
   effective_encryption_key      = local.provided_encryption_key != "" ? local.provided_encryption_key : random_id.encryption_key.hex
   effective_auth_password_hash  = local.provided_auth_password_hash != "" ? local.provided_auth_password_hash : (local.has_takosumi_accounts_oidc ? "" : try(random_id.bootstrap_auth_token[0].hex, ""))
+  notification_push_gateway_url = trimspace(var.notification_push_gateway_url)
+  notification_push_gateway_host = try(regex(
+    "^https://([^/:?#]+)",
+    local.notification_push_gateway_url,
+  )[0], "")
+  notification_push_web_push_public_key = trimspace(var.notification_push_web_push_public_key)
+  notification_push_gateway_token       = trimspace(var.notification_push_gateway_token)
 
   d1_database_name    = "${local.resource_prefix}-db"
   r2_media_bucket     = "${local.resource_prefix}-media"
   kv_namespace_title  = "${local.resource_prefix}-kv"
   delivery_queue_name = "${local.resource_prefix}-delivery"
   delivery_dlq_name   = "${local.resource_prefix}-delivery-dlq"
+}
+
+data "http" "worker_release_manifest" {
+  count              = local.worker_bundle_uses_manifest ? 1 : 0
+  url                = "https://github.com/tako0614/yurumeet/releases/download/${local.worker_release_tag}/takosumi-artifact.json"
+  request_timeout_ms = 30000
+
+  request_headers = {
+    Accept = "application/json"
+  }
+
+  retry {
+    attempts     = 3
+    min_delay_ms = 500
+    max_delay_ms = 5000
+  }
 }
 
 resource "random_id" "encryption_key" {
@@ -248,11 +319,18 @@ resource "random_id" "bootstrap_auth_token" {
 }
 
 data "http" "worker_bundle" {
-  count = local.worker_bundle_uses_url ? 1 : 0
-  url   = local.worker_bundle_url
+  count              = local.worker_bundle_uses_url ? 1 : 0
+  url                = local.worker_bundle_url
+  request_timeout_ms = 120000
 
   request_headers = {
     Accept = "application/javascript, text/javascript, application/octet-stream"
+  }
+
+  retry {
+    attempts     = 3
+    min_delay_ms = 1000
+    max_delay_ms = 10000
   }
 }
 
@@ -374,17 +452,63 @@ resource "cloudflare_workers_script" "worker" {
         text = trimspace(var.takosumi_accounts_client_id)
       },
     ] : [],
+    local.notification_push_gateway_url != "" ? [
+      {
+        type = "plain_text"
+        name = "YURUCOMMU_NOTIFICATION_PUSH_GATEWAY_URL"
+        text = local.notification_push_gateway_url
+      },
+      {
+        type = "plain_text"
+        name = "YURUCOMMU_NOTIFICATION_PUSH_GATEWAY_ALLOWED_HOSTS"
+        text = local.notification_push_gateway_host
+      },
+    ] : [],
+    local.notification_push_web_push_public_key != "" ? [
+      {
+        type = "plain_text"
+        name = "YURUCOMMU_NOTIFICATION_PUSH_WEB_PUSH_PUBLIC_KEY"
+        text = local.notification_push_web_push_public_key
+      },
+    ] : [],
+    local.notification_push_gateway_token != "" ? [
+      {
+        type = "secret_text"
+        name = "YURUCOMMU_NOTIFICATION_PUSH_GATEWAY_TOKEN"
+        text = local.notification_push_gateway_token
+      },
+    ] : [],
   )
 
   lifecycle {
+    precondition {
+      condition = !local.worker_bundle_uses_manifest || (
+        try(local.worker_release_manifest.kind, "") == "takosumi.worker-artifact@v1" &&
+        try(local.worker_release_manifest.app, "") == "yurumeet" &&
+        try(local.worker_release_manifest.releaseTag, "") == local.worker_release_tag &&
+        local.worker_bundle_uses_url
+      )
+      error_message = "worker_release_tag must resolve to a valid yurumeet takosumi.worker-artifact@v1 manifest."
+    }
+
     precondition {
       condition     = !local.worker_bundle_uses_url || (local.worker_bundle_expected_sha256 != "" && local.worker_bundle_expected_sha256 == local.worker_bundle_content_sha256)
       error_message = "worker_bundle_sha256 is required for worker_bundle_url and must match the downloaded artifact."
     }
 
     precondition {
-      condition     = local.worker_bundle_uses_url || local.worker_bundle_expected_sha256 == "" || local.worker_bundle_expected_sha256 == local.worker_bundle_content_sha256
+      condition     = local.worker_bundle_uses_url || local.worker_bundle_uses_manifest || local.worker_bundle_expected_sha256 == "" || local.worker_bundle_expected_sha256 == local.worker_bundle_content_sha256
       error_message = "worker_bundle_sha256 does not match worker_bundle_path."
+    }
+
+    precondition {
+      condition     = (local.notification_push_gateway_url == "") == (local.notification_push_web_push_public_key == "")
+      error_message = "notification_push_gateway_url and notification_push_web_push_public_key must be configured together."
+    }
+
+    precondition {
+      condition     = local.notification_push_gateway_token == "" || local.notification_push_gateway_url != ""
+      error_message = "notification_push_gateway_token requires notification_push_gateway_url."
     }
   }
 }

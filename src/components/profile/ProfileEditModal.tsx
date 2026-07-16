@@ -1,5 +1,6 @@
 import { createSignal, Index, Show } from "solid-js";
 import { type Actor, updateProfile, uploadMedia } from "@takosjp/yurucommu-api";
+import { DialogA11y } from "../../lib/dialog.tsx";
 import { CloseIcon, UserAvatar } from "../../lib/ui.tsx";
 
 const MAX_NAME = 50;
@@ -85,13 +86,16 @@ export function ProfileEditModal(props: {
     }
   };
 
+  let dialogRoot: HTMLDivElement | undefined;
   return (
     <div
       class="p-composer"
       role="dialog"
       aria-modal="true"
       aria-label="プロフィールを編集"
+      ref={(el) => (dialogRoot = el)}
     >
+      <DialogA11y root={() => dialogRoot} onClose={props.onClose} />
       <button
         type="button"
         class="p-composer-dismiss"

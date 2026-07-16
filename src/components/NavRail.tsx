@@ -64,6 +64,10 @@ export function NavRail(props: {
     if (key === "talk") return props.unreadTalk ?? 0;
     return 0;
   };
+  const accessibleLabel = (key: NavKey, label: string): string => {
+    const count = badgeFor(key);
+    return count > 0 ? `${label}、未読 ${count}件` : label;
+  };
   const activeKey = (): NavKey | undefined => {
     if (props.active) return props.active;
     const path = location.pathname;
@@ -93,11 +97,14 @@ export function NavRail(props: {
                 "is-active": activeKey() === tab.key,
               }}
             >
-              <A href={tab.href} aria-label={tab.label}>
+              <A
+                href={tab.href}
+                aria-label={accessibleLabel(tab.key, tab.label)}
+              >
                 <NavIcon name={tab.key} />
                 <span>{tab.label}</span>
                 <Show when={badgeFor(tab.key) > 0}>
-                  <em class="l-header__badge">
+                  <em class="l-header__badge" aria-hidden="true">
                     {badgeFor(tab.key) > 99 ? "99+" : badgeFor(tab.key)}
                   </em>
                 </Show>

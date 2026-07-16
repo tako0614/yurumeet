@@ -22,6 +22,8 @@ import { PostCard } from "../components/timeline/PostCard.tsx";
 import { ProfileEditModal } from "../components/profile/ProfileEditModal.tsx";
 import { useApp } from "../lib/app-context.tsx";
 import { useChat } from "../lib/chat-context.tsx";
+import { createEscapeClose, DialogA11y } from "../lib/dialog.tsx";
+import { clearYurumeBrowserPushBeforeSignOut } from "../lib/browser-push.ts";
 import {
   attachmentSrc,
   CloseIcon,
@@ -67,6 +69,9 @@ export default function ProfilePage() {
   const [hasMore, setHasMore] = createSignal(false);
   const [loadingMore, setLoadingMore] = createSignal(false);
   const chat = useChat();
+
+  createEscapeClose(menuOpen, () => setMenuOpen(false));
+  createEscapeClose(ownMenuOpen, () => setOwnMenuOpen(false));
 
   const canSeePosts = () => {
     const p = profile();
@@ -140,8 +145,10 @@ export default function ProfilePage() {
     try {
       const contact = await fetchDMContact(p.ap_id);
       if (contact) {
-        chat.selectContact(contact);
+        // Navigate FIRST so the chat's history entry sits on top of the talk
+        // tab (back then closes the chat instead of resurrecting this page).
         navigate("/?tab=talk");
+        chat.selectContact(contact);
       }
     } catch {
       app.toast("トークを開けませんでした", "error");
@@ -221,6 +228,7 @@ export default function ProfilePage() {
     });
     if (!ok) return;
     try {
+      await clearYurumeBrowserPushBeforeSignOut();
       await logout();
     } catch {
       /* proceed to reload anyway */
@@ -670,8 +678,16 @@ function ReportModal(props: {
     setSubmitting(false);
   };
 
+  let dialogRoot: HTMLDivElement | undefined;
   return (
-    <div class="p-composer" role="dialog" aria-modal="true" aria-label="報告">
+    <div
+      class="p-composer"
+      role="dialog"
+      aria-modal="true"
+      aria-label="報告"
+      ref={(el) => (dialogRoot = el)}
+    >
+      <DialogA11y root={() => dialogRoot} onClose={props.onClose} />
       <button
         type="button"
         class="p-composer-dismiss"
@@ -756,6 +772,11 @@ function FollowListModal(props: {
   );
   const [busyId, setBusyId] = createSignal<string | null>(null);
 
+  // The follow-list API is OFFSET-paged: the next offset must count the raw
+  // rows fetched so far, NOT the rows kept after de-duplication — otherwise a
+  // page of duplicates re-fetches the same window forever.
+  let fetchedCount = 0;
+
   const fetchPage = (offset: number) =>
     props.mode === "followers"
       ? fetchFollowers(props.actorId, { limit: 50, offset })
@@ -773,9 +794,10 @@ function FollowListModal(props: {
   void (async () => {
     try {
       const page = await fetchPage(0);
+      fetchedCount = page.actors.length;
       setActors(page.actors);
       applyState(page.actors);
-      setHasMore(page.hasMore);
+      setHasMore(page.hasMore && page.actors.length > 0);
     } catch {
       setActors([]);
     } finally {
@@ -787,12 +809,15 @@ function FollowListModal(props: {
     if (loadingMore() || !hasMore()) return;
     setLoadingMore(true);
     try {
-      const page = await fetchPage(actors().length);
+      const page = await fetchPage(fetchedCount);
+      fetchedCount += page.actors.length;
       const seen = new Set(actors().map((a) => a.ap_id));
       const fresh = page.actors.filter((a) => !seen.has(a.ap_id));
       setActors((prev) => [...prev, ...fresh]);
       applyState(fresh);
-      setHasMore(page.hasMore);
+      // An empty page means the offset ran past the end regardless of what
+      // `hasMore` claims — stop offering a button that can't make progress.
+      setHasMore(page.hasMore && page.actors.length > 0);
     } catch {
       app.toast("読み込みに失敗しました", "error");
     } finally {
@@ -816,13 +841,16 @@ function FollowListModal(props: {
     }
   };
 
+  let dialogRoot: HTMLDivElement | undefined;
   return (
     <div
       class="p-sheet"
       role="dialog"
       aria-modal="true"
       aria-label={props.mode === "followers" ? "フォロワー" : "フォロー中"}
+      ref={(el) => (dialogRoot = el)}
     >
+      <DialogA11y root={() => dialogRoot} onClose={props.onClose} />
       <button
         type="button"
         class="p-sheet-dismiss"

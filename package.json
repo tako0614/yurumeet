@@ -9,18 +9,34 @@
     "dev:mock": "bun scripts/dev-mock.ts",
     "dev:mock:api": "bun scripts/dev-mock-server.ts",
     "dev:site": "bunx serve site",
-    "check": "tsc --noEmit",
+    "check": "tsc --noEmit && bun scripts/check-brand-assets.mjs",
+    "test": "bun test scripts/release-version.test.ts scripts/takosumi-release.test.ts scripts/check-core-release.test.ts && bun scripts/dev-mock-server.ts --self-test",
     "build": "bun run build:client",
     "build:client": "bunx vite build --config vite.config.ts",
     "build:takos-worker": "bun scripts/build-takos-worker.ts",
-    "takosumi:release": "bun scripts/takosumi-release.ts",
+    "deploy": "bun run deploy:cloudflare",
+    "deploy:cloudflare": "bun run build:takos-worker && bun run db:migrate:cloudflare && bunx wrangler deploy",
+    "db:migrate:cloudflare": "bunx wrangler d1 migrations apply DB --remote",
+    "check:core-release": "bun scripts/check-core-release.mjs",
+    "takosumi:release": "bun run check:core-release && bun scripts/takosumi-release.ts",
     "lint": "bun run check",
     "fmt": "bunx prettier --write index.html vite.config.ts src site scripts README.md",
     "fmt:check": "bunx prettier --check index.html vite.config.ts src site scripts README.md"
   },
+  "cloudflare": {
+    "bindings": {
+      "ENCRYPTION_KEY": {
+        "description": "Required 64-character hex key used to encrypt sensitive Yurumeet data. Generate one with `openssl rand -hex 32`."
+      },
+      "AUTH_PASSWORD_HASH": {
+        "description": "Required password credential for a direct Cloudflare install. Use a PBKDF2 salt:hash value or a strong one-time bootstrap secret."
+      }
+    }
+  },
   "dependencies": {
-    "@takosjp/yurucommu-api": "^3.0.0",
-    "@takosjp/yurucommu-core": "^3.0.1",
+    "@solidjs/router": "^0.15.0",
+    "@takosjp/yurucommu-api": "^3.1.0",
+    "@takosjp/yurucommu-core": "^3.1.0",
     "solid-js": "^1.9.0"
   },
   "devDependencies": {

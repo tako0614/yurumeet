@@ -437,6 +437,7 @@ const repliesByParent: Record<string, Post[]> = {
 posts[0].reply_count = 5;
 const readConversations = new Set<string>();
 const readNotifications = new Set<string>();
+const archivedNotifications = new Set<string>();
 const archivedUsers = new Set<string>();
 let dmRequests = [
   {
@@ -446,7 +447,7 @@ let dmRequests = [
     created_at: "2026-07-05T02:30:00.000Z",
   },
 ];
-const UNREAD_NOTIF_IDS = ["notif-req", "notif-1", "notif-reply"];
+const UNREAD_NOTIF_IDS = ["notif-req", "notif-story", "notif-1", "notif-reply"];
 
 let userMessages: Record<string, Message[]> = {
   [akari.ap_id]: [
@@ -797,6 +798,17 @@ const notificationItems: JsonValue[] = [
     created_at: "2026-07-05T05:55:00.000Z",
   },
   {
+    id: "notif-story",
+    type: "like",
+    actor: postAuthor(ren),
+    object_ap_id: `${origin}/ap/stories/story-you`,
+    target_kind: "story",
+    target_id: `${origin}/ap/stories/story-you`,
+    target_url: `/?story=${encodeURIComponent(`${origin}/ap/stories/story-you`)}`,
+    read: false,
+    created_at: "2026-07-05T05:40:00.000Z",
+  },
+  {
     id: "notif-1",
     type: "like",
     actor: postAuthor(akari),
@@ -849,14 +861,17 @@ const notificationItems: JsonValue[] = [
 function notificationsResponse(url: URL): JsonValue {
   const type = url.searchParams.get("type");
   const before = url.searchParams.get("before");
+  const archived = url.searchParams.get("archived") === "true";
   const pageSize = 8;
   const filtered = notificationItems.filter(
     (n) =>
-      !type ||
-      type === "all" ||
-      (n as { type: string }).type === type ||
-      // the "follow" tab also surfaces pending follow requests
-      (type === "follow" && (n as { type: string }).type === "follow_request"),
+      archivedNotifications.has((n as { id: string }).id) === archived &&
+      (!type ||
+        type === "all" ||
+        (n as { type: string }).type === type ||
+        // the "follow" tab also surfaces pending follow requests
+        (type === "follow" &&
+          (n as { type: string }).type === "follow_request")),
   );
   const start = before
     ? filtered.findIndex(
@@ -864,8 +879,14 @@ function notificationsResponse(url: URL): JsonValue {
       )
     : 0;
   const from = start < 0 ? filtered.length : start;
-  const page = filtered.slice(from, from + pageSize);
-  const last = page[page.length - 1] as { created_at: string } | undefined;
+  const page = filtered.slice(from, from + pageSize).map((notification) => ({
+    ...(notification as Record<string, JsonValue>),
+    read:
+      (notification as { read: boolean }).read ||
+      readNotifications.has((notification as { id: string }).id),
+  }));
+  const last = page[page.length - 1] as unknown as
+    { created_at: string } | undefined;
   const hasMore = from + pageSize < filtered.length;
   return {
     notifications: page,
@@ -917,6 +938,7 @@ function discovery(request: Request): JsonValue {
       notes: `${apiBaseUrl}/api/notes`,
       conversations: `${apiBaseUrl}/api/dm/contacts`,
       notifications: `${apiBaseUrl}/api/notifications`,
+      notificationPushers: `${apiBaseUrl}/api/notifications/pushers`,
       mobilePushRegistrations: `${apiBaseUrl}/api/mobile/push/registrations`,
     },
   };
@@ -1672,14 +1694,63 @@ async function handleRequest(request: Request): Promise<Response> {
   const searchResponse = await handleSearch(request, method, path, url);
   if (searchResponse) return searchResponse;
 
+  if (path === "/api/notifications/pushers" && method === "POST") {
+    const body = await readJson(request);
+    const pusher =
+      body.pusher && typeof body.pusher === "object"
+        ? (body.pusher as Record<string, unknown>)
+        : {};
+    const data =
+      pusher.data && typeof pusher.data === "object"
+        ? (pusher.data as Record<string, JsonValue>)
+        : {};
+    const now = new Date().toISOString();
+    return json(request, {
+      pusher: {
+        id: "mock-notification-pusher",
+        kind: "http",
+        app_id: String(pusher.app_id ?? "mock-app"),
+        data,
+        gateway_url: String(
+          data.url ?? "https://push.example.test/_matrix/push/v1/notify",
+        ),
+        product: String(body.product ?? "yurume"),
+        scope: typeof body.scope === "string" ? body.scope : null,
+        registered_at: now,
+        last_seen_at: now,
+      },
+    });
+  }
+  if (path === "/api/notifications/pushers" && method === "DELETE") {
+    return json(request, { deleted: true });
+  }
+
   if (method === "GET" && path === "/api/notifications/unread/count") {
     const count = UNREAD_NOTIF_IDS.filter(
-      (id) => !readNotifications.has(id),
+      (id) => !readNotifications.has(id) && !archivedNotifications.has(id),
     ).length;
     return json(request, { count });
   }
-  if (path.startsWith("/api/notifications/archive")) {
-    return json(request, path.endsWith("/all") ? { archived_count: 2 } : ok());
+  if (method === "POST" && path === "/api/notifications/archive/all") {
+    let archivedCount = 0;
+    for (const notification of notificationItems) {
+      const id = String((notification as { id: string }).id);
+      if (!archivedNotifications.has(id)) archivedCount += 1;
+      archivedNotifications.add(id);
+    }
+    return json(request, { archived_count: archivedCount });
+  }
+  if (
+    (method === "POST" || method === "DELETE") &&
+    path === "/api/notifications/archive"
+  ) {
+    const body = await readJson(request);
+    const ids = Array.isArray(body.ids) ? body.ids.map(String) : [];
+    for (const id of ids) {
+      if (method === "POST") archivedNotifications.add(id);
+      else archivedNotifications.delete(id);
+    }
+    return json(request, ok());
   }
   if (method === "POST" && path === "/api/notifications/read") {
     const body = await readJson(request);
@@ -1748,6 +1819,71 @@ async function runSelfTest(): Promise<void> {
       );
     }
     await response.text();
+  }
+
+  const registerResponse = await handleRequest(
+    new Request("http://mock.local/api/notifications/pushers", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        product: "yurume",
+        pusher: {
+          kind: "http",
+          app_id: "yurume.mock",
+          pushkey: "mock-pushkey",
+          data: {
+            url: "https://push.example.test/_matrix/push/v1/notify",
+            format: "event_id_only",
+          },
+        },
+      }),
+    }),
+  );
+  if (registerResponse.status !== 200) {
+    throw new Error(
+      `POST /api/notifications/pushers returned ${registerResponse.status}; expected 200`,
+    );
+  }
+  const registered = (await registerResponse.json()) as {
+    pusher?: { product?: string; app_id?: string };
+  };
+  if (
+    registered.pusher?.product !== "yurume" ||
+    registered.pusher.app_id !== "yurume.mock"
+  ) {
+    throw new Error("notification pusher registration response is invalid");
+  }
+  const unregisterResponse = await handleRequest(
+    new Request("http://mock.local/api/notifications/pushers", {
+      method: "DELETE",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        product: "yurume",
+        app_id: "yurume.mock",
+        pushkey: "mock-pushkey",
+      }),
+    }),
+  );
+  if (unregisterResponse.status !== 200) {
+    throw new Error(
+      `DELETE /api/notifications/pushers returned ${unregisterResponse.status}; expected 200`,
+    );
+  }
+
+  const notificationResponse = await handleRequest(
+    new Request("http://mock.local/api/notifications"),
+  );
+  const notificationBody = (await notificationResponse.json()) as {
+    notifications?: Array<{ target_kind?: string; target_url?: string }>;
+  };
+  if (
+    !notificationBody.notifications?.some(
+      (notification) =>
+        notification.target_kind === "story" &&
+        notification.target_url?.startsWith("/?story="),
+    )
+  ) {
+    throw new Error("story notification target is missing from mock API");
   }
 
   signedIn = previousSignedIn;

@@ -1,6 +1,7 @@
 import { createSignal, For, Show } from "solid-js";
 import { createPost, type Post, uploadMedia } from "@takosjp/yurucommu-api";
 import { useApp } from "../../lib/app-context.tsx";
+import { DialogA11y } from "../../lib/dialog.tsx";
 import { CloseIcon, UserAvatar } from "../../lib/ui.tsx";
 
 const MAX_CONTENT = 5000;
@@ -148,6 +149,7 @@ export function PostComposer(props: {
     }
   };
 
+  let dialogRoot: HTMLDivElement | undefined;
   return (
     <Show when={props.open}>
       <div
@@ -155,7 +157,12 @@ export function PostComposer(props: {
         role="dialog"
         aria-modal="true"
         aria-label={props.replyTo ? "返信を作成" : "投稿を作成"}
+        ref={(el) => (dialogRoot = el)}
       >
+        <DialogA11y
+          root={() => dialogRoot}
+          onClose={() => void requestClose()}
+        />
         <button
           type="button"
           class="p-composer-dismiss"

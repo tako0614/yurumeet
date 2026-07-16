@@ -16,6 +16,19 @@ body,
   background-color: #fafaff;
 }
 
+/*
+ * Mobile viewport: 100% tracks the layout viewport, which on iOS Safari does
+ * not shrink with the dynamic toolbars / software keyboard. Prefer the dynamic
+ * viewport unit so the chat input stays visible above the keyboard.
+ */
+@supports (height: 100dvh) {
+  html,
+  body,
+  #root {
+    height: 100dvh;
+  }
+}
+
 body {
   color: #111111;
 }
@@ -104,7 +117,7 @@ ul {
   width: 100%;
   height: 100%;
   overflow: hidden;
-  background: url("./assets/takosui/logo.png") center / contain no-repeat;
+  background: url("./assets/yurumeet-logo.png") center / contain no-repeat;
   color: transparent;
   font-size: 0;
   text-indent: 100%;
@@ -238,8 +251,9 @@ ul {
     left: 0;
     display: flex;
     width: 100%;
-    height: 64px;
-    padding: 8px;
+    /* Keep the tab bar clear of the iOS home indicator. */
+    height: calc(64px + env(safe-area-inset-bottom, 0px));
+    padding: 8px 8px calc(8px + env(safe-area-inset-bottom, 0px));
   }
 
   .l-header.is-inview {
@@ -311,7 +325,7 @@ ul {
   height: 100%;
   min-height: 0;
   flex-direction: column;
-  padding: 12px 12px 76px;
+  padding: 12px 12px calc(76px + env(safe-area-inset-bottom, 0px));
 }
 
 .p-talk-list-title {
@@ -522,10 +536,108 @@ ul {
 }
 
 .p-talk-chat-container {
+  position: relative;
   display: flex;
   height: 100%;
   flex-direction: column;
   background-color: #f0f0f5;
+}
+
+/* Jump-to-newest pill shown when messages arrive while reading history. */
+.p-talk-chat-newpill {
+  position: absolute;
+  bottom: calc(72px + env(safe-area-inset-bottom, 0px));
+  left: 50%;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  transform: translateX(-50%);
+  border: none;
+  border-radius: 999px;
+  background: #ff3b3b;
+  color: #ffffff;
+  padding: 8px 14px;
+  font-size: 12px;
+  font-weight: 800;
+  box-shadow: 0 8px 22px rgba(255, 59, 59, 0.35);
+}
+
+.p-talk-chat-newpill svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* "Load older messages" row at the top of the thread. */
+.p-talk-chat-older {
+  display: flex;
+  justify-content: center;
+  padding: 6px 0 10px;
+}
+
+.p-talk-chat-older button {
+  border: 1px solid #d4d4df;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #55555e;
+  padding: 6px 14px;
+  font-size: 12px;
+  font-weight: 700;
+  transition: background-color 0.16s ease;
+}
+
+.p-talk-chat-older button:hover {
+  background: #f2f2f8;
+}
+
+.p-talk-chat-older button:disabled {
+  color: #9a9aa4;
+}
+
+/* Optimistic send states. */
+.c-talk-chat.is-pending .c-talk-chat-msg {
+  opacity: 0.65;
+}
+
+.c-talk-chat.is-failed .c-talk-chat-msg {
+  opacity: 0.75;
+}
+
+.c-talk-chat-failed {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 4px;
+  font-size: 11px;
+}
+
+.c-talk-chat-failed span {
+  color: #e0245e;
+  font-weight: 700;
+}
+
+.c-talk-chat-failed button {
+  border: 1px solid #d4d4df;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #17171c;
+  padding: 3px 10px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.c-talk-chat-failed button:hover {
+  background: #f2f2f8;
+}
+
+.c-talk-chat-failed button.is-danger {
+  color: #e0245e;
 }
 
 .p-talk-chat-title {
@@ -793,6 +905,43 @@ ul {
   text-align: right;
 }
 
+/* LINE-style read receipt shown above the timestamp of own messages. */
+.c-talk-chat-read {
+  font-size: 10px;
+  font-weight: 700;
+}
+
+/* Media (image/video) inside a chat bubble. */
+.c-talk-chat-media {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.c-talk-chat-media a {
+  display: block;
+  line-height: 0;
+}
+
+.c-talk-chat-media img,
+.c-talk-chat-media video {
+  display: block;
+  width: 100%;
+  max-width: 260px;
+  max-height: 320px;
+  border-radius: 10px;
+  object-fit: cover;
+}
+
+.c-talk-chat-msg.has-media {
+  max-width: min(100%, 280px);
+  padding: 6px;
+}
+
+.c-talk-chat-msg.has-media p {
+  padding: 4px 8px 2px;
+}
+
 .c-talk-date {
   width: 100%;
   margin: 20px 0 8px;
@@ -808,7 +957,99 @@ ul {
 }
 
 .p-talk-chat-send {
-  padding: 0 18px 12px;
+  padding: 0 18px calc(12px + env(safe-area-inset-bottom, 0px));
+}
+
+/* Staged (already uploaded) images waiting to be sent. */
+.p-talk-chat-attach-strip {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 8px;
+  overflow-x: auto;
+}
+
+.p-talk-chat-attach-item {
+  position: relative;
+  display: block;
+  width: 56px;
+  height: 56px;
+  flex: 0 0 56px;
+  overflow: hidden;
+  border-radius: 10px;
+  background: #e8e8ef;
+}
+
+.p-talk-chat-attach-item img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.p-talk-chat-attach-item button {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  display: grid;
+  width: 18px;
+  height: 18px;
+  place-items: center;
+  border: none;
+  border-radius: 50%;
+  background: rgba(17, 17, 22, 0.66);
+  color: #ffffff;
+  padding: 4px;
+}
+
+.p-talk-chat-attach-item button svg {
+  width: 100%;
+  height: 100%;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.4;
+  stroke-linecap: round;
+}
+
+.p-talk-chat-attach-item.is-uploading {
+  background: linear-gradient(90deg, #ededf3, #f7f7fb, #ededf3);
+  background-size: 200% 100%;
+  animation: note-skeleton 1.2s ease-in-out infinite;
+}
+
+.p-talk-chat-send__attach {
+  display: grid;
+  width: 36px;
+  height: 36px;
+  flex: 0 0 36px;
+  align-self: flex-end;
+  place-items: center;
+  margin: 4px 0 4px 4px;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: #8a8a96;
+  padding: 8px;
+  transition:
+    background-color 0.16s ease,
+    color 0.16s ease;
+}
+
+.p-talk-chat-send__attach:hover {
+  background: #f2f2f8;
+  color: #55555e;
+}
+
+.p-talk-chat-send__attach:disabled {
+  color: #c9c9d2;
+}
+
+.p-talk-chat-send__attach svg {
+  width: 100%;
+  height: 100%;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .p-talk-chat-send__form {
@@ -922,7 +1163,7 @@ ul {
 .p-timeline {
   height: 100%;
   overflow-y: auto;
-  padding: 12px 12px 86px;
+  padding: 12px 12px calc(86px + env(safe-area-inset-bottom, 0px));
 }
 
 .p-home {
@@ -1571,6 +1812,25 @@ ul {
   text-align: center;
 }
 
+.p-home-empty-cta {
+  display: block;
+  width: fit-content;
+  margin: 8px auto 0;
+  border: 1px solid #ffd2d2;
+  border-radius: 999px;
+  background: #fff2f2;
+  color: #ff3b3b;
+  padding: 6px 14px;
+  font-size: 12px;
+  font-weight: 800;
+  text-decoration: none;
+  transition: background-color 0.16s ease;
+}
+
+.p-home-empty-cta:hover {
+  background: #ffe4e4;
+}
+
 .p-home-row-skeleton {
   display: grid;
   grid-template-columns: 44px minmax(0, 1fr);
@@ -1700,6 +1960,44 @@ ul {
   font-weight: 700;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.p-timeline-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  margin: 4px 0 8px;
+}
+
+.p-timeline-refresh {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid #e6e6ee;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #55555e;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 700;
+  transition: background-color 0.16s ease;
+}
+
+.p-timeline-refresh:hover {
+  background: #f2f2f8;
+}
+
+.p-timeline-refresh:disabled {
+  color: #9a9aa4;
+}
+
+.p-timeline-refresh svg {
+  width: 13px;
+  height: 13px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .p-timeline-feed {
@@ -2666,7 +2964,7 @@ ul {
 }
 
 .p-page-body {
-  padding: 12px 12px 96px;
+  padding: 12px 12px calc(96px + env(safe-area-inset-bottom, 0px));
 }
 
 @media (min-width: 769px) {
@@ -2980,7 +3278,7 @@ ul {
 .p-compose-fab {
   position: fixed;
   right: 18px;
-  bottom: 84px;
+  bottom: calc(84px + env(safe-area-inset-bottom, 0px));
   z-index: 40;
   display: grid;
   width: 56px;
@@ -3611,7 +3909,8 @@ ul {
 }
 
 .p-edit-field input,
-.p-edit-field textarea {
+.p-edit-field textarea,
+.p-edit-field select {
   width: 100%;
   border: 1px solid #e2e2ea;
   border-radius: 10px;
@@ -3796,6 +4095,25 @@ ul {
 }
 
 /* Notifications page. */
+.p-notif-header-action {
+  border: 1px solid #dedee8;
+  border-radius: 999px;
+  background: #ffffff;
+  padding: 6px 10px;
+  color: #55555e;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.p-notif-header-action:hover {
+  background: #f2f2f8;
+}
+
+.p-notif-header-action:disabled {
+  opacity: 0.5;
+}
+
 .c-notif {
   display: flex;
   align-items: flex-start;
@@ -3932,6 +4250,37 @@ ul {
   margin-top: 8px;
   border-radius: 50%;
   background: #ff3b3b;
+}
+
+.c-notif-archive {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 30px;
+  place-items: center;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: #9a9aa4;
+}
+
+.c-notif-archive:hover {
+  background: #ededf3;
+  color: #55555e;
+}
+
+.c-notif-archive:disabled {
+  opacity: 0.5;
+}
+
+.c-notif-archive svg {
+  width: 17px;
+  height: 17px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 /*
@@ -4187,6 +4536,7 @@ ul {
 
 .p-community-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   justify-content: center;
   margin-top: 16px;
@@ -4228,6 +4578,71 @@ ul {
 .p-community-leave:hover {
   border-color: #ff8a8a;
   color: #ff3b3b;
+}
+
+.p-community-invite,
+.p-community-settings {
+  border: 1px solid #d4d4df;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #17171c;
+  padding: 9px 20px;
+  font-size: 14px;
+  font-weight: 800;
+  transition:
+    background-color 0.16s ease,
+    border-color 0.16s ease;
+}
+
+.p-community-invite:hover,
+.p-community-settings:hover {
+  background: #f2f2f8;
+}
+
+.p-community-invite:disabled {
+  color: #9a9aa4;
+}
+
+.p-community-policy {
+  color: #9a9aa4;
+  font-size: 12px;
+}
+
+.p-community-member-more {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.p-community-member-menu-btn {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: #9a9aa4;
+  padding: 6px;
+  transition:
+    background-color 0.16s ease,
+    color 0.16s ease;
+}
+
+.p-community-member-menu-btn:hover {
+  background: #f2f2f8;
+  color: #55555e;
+}
+
+.p-community-member-menu-btn svg {
+  width: 100%;
+  height: 100%;
+  fill: currentColor;
+}
+
+/* Community settings modal reuses the profile avatar editor without the
+   banner overlap. */
+.p-edit-avatar--community {
+  margin: 12px 0 0 16px;
 }
 
 .p-community-section {

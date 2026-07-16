@@ -3,32 +3,99 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Yurumeet | yurucommu talk UI</title>
+    <title>yurumeet — 自分のサーバーで、トークする。</title>
     <meta
       name="description"
-      content="Yurumeet は yurucommu の同じアカウントと API を TakosUI ベースのホーム / トーク / タイムラインで開く UI です。"
+      content="yurumeet は、LINE のようにトーク中心で使えるセルフホスト・メッセージングアプリ。中央のサービスに預けず、自分のサーバーに置いて、自分たちだけのトークにする。"
     />
-    <meta property="og:title" content="Yurumeet" />
+    <meta
+      property="og:title"
+      content="yurumeet — 自分のサーバーで、トークする。"
+    />
     <meta
       property="og:description"
-      content="yurucommu の同じアカウントと API を TakosUI ベースのトーク UI で開く。"
+      content="トーク中心の、セルフホスト・メッセンジャー。中央に預けず、自分のサーバーに置いて動かすソフトウェアです。"
     />
     <meta property="og:type" content="website" />
-    <meta property="og:url" content="https://yurumeet.com" />
-    <link rel="icon" href="/icon.svg" type="image/svg+xml" />
+    <meta property="og:site_name" content="yurumeet" />
+    <meta property="og:url" content="https://yurumeet.com/" />
+    <meta property="og:image" content="https://yurumeet.com/og.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta
+      property="og:image:alt"
+      content="yurumeet — 自分のサーバーで、トークする。"
+    />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta
+      name="twitter:title"
+      content="yurumeet — 自分のサーバーで、トークする。"
+    />
+    <meta
+      name="twitter:description"
+      content="トーク中心の、セルフホスト・メッセンジャー。中央に預けず、自分のサーバーに置いて動かすソフトウェアです。"
+    />
+    <meta name="twitter:image" content="https://yurumeet.com/og.png" />
+    <meta
+      name="twitter:image:alt"
+      content="yurumeet — 自分のサーバーで、トークする。"
+    />
+    <link rel="canonical" href="https://yurumeet.com/" />
+    <link rel="icon" type="image/png" href="/assets/yurumeet-logo.png" />
+    <link rel="apple-touch-icon" href="/assets/yurumeet-logo.png" />
+    <meta name="theme-color" content="#fafaff" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@500&family=Noto+Sans+JP:wght@400;500;700;900&display=swap"
+      rel="stylesheet"
+    />
     <style>
-      @import url("https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@100..900&display=swap");
-
-      * {
+      *,
+      *::before,
+      *::after {
+        margin: 0;
+        padding: 0;
         box-sizing: border-box;
-        font-family: "Noto Sans JP", sans-serif;
+      }
+
+      :root {
+        --bg: #fafaff;
+        --surface: #ffffff;
+        --ink: #14141a;
+        --ink-2: #3a3a44;
+        --dim: #6a6a76;
+        --faint: #9a9aa6;
+        --line: #ececf2;
+        --line-2: #e0e0ea;
+        --accent: #ff3b3b;
+        --accent-ink: #e01f1f;
+        --sidebar: #242428;
+        --w: 1120px;
+        --sans:
+          "Noto Sans JP", -apple-system, BlinkMacSystemFont, "Segoe UI",
+          sans-serif;
+        --mono: "JetBrains Mono", ui-monospace, "SF Mono", monospace;
+        --r: 16px;
+        --shadow:
+          0 1px 2px rgba(20, 20, 40, 0.04),
+          0 30px 60px -28px rgba(24, 24, 52, 0.24);
+      }
+
+      html {
+        scroll-behavior: smooth;
+        -webkit-text-size-adjust: 100%;
       }
 
       body {
-        margin: 0;
+        font-family: var(--sans);
+        background: var(--bg);
+        color: var(--ink);
+        line-height: 1.8;
+        font-size: 16px;
         overflow-x: hidden;
-        background: #fafaff;
-        color: #111;
+        -webkit-font-smoothing: antialiased;
+        text-rendering: optimizeLegibility;
       }
 
       a {
@@ -36,573 +103,935 @@
         text-decoration: none;
       }
 
-      .wrap {
-        width: min(100%, 1180px);
-        margin: 0 auto;
-        padding: 0 48px;
-      }
-
-      .hero {
-        display: grid;
-        grid-template-columns: minmax(330px, 0.45fr) minmax(700px, 1.55fr);
-        gap: 48px;
-        align-items: center;
-        min-height: 88vh;
-        padding: 3.5rem 48px;
-      }
-
-      .brand {
-        display: inline-grid;
-        width: 58px;
-        height: 58px;
-        place-items: center;
-        border-radius: 10px;
-        background: #242428;
-        padding: 10px;
-      }
-
-      .brand img,
-      .nav-logo img {
-        display: block;
-        width: 100%;
-        height: 100%;
-        object-fit: contain;
-      }
-
-      h1 {
-        margin: 22px 0;
-        font-size: 68px;
-        line-height: 0.96;
-        letter-spacing: 0;
-      }
-
-      p {
-        color: #5f5f69;
-        font-size: 17px;
-        line-height: 1.85;
-      }
-
-      .actions {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 12px;
-        margin-top: 26px;
-      }
-
-      .pill {
-        display: inline-grid;
-        min-height: 44px;
-        place-items: center;
-        border: 1px solid #dddde8;
-        border-radius: 999px;
-        background: #fff;
-        padding: 0 18px;
-        font-weight: 850;
-      }
-
-      .pill.primary {
-        border-color: #ff3b3b;
-        background: #ff3b3b;
+      ::selection {
+        background: var(--accent);
         color: #fff;
       }
 
+      a:focus-visible,
+      button:focus-visible,
+      [tabindex]:focus-visible {
+        outline: 2px solid var(--accent);
+        outline-offset: 3px;
+        border-radius: 4px;
+      }
+
+      .wrap {
+        width: 100%;
+        max-width: var(--w);
+        margin: 0 auto;
+        padding: 0 clamp(1.25rem, 5vw, 3rem);
+      }
+
+      .eyebrow {
+        font-family: var(--mono);
+        font-size: 0.72rem;
+        font-weight: 500;
+        letter-spacing: 0.2em;
+        text-transform: uppercase;
+        color: var(--accent-ink);
+      }
+
+      /* ---------- nav ---------- */
+      .nav {
+        position: sticky;
+        top: 0;
+        z-index: 20;
+        border-bottom: 1px solid transparent;
+        background: color-mix(in srgb, var(--bg) 78%, transparent);
+        backdrop-filter: saturate(1.4) blur(14px);
+        transition: border-color 0.3s;
+      }
+
+      .nav.scrolled {
+        border-bottom-color: var(--line);
+      }
+
+      .nav-in {
+        display: flex;
+        align-items: center;
+        gap: 20px;
+        height: 66px;
+      }
+
+      .brand {
+        display: inline-flex;
+        align-items: center;
+        gap: 11px;
+        font-weight: 900;
+        letter-spacing: -0.01em;
+        font-size: 1.05rem;
+      }
+
+      .brand-mark {
+        display: block;
+        width: 32px;
+        height: 32px;
+        flex: 0 0 auto;
+        object-fit: contain;
+      }
+
+      .nav-links {
+        display: flex;
+        align-items: center;
+        gap: 26px;
+        margin-left: auto;
+      }
+
+      .nav-link {
+        color: var(--dim);
+        font-size: 0.92rem;
+        font-weight: 500;
+        transition: color 0.2s;
+      }
+
+      .nav-link:hover {
+        color: var(--ink);
+      }
+
+      .btn {
+        display: inline-grid;
+        place-items: center;
+        min-height: 42px;
+        padding: 0 20px;
+        border-radius: 999px;
+        border: 1px solid var(--line-2);
+        background: var(--surface);
+        color: var(--ink);
+        font-weight: 700;
+        font-size: 0.92rem;
+        transition:
+          transform 0.15s ease,
+          box-shadow 0.2s,
+          border-color 0.2s,
+          background 0.2s;
+      }
+
+      .btn:hover {
+        transform: translateY(-1px);
+        border-color: #cfcfda;
+        box-shadow: 0 8px 20px -12px rgba(20, 20, 40, 0.3);
+      }
+
+      .btn.primary {
+        border-color: var(--accent);
+        background: var(--accent);
+        color: #fff;
+      }
+
+      .btn.primary:hover {
+        background: #ff2b2b;
+        box-shadow: 0 12px 26px -12px rgba(255, 59, 59, 0.7);
+      }
+
+      .btn.sm {
+        min-height: 38px;
+        padding: 0 16px;
+        font-size: 0.88rem;
+      }
+
+      .nav .btn {
+        min-height: 38px;
+        padding: 0 16px;
+        font-size: 0.88rem;
+      }
+
+      /* ---------- hero ---------- */
+      .hero {
+        text-align: center;
+        padding: clamp(3.5rem, 9vw, 7rem) 0 0;
+      }
+
+      .hero h1 {
+        margin: 20px auto 0;
+        max-width: 15ch;
+        font-size: clamp(2.6rem, 7vw, 4.6rem);
+        line-height: 1.06;
+        letter-spacing: -0.035em;
+        font-weight: 900;
+      }
+
+      .hero h1 .soft {
+        color: var(--dim);
+      }
+
+      .lede {
+        margin: 26px auto 0;
+        max-width: 46ch;
+        color: var(--ink-2);
+        font-size: clamp(1rem, 2.2vw, 1.16rem);
+        line-height: 1.9;
+      }
+
+      .cta {
+        display: flex;
+        justify-content: center;
+        flex-wrap: wrap;
+        gap: 12px;
+        margin-top: 34px;
+      }
+
+      .hero-note {
+        margin-top: 18px;
+        /* --dim (not --faint): this disclaimer must stay AA-readable */
+        color: var(--dim);
+        font-size: 0.85rem;
+      }
+
+      /* ---------- browser mock ---------- */
+      .stage {
+        position: relative;
+        margin: clamp(3rem, 7vw, 5rem) auto 0;
+        max-width: 980px;
+        padding: 0 clamp(1.25rem, 5vw, 3rem);
+      }
+
+      .stage::before {
+        content: "";
+        position: absolute;
+        inset: 8% 10% auto;
+        height: 60%;
+        background: radial-gradient(
+          60% 100% at 50% 0,
+          rgba(255, 59, 59, 0.16),
+          transparent 70%
+        );
+        filter: blur(30px);
+        z-index: -1;
+      }
+
       .browser {
-        min-width: 0;
         overflow: hidden;
-        border: 1px solid #dddde8;
-        border-radius: 12px;
-        background: #fff;
-        box-shadow: 0 24px 70px rgba(26, 26, 34, 0.14);
+        border: 1px solid var(--line-2);
+        border-radius: var(--r);
+        background: var(--surface);
+        box-shadow: var(--shadow);
       }
 
       .bar {
         display: flex;
         align-items: center;
-        gap: 8px;
-        height: 38px;
-        border-bottom: 1px solid #dddde8;
-        padding: 0 12px;
-        background: #f0f0f5;
+        gap: 7px;
+        height: 40px;
+        padding: 0 14px;
+        border-bottom: 1px solid var(--line);
+        background: #f2f2f7;
       }
 
       .bar i {
-        width: 8px;
-        height: 8px;
+        width: 11px;
+        height: 11px;
         border-radius: 50%;
-        background: #c0c0ca;
+        background: #d4d4de;
       }
 
-      .mock {
-        display: grid;
-        grid-template-columns: 78px minmax(0, 1fr);
-        height: 560px;
-        overflow: hidden;
-        background: #fafaff;
+      .bar i:nth-child(1) {
+        background: #ff6159;
+      }
+      .bar i:nth-child(2) {
+        background: #ffbd2e;
+      }
+      .bar i:nth-child(3) {
+        background: #29c740;
       }
 
-      .nav {
-        display: grid;
-        align-content: start;
-        gap: 12px;
-        padding: 50px 14px;
-        background: #242428;
-      }
-
-      .nav-logo {
-        display: grid;
-        height: 50px;
-        place-items: center;
-        border-radius: 50%;
-        background: transparent;
-        padding: 0;
-      }
-
-      .nav-item {
-        display: block;
-        height: 50px;
-        border-radius: 6px;
-        color: #fff;
-        padding: 12px;
-      }
-
-      .nav-item.active {
-        background: rgba(250, 250, 255, 0.13);
-      }
-
-      .nav-item.active svg {
-        fill: #fafaff;
-      }
-
-      .nav-item svg {
-        width: 100%;
-        height: 100%;
-      }
-
-      .talk {
-        display: grid;
-        grid-template-columns: minmax(220px, 300px) minmax(0, 1fr);
-        min-width: 0;
-      }
-
-      .list {
-        padding: 12px;
-      }
-
-      .list h2 {
-        margin: 6px 0 12px;
-        font-size: 32px;
-      }
-
-      .search {
-        border-radius: 8px;
-        background: #e8e8ef;
-        padding: 8px 12px;
-        color: #777780;
-        font-size: 13px;
-      }
-
-      .room {
-        display: grid;
-        grid-template-columns: 44px minmax(0, 1fr) auto;
-        gap: 10px;
-        align-items: center;
-        height: 64px;
-        margin-top: 8px;
-        border-radius: 8px;
-        padding: 10px 8px;
-      }
-
-      .room.active {
-        background: #e8e8ef;
-      }
-
-      .avatar {
-        display: grid;
-        width: 44px;
-        height: 44px;
-        place-items: center;
-        border-radius: 50%;
-        background: linear-gradient(135deg, #ff8a8a, #ff3b3b);
-        color: #fff;
-        font-weight: 900;
-      }
-
-      .nav-logo .avatar {
-        width: 50px;
-        height: 50px;
-        font-size: 14px;
-      }
-
-      .room strong,
-      .room span {
-        display: block;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-      }
-
-      .room span,
-      .room time {
-        color: #666670;
-        font-size: 12px;
-      }
-
-      .chat {
-        display: grid;
-        grid-template-rows: 54px minmax(0, 1fr) 56px;
-        margin: 12px 12px 12px 0;
-        overflow: hidden;
-        border-radius: 8px;
-        background: #f0f0f5;
-      }
-
-      .chat-head {
-        display: flex;
-        align-items: center;
-        border-bottom: 1px solid #ededf3;
-        padding: 0 18px;
-        font-size: 20px;
-        font-weight: 800;
-      }
-
-      .messages {
-        display: flex;
-        flex-direction: column;
-        justify-content: end;
-        gap: 8px;
-        padding: 18px;
-      }
-
-      .msg-row {
-        display: flex;
-        align-items: end;
-        gap: 10px;
-      }
-
-      .msg-row.mine {
-        justify-content: end;
-      }
-
-      .msg-row .avatar {
-        width: 36px;
-        height: 36px;
-        flex: 0 0 36px;
-      }
-
-      .msg-name {
-        display: block;
-        margin: 0 0 3px 10px;
-        font-size: 12px;
-      }
-
-      .bubble {
-        position: relative;
-        z-index: 1;
-        width: fit-content;
-        max-width: 76%;
-        border-radius: 12px;
-        padding: 7px 16px;
-        background: #fff;
-      }
-
-      .bubble::before {
-        position: absolute;
-        top: 0;
-        left: -10px;
-        z-index: -1;
-        width: 26px;
-        height: 26px;
-        background: url("./assets/takosui/icon_tale.svg") center / contain
-          no-repeat;
-        content: "";
-      }
-
-      .bubble.mine {
-        justify-self: end;
-        background: #ff3b3b;
-        color: #fff;
-      }
-
-      .bubble.mine::before {
-        right: -10px;
-        left: auto;
-        background-image: url("./assets/takosui/icon_tale_red.svg");
-        transform: scale(-1, 1);
-      }
-
-      .composer {
-        display: flex;
-        padding: 0 18px 12px;
-      }
-
-      .input {
-        flex: 1;
-        border-radius: 12px;
-        background: #fff;
-        padding: 10px 14px;
-        color: #777780;
-      }
-
-      .send {
-        width: 44px;
-        height: 44px;
+      .bar .url {
+        margin: 0 auto;
+        padding: 4px 16px;
         border-radius: 999px;
-        background: url("./assets/takosui/clip.svg") center / 24px 24px
-          no-repeat;
+        background: #e7e7ef;
+        color: #8a8a96;
+        font-family: var(--mono);
+        font-size: 0.72rem;
       }
 
+      .shot {
+        display: block;
+        width: 100%;
+        height: auto;
+      }
+
+      /* ---------- sections ---------- */
       section {
-        border-top: 1px solid #dddde8;
-        padding: 5rem 0;
+        padding: clamp(4rem, 11vw, 8rem) 0;
       }
 
-      .grid {
-        display: grid;
-        grid-template-columns: repeat(4, 1fr);
-        gap: 14px;
+      .section-head {
+        max-width: 40ch;
       }
 
-      .card {
-        border-radius: 8px;
-        background: #fff;
-        padding: 22px;
-      }
-
-      .card h3 {
-        margin: 0 0 8px;
+      .section-head.center {
+        margin: 0 auto;
+        text-align: center;
       }
 
       h2 {
-        margin: 0 0 14px;
-        font-size: 48px;
-        line-height: 1.08;
-        letter-spacing: 0;
+        margin: 14px 0 0;
+        font-size: clamp(1.9rem, 4.5vw, 3rem);
+        line-height: 1.12;
+        letter-spacing: -0.03em;
+        font-weight: 900;
       }
 
+      .section-head p {
+        margin-top: 18px;
+        color: var(--ink-2);
+        font-size: 1.05rem;
+      }
+
+      /* features */
+      .features {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 0;
+        margin-top: clamp(2.5rem, 6vw, 4rem);
+        border-top: 1px solid var(--line);
+      }
+
+      .feature {
+        padding: 28px 26px 30px;
+        border-bottom: 1px solid var(--line);
+        border-right: 1px solid var(--line);
+      }
+
+      .feature:nth-child(4n) {
+        border-right: none;
+      }
+
+      .feature .fi {
+        display: grid;
+        place-items: center;
+        width: 40px;
+        height: 40px;
+        border-radius: 11px;
+        background: #fff;
+        border: 1px solid var(--line-2);
+        color: var(--accent);
+        margin-bottom: 16px;
+      }
+
+      .feature .fi svg {
+        width: 21px;
+        height: 21px;
+      }
+
+      .feature h3 {
+        font-size: 1.06rem;
+        font-weight: 800;
+        letter-spacing: -0.01em;
+      }
+
+      .feature p {
+        margin-top: 7px;
+        color: var(--dim);
+        font-size: 0.92rem;
+        line-height: 1.75;
+      }
+
+      /* family band */
+      .band {
+        border-top: 1px solid var(--line);
+        border-bottom: 1px solid var(--line);
+        background: linear-gradient(180deg, #fff, var(--bg));
+      }
+
+      .band-grid {
+        display: grid;
+        grid-template-columns: 1.1fr 0.9fr;
+        gap: clamp(2rem, 6vw, 5rem);
+        align-items: center;
+      }
+
+      .facts {
+        display: grid;
+        gap: 14px;
+      }
+
+      .fact {
+        display: grid;
+        grid-template-columns: auto 1fr;
+        gap: 14px;
+        align-items: baseline;
+        padding: 18px 20px;
+        border: 1px solid var(--line-2);
+        border-radius: 14px;
+        background: var(--surface);
+      }
+
+      .fact b {
+        font-family: var(--mono);
+        font-size: 0.82rem;
+        color: var(--accent-ink);
+        white-space: nowrap;
+      }
+
+      .fact span {
+        color: var(--ink-2);
+        font-size: 0.94rem;
+        line-height: 1.6;
+      }
+
+      /* mobile */
+      .mobile-grid {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        gap: clamp(2rem, 6vw, 5rem);
+        align-items: center;
+      }
+      .mobile-copy {
+        max-width: 40ch;
+      }
+      .phone {
+        width: 278px;
+        max-width: 100%;
+        margin: 0 auto;
+        padding: 10px;
+        border-radius: 44px;
+        background: var(--sidebar);
+        border: 1px solid var(--line-2);
+        box-shadow: var(--shadow);
+      }
+      .phone img {
+        display: block;
+        width: 100%;
+        height: auto;
+        border-radius: 34px;
+      }
+
+      /* install */
+      .install-grid {
+        display: grid;
+        grid-template-columns: 0.95fr 1.05fr;
+        gap: clamp(2rem, 6vw, 4.5rem);
+        align-items: center;
+        margin-top: clamp(2rem, 5vw, 3rem);
+      }
+
+      .code {
+        border-radius: 14px;
+        border: 1px solid var(--line-2);
+        background: var(--surface);
+        overflow: hidden;
+        box-shadow: var(--shadow);
+      }
+
+      .code-bar {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 10px 16px;
+        border-bottom: 1px solid var(--line);
+        background: #f6f6fb;
+        /* --dim (not --faint): small label needs ≥4.5:1 on #f6f6fb */
+        color: var(--dim);
+        font-family: var(--mono);
+        font-size: 0.72rem;
+        letter-spacing: 0.08em;
+      }
+
+      .code pre {
+        margin: 0;
+        padding: 20px;
+        overflow-x: auto;
+        font-family: var(--mono);
+        font-size: 0.84rem;
+        line-height: 2;
+        color: var(--ink-2);
+      }
+
+      .code .k {
+        color: var(--accent-ink);
+      }
+      .code .s {
+        color: #2b8a3e;
+      }
+      .code .c {
+        /* --dim (not --faint): comment text needs ≥4.5:1 on white */
+        color: var(--dim);
+      }
+
+      .steps {
+        display: grid;
+        gap: 22px;
+        margin-top: 24px;
+      }
+
+      .step {
+        display: grid;
+        grid-template-columns: auto 1fr;
+        gap: 16px;
+      }
+
+      .step .n {
+        display: grid;
+        place-items: center;
+        width: 30px;
+        height: 30px;
+        border-radius: 50%;
+        background: var(--sidebar);
+        color: #fff;
+        font-family: var(--mono);
+        font-size: 0.78rem;
+        font-weight: 500;
+      }
+
+      .step h3 {
+        font-size: 1rem;
+        font-weight: 800;
+      }
+
+      .step p {
+        margin-top: 3px;
+        color: var(--dim);
+        font-size: 0.9rem;
+      }
+
+      .step code {
+        font-family: var(--mono);
+        font-size: 0.82em;
+        background: #ececf3;
+        border-radius: 5px;
+        padding: 1px 6px;
+        color: var(--ink);
+      }
+
+      .note {
+        margin-top: 26px;
+        padding: 16px 20px;
+        border-radius: 12px;
+        border: 1px dashed var(--line-2);
+        color: var(--dim);
+        font-size: 0.88rem;
+        line-height: 1.7;
+      }
+
+      /* closing */
+      .closing {
+        text-align: center;
+      }
+
+      .closing h2 {
+        max-width: 18ch;
+        margin: 0 auto;
+      }
+
+      /* footer */
       footer {
-        border-top: 1px solid #dddde8;
-        padding: 28px 0;
-        color: #777780;
+        border-top: 1px solid var(--line);
+        padding: 44px 0;
       }
 
-      @media (max-width: 1160px) {
-        .hero,
-        .grid {
-          grid-template-columns: 1fr;
-        }
+      .foot {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 18px 28px;
+      }
 
-        .browser {
-          width: 100%;
-        }
+      .foot .brand {
+        font-size: 0.98rem;
+      }
+
+      .foot-links {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 22px;
+        margin-left: auto;
+      }
+
+      .foot-links a {
+        color: var(--dim);
+        font-size: 0.88rem;
+        transition: color 0.2s;
+      }
+
+      .foot-links a:hover {
+        color: var(--ink);
+      }
+
+      .foot-legal {
+        width: 100%;
+        /* --dim (not --faint): 0.78rem legal text needs ≥4.5:1 (AA) */
+        color: var(--dim);
+        font-size: 0.78rem;
+        line-height: 1.7;
       }
 
       @media (max-width: 900px) {
-        .mock {
+        /* keep the 導入 anchor reachable on mobile; hide only the secondary
+           links (they remain in the footer) */
+        .nav-links .nav-opt {
+          display: none;
+        }
+        .band-grid,
+        .install-grid,
+        .mobile-grid {
           grid-template-columns: 1fr;
         }
-
-        .nav {
-          display: none;
+        .features {
+          grid-template-columns: repeat(2, 1fr);
+        }
+        .feature:nth-child(4n) {
+          border-right: 1px solid var(--line);
+        }
+        .feature:nth-child(2n) {
+          border-right: none;
         }
       }
 
-      @media (max-width: 620px) {
-        .wrap {
-          padding: 0 20px;
-        }
-
-        h1 {
-          font-size: 50px;
-        }
-
-        .hero {
-          padding: 1.8rem 20px 2.4rem;
-        }
-
-        .mock {
-          height: 280px;
-        }
-
-        .talk {
+      @media (max-width: 560px) {
+        .features {
           grid-template-columns: 1fr;
         }
+        .feature,
+        .feature:nth-child(4n) {
+          border-right: none;
+        }
+      }
 
-        .chat {
-          margin: 0;
-          border-radius: 0;
+      @media (prefers-reduced-motion: reduce) {
+        html {
+          scroll-behavior: auto;
         }
       }
     </style>
   </head>
   <body>
-    <main class="wrap hero">
-      <div>
-        <div class="brand">
-          <img src="./assets/takosui/logo.png" alt="" />
+    <header class="nav" id="nav">
+      <div class="wrap nav-in">
+        <a class="brand" href="#top" aria-label="yurumeet home">
+          <img class="brand-mark" src="./assets/yurumeet-logo.png" alt="" />
+          <span>yurumeet</span>
+        </a>
+        <nav class="nav-links">
+          <a class="nav-link nav-opt" href="#features">特長</a>
+          <a class="nav-link nav-opt" href="#own">セルフホスト</a>
+          <a class="nav-link" href="#install">導入</a>
+          <a class="btn primary sm" href="https://github.com/tako0614/yurumeet"
+            >GitHub</a
+          >
+        </nav>
+      </div>
+    </header>
+
+    <main id="top">
+      <!-- hero -->
+      <section class="hero" style="padding-bottom: 0">
+        <div class="wrap">
+          <span class="eyebrow">Self-hosted · talk-first messenger</span>
+          <h1>
+            トークは、<br />
+            <span class="soft">自分のサーバーに。</span>
+          </h1>
+          <p class="lede">
+            yurumeet は、LINE のようにトーク中心で使えるメッセージングアプリ。
+            中央のサービスに預けず、自分のサーバーに置いて、自分たちだけのトークにする。
+            DM・グループ・タイムライン・Story まで、ぜんぶひとつの画面で。
+          </p>
+          <div class="cta">
+            <a class="btn primary" href="#install">導入する</a>
+            <a class="btn" href="#features">できることを見る</a>
+          </div>
+          <p class="hero-note">
+            hosted app ではありません。自分で動かすソフトウェアです。
+          </p>
         </div>
-        <h1>Yurumeet</h1>
-        <p>
-          yurucommu の同じアカウントと API をホーム / トーク /
-          タイムラインで開く UI。 Yurumeet は hosted app
-          ではなく、Takosumi、Cloudflare、
-          セルフホスト環境に置いて動かすソフトウェアです。
-        </p>
-        <div class="actions">
-          <a class="pill primary" href="#start">導入</a>
-          <a class="pill" href="#ui">UIを見る</a>
+      </section>
+
+      <!-- product mock -->
+      <div class="stage">
+        <div class="browser">
+          <div class="bar">
+            <i></i><i></i><i></i>
+            <span class="url">talk.your-server.example</span>
+          </div>
+          <img
+            class="shot"
+            src="./assets/shots/yurumeet-talk.webp"
+            width="2560"
+            height="1600"
+            alt="yurumeet のトーク画面。ダークなサイドバー、トークルーム一覧、Akari との DM に赤い送信メッセージが並ぶ。"
+            loading="lazy"
+            decoding="async"
+          />
         </div>
       </div>
 
-      <div class="browser" id="ui">
-        <div class="bar"><i></i><i></i><i></i></div>
-        <div class="mock">
-          <aside class="nav">
-            <div class="nav-logo">
-              <div class="avatar">M</div>
-            </div>
-            <div class="nav-item" aria-label="ホーム">
-              <svg viewBox="0 0 24 24" aria-hidden="true">
-                <path
-                  d="M3 10.182V22h18V10.182L12 2z"
+      <!-- features -->
+      <section id="features">
+        <div class="wrap">
+          <div class="section-head">
+            <span class="eyebrow">ひとつの画面に</span>
+            <h2>トークも、タイムラインも、Story も。</h2>
+            <p>
+              メッセンジャーに欲しいものは、ぜんぶそろっています。yurumeet
+              はそれを、トークを主役にした一枚の画面にまとめます。
+            </p>
+          </div>
+          <div class="features">
+            <article class="feature">
+              <div class="fi">
+                <svg
+                  viewBox="0 0 24 24"
                   fill="none"
                   stroke="currentColor"
-                  stroke-width="1.5"
+                  stroke-width="1.7"
                   stroke-linecap="round"
                   stroke-linejoin="round"
-                />
-                <rect
-                  width="6"
-                  height="8"
-                  x="9"
-                  y="14"
+                >
+                  <path d="M3 10.5 12 3l9 7.5V21H3z" />
+                  <path d="M9 21v-6h6v6" />
+                </svg>
+              </div>
+              <h3>ホーム</h3>
+              <p>友だち・グループ・Story を、ひとつの入口にまとめる。</p>
+            </article>
+            <article class="feature">
+              <div class="fi">
+                <svg
+                  viewBox="0 0 24 24"
                   fill="none"
                   stroke="currentColor"
-                  stroke-width="1.5"
-                />
-              </svg>
-            </div>
-            <div class="nav-item active" aria-label="トーク">
-              <svg viewBox="0 0 24 24" aria-hidden="true">
-                <path
-                  d="M8.824 18.588 4 21l.653-4.573C3.006 15.001 2 13.095 2 11 2 6.582 6.477 3 12 3s10 3.582 10 8-4.477 8-10 8c-1.11 0-2.178-.145-3.176-.412Z"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="1.5"
+                  stroke-width="1.7"
                   stroke-linecap="round"
                   stroke-linejoin="round"
-                />
-              </svg>
-            </div>
-            <div class="nav-item" aria-label="timeline">
-              <svg viewBox="0 0 24 24" aria-hidden="true">
-                <circle
-                  cx="12"
-                  cy="12"
-                  r="9"
+                >
+                  <path
+                    d="M8.8 18.6 4 21l.65-4.57A8 8 0 1 1 12 19c-1.11 0-2.18-.15-3.2-.4Z"
+                  />
+                </svg>
+              </div>
+              <h3>トーク</h3>
+              <p>DM とコミュニティチャットを、吹き出し主体の画面で。</p>
+            </article>
+            <article class="feature">
+              <div class="fi">
+                <svg
+                  viewBox="0 0 24 24"
                   fill="none"
                   stroke="currentColor"
-                  stroke-width="1.5"
-                />
-                <circle
-                  cx="12"
-                  cy="12"
-                  r="3"
+                  stroke-width="1.7"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <circle cx="12" cy="12" r="9" />
+                  <circle cx="12" cy="12" r="3" />
+                </svg>
+              </div>
+              <h3>タイムライン</h3>
+              <p>投稿を、yurumeet の流れで読む・書く。</p>
+            </article>
+            <article class="feature">
+              <div class="fi">
+                <svg
+                  viewBox="0 0 24 24"
                   fill="none"
                   stroke="currentColor"
-                  stroke-width="1.5"
-                />
-              </svg>
+                  stroke-width="1.7"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <circle cx="12" cy="12" r="8.5" stroke-dasharray="3 2.4" />
+                  <circle cx="12" cy="12" r="3.5" />
+                </svg>
+              </div>
+              <h3>Story</h3>
+              <p>開いて、リアクションして、そのまま共有する。</p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <!-- mobile -->
+      <section id="mobile">
+        <div class="wrap mobile-grid">
+          <div class="mobile-copy">
+            <span class="eyebrow">On the go</span>
+            <h2>ポケットの中に、<br />自分のサーバー。</h2>
+            <p>
+              スマホでも、同じトーク。ホーム画面から開いて、DM
+              もグループもタイムラインも Story も、片手で。
+            </p>
+          </div>
+          <div class="phone">
+            <img
+              src="./assets/shots/yurumeet-mobile.webp"
+              width="780"
+              height="1688"
+              alt="yurumeet のスマホ画面。トークルーム一覧と下部タブ（ホーム・トーク・タイムライン・通知）。"
+              loading="lazy"
+              decoding="async"
+            />
+          </div>
+        </div>
+      </section>
+
+      <!-- self-host values -->
+      <div class="band" id="own">
+        <section>
+          <div class="wrap band-grid">
+            <div class="section-head" style="max-width: none">
+              <span class="eyebrow">自分のものにする</span>
+              <h2>預けない。<br />自分のサーバーで動かす。</h2>
+              <p>
+                yurumeet
+                は、中央のサービスに預けるアプリではありません。自分のインフラに置いて、アカウントもトークも自分の手元に。中身はぜんぶオープンなので、確認して、必要なら自分で変えられます。
+              </p>
             </div>
-          </aside>
-          <div class="talk">
-            <div class="list">
-              <h2>トーク</h2>
-              <div class="search">トークルーム・メッセージを検索</div>
-              <div class="room active">
-                <div class="avatar">A</div>
-                <div>
-                  <strong>Aoi</strong>
-                  <span>あとで写真送るね</span>
-                </div>
-                <time>17:42</time>
+            <div class="facts">
+              <div class="fact">
+                <b>self-host</b>
+                <span
+                  >中央に預けず、自分のサーバーで。アカウントもデータも自分の手元に。</span
+                >
               </div>
-              <div class="room">
-                <div class="avatar">喫</div>
-                <div>
-                  <strong>喫茶づくり</strong>
-                  <span>週末のメニュー、これで行きましょう</span>
-                </div>
-                <time>16:12</time>
+              <div class="fact">
+                <b>ActivityPub</b>
+                <span
+                  >標準プロトコルで動く。閉じずに、ほかのサーバーともつながる。</span
+                >
               </div>
-            </div>
-            <div class="chat">
-              <div class="chat-head">Aoi</div>
-              <div class="messages">
-                <div class="msg-row">
-                  <div class="avatar">A</div>
-                  <div>
-                    <strong class="msg-name">Aoi</strong>
-                    <div class="bubble">今日のYurumeet見た?</div>
-                  </div>
-                </div>
-                <div class="msg-row mine">
-                  <div class="bubble mine">
-                    TakosUIのトーク画面をベースに戻した。
-                  </div>
-                </div>
-                <div class="msg-row">
-                  <div class="avatar">A</div>
-                  <div>
-                    <strong class="msg-name">Aoi</strong>
-                    <div class="bubble">それでいい。</div>
-                  </div>
-                </div>
-              </div>
-              <div class="composer">
-                <div class="input">メッセージを入力</div>
-                <div class="send" aria-label="ファイル"></div>
+              <div class="fact">
+                <b>open source</b>
+                <span
+                  >AGPL-3.0
+                  のオープンソース。Wranglerで直接、またはOpenTofuで管理付きdeploy。</span
+                >
               </div>
             </div>
           </div>
-        </div>
+        </section>
       </div>
+
+      <!-- install -->
+      <section id="install">
+        <div class="wrap">
+          <div class="section-head">
+            <span class="eyebrow">Self-host</span>
+            <h2>好きな場所に、置いて動かす。</h2>
+            <p>
+              yurumeet
+              は中央でホストされるアプリではありません。Takosumiで管理しながら、自分の環境にデプロイします。Cloudflareへの直接デプロイも選べます。
+            </p>
+          </div>
+          <!-- honesty note: keep it right next to the CTA target, before the
+               steps, so visitors see the current install status first -->
+          <p class="note">
+            <strong
+              >Takosumiでの管理付き導入を主導線として案内しています。</strong
+            >
+            Cloudflareへの直接deployも現在利用できます。Takosumiで本番Applyするにはimmutable
+            releaseが必要です。<br />
+            <strong>yurumeet.com はこの紹介サイトです。</strong>
+            実際に動く yurumeet
+            は、あなたが選んだ場所にデプロイした実行環境のほうです。このページ自体はアプリではありません。
+          </p>
+          <div class="install-grid">
+            <div class="code">
+              <div class="code-bar">TAKOSUMI · MANAGED INSTALL</div>
+              <pre><span class="c"># managed install</span>
+Takosumi: Git URL / ref / path
+
+<span class="c"># direct alternative</span>
+bun install
+bun run deploy</pre>
+            </div>
+            <div class="steps">
+              <div class="step">
+                <span class="n">1</span>
+                <div>
+                  <h3>Takosumiで管理</h3>
+                  <p>
+                    OpenTofu
+                    CapsuleとしてPlan、Apply、StateVersion、Output、Auditまで管理する。
+                  </p>
+                </div>
+              </div>
+              <div class="step">
+                <span class="n">2</span>
+                <div>
+                  <h3>Cloudflareへ直接</h3>
+                  <p>
+                    Deployボタン、または<code>bun run deploy</code>でUIとcore
+                    backendを 1つのWorkerとして公開する。
+                  </p>
+                </div>
+              </div>
+              <div class="step">
+                <span class="n">3</span>
+                <div>
+                  <h3>トークする</h3>
+                  <p>
+                    自分のサーバーのアカウントでログインして、トーク中心の UI
+                    を開く。
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div
+            class="cta"
+            style="justify-content: flex-start; margin-top: 30px"
+          >
+            <a
+              class="btn primary"
+              href="https://app.takosumi.com/install?git=https%3A%2F%2Fgithub.com%2Ftako0614%2Fyurumeet.git&amp;ref=main&amp;path=.&amp;name=yurumeet"
+              >Takosumiでインストール</a
+            >
+            <a
+              class="btn"
+              href="https://deploy.workers.cloudflare.com/?url=https://github.com/tako0614/yurumeet"
+              >Cloudflareに直接デプロイ</a
+            >
+          </div>
+        </div>
+      </section>
+
+      <!-- closing -->
+      <section class="closing" style="padding-top: 0">
+        <div class="wrap">
+          <span class="eyebrow">Ready when you are</span>
+          <h2>自分たちのトークを、<br />自分のサーバーで。</h2>
+          <div class="cta">
+            <a class="btn primary" href="#install">導入する</a>
+            <a class="btn" href="https://github.com/tako0614/yurumeet"
+              >ソースを見る</a
+            >
+          </div>
+        </div>
+      </section>
     </main>
 
-    <section>
-      <div class="wrap grid">
-        <article class="card">
-          <h3>ホーム</h3>
-          <p>友だち、グループ、Story を同じ入口にまとめる。</p>
-        </article>
-        <article class="card">
-          <h3>トーク</h3>
-          <p>TakosUI のトーク画面をそのまま中心にする。</p>
-        </article>
-        <article class="card">
-          <h3>Timeline</h3>
-          <p>同じ投稿タイムラインを Yurumeet の流れで見る。</p>
-        </article>
-        <article class="card">
-          <h3>Story</h3>
-          <p>Story を開いて、いいねと共有まで行う。</p>
-        </article>
-      </div>
-    </section>
-
-    <section id="start">
-      <div class="wrap">
-        <h2>yurucommu のセットとして入れ替える。</h2>
-        <p>
-          Yurumeet をビルドすると、同じ yurucommu のアカウントと API
-          をトーク中心の UI で開けます。yurumeet.com は紹介サイトで、実際の
-          Yurumeet は Takosumi / Cloudflare / self-host
-          の配信先に同梱して動きます。
-        </p>
-      </div>
-    </section>
-
     <footer>
-      <div class="wrap">Yurumeet / talk UI for the yurucommu set</div>
+      <div class="wrap">
+        <div class="foot">
+          <a class="brand" href="#top">
+            <img class="brand-mark" src="./assets/yurumeet-logo.png" alt="" />
+            <span>yurumeet</span>
+          </a>
+          <nav class="foot-links">
+            <a href="https://github.com/tako0614/yurumeet">GitHub</a>
+            <a href="#features">特長</a>
+            <a href="#own">セルフホスト</a>
+            <a href="#install">導入</a>
+          </nav>
+          <p class="foot-legal">
+            Self-hosted talk-first messenger. AGPL-3.0-only ·
+            <code style="font-family: var(--mono)">yurume</code> は client id /
+            短縮名です。 yurucommu 互換のアカウント / API で動作。 ©
+            分散通信基盤株式会社
+          </p>
+        </div>
+      </div>
     </footer>
+
+    <script>
+      // nav hairline appears once the hero scrolls under it
+      const nav = document.getElementById("nav");
+      const onScroll = () =>
+        nav.classList.toggle("scrolled", window.scrollY > 8);
+      onScroll();
+      window.addEventListener("scroll", onScroll, { passive: true });
+    </script>
   </body>
 </html>

@@ -4,6 +4,10 @@
   Permissions-Policy: camera=(), microphone=(), geolocation=()
   Cache-Control: public, max-age=600, must-revalidate
 
-/icon.svg
-  Content-Type: image/svg+xml
+/assets/yurumeet-logo.png
+  Content-Type: image/png
+  Cache-Control: public, max-age=86400
+
+/og.png
+  Content-Type: image/png
   Cache-Control: public, max-age=86400
