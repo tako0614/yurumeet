@@ -954,7 +954,7 @@ async function handleAuth(
   path: string,
 ): Promise<Response | null> {
   if (method === "GET" && path === "/api/auth/providers") {
-    return json(request, { providers: [] });
+    return json(request, { providers: [], password_enabled: true });
   }
   if (method === "GET" && path === "/api/auth/me") {
     if (!signedIn)
@@ -967,7 +967,7 @@ async function handleAuth(
     const response = json(request, ok());
     response.headers.append(
       "Set-Cookie",
-      "yurucommu_mock_session=1; Path=/; SameSite=Lax",
+      "session=mock-session; Path=/; HttpOnly; SameSite=Lax",
     );
     return response;
   }
@@ -976,7 +976,7 @@ async function handleAuth(
     const response = json(request, ok());
     response.headers.append(
       "Set-Cookie",
-      "yurucommu_mock_session=; Path=/; Max-Age=0; SameSite=Lax",
+      "session=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax",
     );
     return response;
   }
@@ -1666,6 +1666,9 @@ async function handleRequest(request: Request): Promise<Response> {
   const method = request.method.toUpperCase();
 
   if (method === "OPTIONS") return empty(request);
+  if (method === "GET" && path === "/healthz") {
+    return json(request, { status: "ok", missingBindings: [] });
+  }
   if (method === "GET" && path === "/.well-known/social-server") {
     return json(request, discovery(request));
   }
@@ -1800,6 +1803,7 @@ async function runSelfTest(): Promise<void> {
   signedIn = true;
 
   const checks: Array<[string, string, number]> = [
+    ["GET", "/healthz", 200],
     ["GET", "/.well-known/social-server", 200],
     ["GET", "/api/auth/me", 200],
     ["GET", "/api/timeline", 200],

@@ -17,6 +17,7 @@ export default defineConfig({
     allowedHosts: [".yurume.test", ".yurumeet.test", "localhost", "127.0.0.1"],
     proxy: {
       "/api": yurucommuServerTarget,
+      "/healthz": yurucommuServerTarget,
       "/.well-known": yurucommuServerTarget,
     },
   },

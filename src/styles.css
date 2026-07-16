@@ -2717,6 +2717,46 @@ ul {
   margin-top: 4px;
 }
 
+.p-connect-auth {
+  display: grid;
+  gap: 10px;
+  width: 100%;
+}
+
+.p-connect-provider {
+  grid-template-columns: 28px 1fr 28px;
+}
+
+.p-connect-provider::after {
+  content: "";
+}
+
+.p-connect-provider-icon {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.2);
+  font-size: 12px;
+}
+
+.p-connect-divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: #8a8a94;
+  font-size: 12px;
+}
+
+.p-connect-divider::before,
+.p-connect-divider::after {
+  height: 1px;
+  flex: 1;
+  background: #e2e2ea;
+  content: "";
+}
+
 .p-connect input {
   height: 46px;
   width: 100%;
