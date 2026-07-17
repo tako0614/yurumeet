@@ -1,3 +1,6 @@
+# Takosumi maps these ordinary module outputs through its service-side
+# InstallConfig. This module does not publish reserved runtime declarations or
+# lifecycle authority through OpenTofu outputs.
 output "worker_name" {
   description = "Cloudflare Worker name used when enable_cloudflare_worker_script is true."
   value       = local.worker_name

@@ -25,6 +25,12 @@ Cloudflare direct deploy and Takosumi install are equal product entrypoints.
 `wrangler.jsonc` owns direct Cloudflare bindings; `main.tf` owns the
 Takosumi-managed OpenTofu path. Direct Cloudflare users must not need OpenTofu.
 
+`outputs.tf` exposes `launch_url` and `api_url` as ordinary runtime URL
+outputs, plus provider-native operational resource values. Runtime Interface
+declarations and lifecycle actions belong to Takosumi's service-side
+InstallConfig. Do not reintroduce reserved `takosumi_release`,
+`app_deployment`, `service_exports`, or `service_bindings` outputs.
+
 ## Version discipline
 
 `package.json` and the `worker_release_tag` default in `main.tf` describe the Yurumeet product release.
