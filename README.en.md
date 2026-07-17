@@ -125,6 +125,14 @@ OpenTofu belongs to the Takosumi-managed path because it adds Plan, Apply,
 StateVersion, Output, and Audit management. A direct Cloudflare deployment does
 not require OpenTofu.
 
+`outputs.tf` exposes `launch_url` and `api_url` as ordinary OpenTofu runtime URL
+outputs. Its remaining outputs are provider-native operational values for the
+Cloudflare resources it creates. Takosumi's service-side InstallConfig maps
+`launch_url` into the launcher Interface and owns the D1 migration lifecycle
+action. The module does not use reserved `takosumi_release`, `app_deployment`,
+`service_exports`, or `service_bindings` outputs as runtime declarations or
+lifecycle authority.
+
 Yurumeet is software, not a centrally hosted app. `https://yurumeet.com` is only
 the product/landing site in `site`; it is not the installed runtime.
 

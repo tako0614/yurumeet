@@ -120,6 +120,12 @@ D1・KV・R2・Queuesもセットアップされます。
 OpenTofuはTakosumiがPlan・Apply・StateVersion・Output・Auditを管理する経路で使います。
 Cloudflareへ直接デプロイするだけならOpenTofuは必要ありません。
 
+`outputs.tf` が公開するruntime URLは、通常のOpenTofu Outputである `launch_url` と `api_url` です。
+そのほかのOutputはCloudflare providerが作成したresourceの運用値です。Takosumi上のlauncher Interfaceは
+service-side InstallConfigが `launch_url` を明示mappingし、D1 migrationも同じInstallConfigのlifecycle actionが
+実行します。`takosumi_release` / `app_deployment` / `service_exports` / `service_bindings` のような
+予約Outputをmoduleのruntime宣言やlifecycle authorityとして使いません。
+
 Yurumeet は中央でホストされるアプリではなく、自分で動かすソフトウェアです。
 `https://yurumeet.com` は `site` にある製品紹介・ランディングサイトにすぎず、
 インストールされた実行環境ではありません。
