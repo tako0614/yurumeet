@@ -126,6 +126,11 @@ service-side InstallConfigが `launch_url` を明示mappingし、D1 migrationも
 実行します。`takosumi_release` / `app_deployment` / `service_exports` / `service_bindings` のような
 予約Outputをmoduleのruntime宣言やlifecycle authorityとして使いません。
 
+[`install-options.json`](install-options.json) は、現在実行可能な Cloudflare OpenTofu module を選ぶための任意の
+`CapsuleSourceOptions` 表示ドキュメントです。Takosumi 専用 manifest ではなく、通常の Git URL + module path での
+直接インストールには不要です。この文書は、それを含む次の通常の安定版タグから利用できます。別クラウドの選択肢は、
+対応する実在 module を出荷したときだけ追加します。
+
 Yurumeet は中央でホストされるアプリではなく、自分で動かすソフトウェアです。
 `https://yurumeet.com` は `site` にある製品紹介・ランディングサイトにすぎず、
 インストールされた実行環境ではありません。
