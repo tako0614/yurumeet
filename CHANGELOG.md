@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.2 - 2026-07-19
+
+- Publish the optional Capsule Source Options chooser for the existing
+  Cloudflare OpenTofu module.
+
 ## 0.1.1 - 2026-07-16
 
 - Make Takosumi migration-only activation materialize core dependencies on a fresh runner checkout.
