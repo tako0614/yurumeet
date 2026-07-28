@@ -5,6 +5,15 @@ import {
 
 const STORAGE_KEY = "yurumeet.serverOrigin";
 
+function isDevelopmentBuild(): boolean {
+  const env = (
+    import.meta as unknown as {
+      readonly env?: { readonly DEV?: boolean };
+    }
+  ).env;
+  return env?.DEV === true;
+}
+
 function readBuildConfiguredOrigin(): string | null {
   const env = (
     import.meta as unknown as {
@@ -38,6 +47,24 @@ function shouldUseSameOriginByDefault(): boolean {
   );
 }
 
+export function selectYurumeetServerOrigin(input: {
+  readonly appOrigin: string | null | undefined;
+  readonly development: boolean;
+  readonly queryOverride: string | null | undefined;
+  readonly buildOverride: string | null | undefined;
+  readonly storedOverride: string | null | undefined;
+}): string | null {
+  const appOrigin = normalizeServerOrigin(input.appOrigin);
+  if (!input.development) return appOrigin;
+
+  return (
+    normalizeServerOrigin(input.queryOverride) ??
+    normalizeServerOrigin(input.buildOverride) ??
+    normalizeServerOrigin(input.storedOverride) ??
+    appOrigin
+  );
+}
+
 export function normalizeServerOrigin(
   value: string | null | undefined,
 ): string | null {
@@ -56,17 +83,22 @@ export function normalizeServerOrigin(
 }
 
 export function readYurumeetServerOrigin(): string | null {
-  const configured =
-    readQueryConfiguredOrigin() ??
-    readBuildConfiguredOrigin() ??
-    readStoredOrigin();
-  if (configured) return configured;
-  return shouldUseSameOriginByDefault() ? window.location.origin : null;
+  if (typeof window === "undefined") return null;
+  return selectYurumeetServerOrigin({
+    appOrigin: shouldUseSameOriginByDefault() ? window.location.origin : null,
+    development: isDevelopmentBuild(),
+    queryOverride: readQueryConfiguredOrigin(),
+    buildOverride: readBuildConfiguredOrigin(),
+    storedOverride: readStoredOrigin(),
+  });
 }
 
 export function saveYurumeetServerOrigin(origin: string): void {
   if (typeof window === "undefined") return;
-  window.localStorage.setItem(STORAGE_KEY, origin);
+  const normalized = normalizeServerOrigin(origin);
+  if (!normalized) return;
+  if (!isDevelopmentBuild() && normalized !== window.location.origin) return;
+  window.localStorage.setItem(STORAGE_KEY, normalized);
 }
 
 export function clearYurumeetServerOrigin(): void {

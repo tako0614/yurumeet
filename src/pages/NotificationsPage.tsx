@@ -143,6 +143,7 @@ export default function NotificationsPage() {
     archivingAll() || Object.values(archiving()).some(Boolean);
 
   let loadGen = 0;
+  let loadedAt = 0;
   const load = () => {
     const type = filter();
     const archived = viewArchived();
@@ -180,7 +181,10 @@ export default function NotificationsPage() {
       } catch {
         if (myGen === loadGen) setError(true);
       } finally {
-        if (myGen === loadGen) setLoading(false);
+        if (myGen === loadGen) {
+          loadedAt = Date.now();
+          setLoading(false);
+        }
       }
     })();
   };
@@ -254,17 +258,22 @@ export default function NotificationsPage() {
     load();
   };
 
+  // Re-focusing the tab mid-read must not blow away the list + scroll
+  // position for data seconds old — only reload once it has gone stale
+  // (same 60s threshold as the timeline).
+  const NOTIFICATIONS_STALE_MS = 60_000;
   onMount(() => {
     load();
-    const onVisible = () => {
-      if (document.visibilityState === "visible") load();
+    const reloadIfStale = () => {
+      if (document.visibilityState !== "visible") return;
+      if (Date.now() - loadedAt <= NOTIFICATIONS_STALE_MS) return;
+      load();
     };
-    const onFocus = () => load();
-    document.addEventListener("visibilitychange", onVisible);
-    globalThis.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", reloadIfStale);
+    globalThis.addEventListener("focus", reloadIfStale);
     onCleanup(() => {
-      document.removeEventListener("visibilitychange", onVisible);
-      globalThis.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", reloadIfStale);
+      globalThis.removeEventListener("focus", reloadIfStale);
     });
   });
 

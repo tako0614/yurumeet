@@ -1,9 +1,23 @@
-import { createEffect, createSignal, For, Show } from "solid-js";
+import {
+  createEffect,
+  createMemo,
+  createSignal,
+  For,
+  on,
+  onCleanup,
+  Show,
+} from "solid-js";
 import { A } from "@solidjs/router";
-import { type MediaAttachment, uploadMedia } from "@takosjp/yurucommu-api";
+import {
+  type DMContact,
+  type MediaAttachment,
+  uploadMedia,
+} from "@takosjp/yurucommu-api";
 import { useApp } from "../lib/app-context.tsx";
 import { type ChatMessage, useChat } from "../lib/chat-context.tsx";
-import { createEscapeClose } from "../lib/dialog.tsx";
+import { createEscapeClose, DialogA11y } from "../lib/dialog.tsx";
+import { clearDraft, readDraft, writeDraft } from "../lib/draft-store.ts";
+import { searchMessages } from "../lib/message-search.ts";
 import {
   attachmentSrc,
   CloseIcon,
@@ -14,6 +28,7 @@ import {
   profilePath,
   renderRichText,
   sameDay,
+  SpinnerIcon,
   titleFor,
   UserAvatar as Avatar,
 } from "../lib/ui.tsx";
@@ -22,9 +37,9 @@ import {
 const NEAR_BOTTOM_PX = 96;
 /** Distance from the top (px) that triggers loading the next older page. */
 const NEAR_TOP_PX = 60;
-/** LINE-style cap on images staged per message. */
+/** LINE-style cap on attachments staged per message. */
 const MAX_CHAT_ATTACHMENTS = 4;
-const MAX_CHAT_IMAGE_SIZE = 20 * 1024 * 1024;
+const MAX_CHAT_MEDIA_SIZE = 20 * 1024 * 1024;
 
 type StagedMedia = MediaAttachment & { preview: string };
 
@@ -34,9 +49,31 @@ export function ChatPane() {
   const [draft, setDraft] = createSignal("");
   const [menuFor, setMenuFor] = createSignal<string | null>(null);
   const [newBelow, setNewBelow] = createSignal(0);
+  // Announced to screen readers when a message from the OTHER side arrives, so
+  // an incoming message is perceivable without watching the scroll region.
+  const [incoming, setIncoming] = createSignal("");
   const [staged, setStaged] = createSignal<StagedMedia[]>([]);
   const [uploading, setUploading] = createSignal(false);
+  /** Src of the image opened in the in-app lightbox (null = closed). */
+  const [lightbox, setLightbox] = createSignal<string | null>(null);
+  let lightboxRoot: HTMLDivElement | undefined;
   let fileInput: HTMLInputElement | undefined;
+
+  // In-conversation search over the messages already loaded in the open
+  // thread (client-side; no network). `searchIndex` points into `searchHits`
+  // (oldest → newest); the current hit gets scrolled into view and ringed.
+  const [searchOpen, setSearchOpen] = createSignal(false);
+  const [searchQuery, setSearchQuery] = createSignal("");
+  const [searchIndex, setSearchIndex] = createSignal(0);
+  let searchInput: HTMLInputElement | undefined;
+  const searchHits = createMemo(() =>
+    searchOpen() ? searchMessages(chat.messages(), searchQuery()) : [],
+  );
+  const searchHitSet = createMemo(() => new Set(searchHits()));
+  const currentHitId = () => searchHits()[searchIndex()];
+  // Live element handles for the rendered message rows, so a search hit can be
+  // scrolled into view. Cleared on conversation switch (below).
+  const messageEls = new Map<string, HTMLElement>();
 
   // On touch devices the software keyboard has no Shift, so Enter must insert
   // a newline (LINE-style); sending is the button's job. Keyboard-first
@@ -48,6 +85,96 @@ export function ChatPane() {
   createEscapeClose(
     () => menuFor() !== null,
     () => setMenuFor(null),
+  );
+
+  // Draft text and staged attachments belong to the conversation they were
+  // typed in: carrying them across a switch risks a wrong-recipient send
+  // (and leaks the preview object URLs). The generation counter also voids
+  // uploads still in flight for the previous thread. The TEXT draft, however,
+  // is persisted per-talk and restored on return (staged media is not — object
+  // URLs can't survive and mis-sending a stale upload would be worse).
+  let stagedGeneration = 0;
+  createEffect(
+    on(
+      () => chat.selected()?.ap_id,
+      (apId, prevApId) => {
+        if (prevApId) writeDraft(prevApId, draft());
+        stagedGeneration++;
+        setStaged((prev) => {
+          prev.forEach((item) => URL.revokeObjectURL(item.preview));
+          return [];
+        });
+        setUploading(false);
+        setMenuFor(null);
+        setLightbox(null);
+        setSearchOpen(false);
+        setSearchQuery("");
+        messageEls.clear();
+        setDraft(apId ? readDraft(apId) : "");
+      },
+    ),
+  );
+
+  // Save the open talk's draft when the tab is backgrounded or closed, so a
+  // reload/close without a conversation switch still restores it.
+  if (typeof window !== "undefined") {
+    const flushDraft = () => {
+      const apId = chat.selected()?.ap_id;
+      if (apId) writeDraft(apId, draft());
+    };
+    const onHidden = () => {
+      if (document.visibilityState === "hidden") flushDraft();
+    };
+    window.addEventListener("pagehide", flushDraft);
+    document.addEventListener("visibilitychange", onHidden);
+    onCleanup(() => {
+      window.removeEventListener("pagehide", flushDraft);
+      document.removeEventListener("visibilitychange", onHidden);
+    });
+  }
+
+  createEscapeClose(searchOpen, () => {
+    setSearchOpen(false);
+    setSearchQuery("");
+  });
+
+  const jumpToHit = (index: number) => {
+    const id = searchHits()[index];
+    if (!id) return;
+    messageEls.get(id)?.scrollIntoView({ block: "center", behavior: "smooth" });
+  };
+
+  const toggleSearch = () => {
+    if (searchOpen()) {
+      setSearchOpen(false);
+      setSearchQuery("");
+      return;
+    }
+    setSearchOpen(true);
+    requestAnimationFrame(() => searchInput?.focus());
+  };
+
+  // Step through matches. Hits run oldest → newest, so "older" walks the index
+  // down and "newer" walks it up; both scroll the landed match into view.
+  const stepHit = (delta: number) => {
+    const count = searchHits().length;
+    if (count === 0) return;
+    const next = Math.min(count - 1, Math.max(0, searchIndex() + delta));
+    setSearchIndex(next);
+    jumpToHit(next);
+  };
+
+  // When the result set changes (typing, or new/older messages arriving),
+  // land on the newest match and reveal it.
+  createEffect(
+    on(searchHits, (hits) => {
+      if (hits.length === 0) {
+        setSearchIndex(0);
+        return;
+      }
+      setSearchIndex(hits.length - 1);
+      requestAnimationFrame(() => jumpToHit(hits.length - 1));
+    }),
   );
 
   const copyMessage = async (content: string) => {
@@ -75,33 +202,61 @@ export function ChatPane() {
     (draft().trim().length > 0 || staged().length > 0) && !uploading();
 
   const handleFiles = async (files: FileList | null) => {
-    if (!files) return;
-    for (const file of Array.from(files)) {
-      if (staged().length >= MAX_CHAT_ATTACHMENTS) break;
-      if (!file.type.startsWith("image/")) continue;
-      if (file.size > MAX_CHAT_IMAGE_SIZE) {
-        app.toast("画像は 20MB までです", "error");
-        continue;
+    if (!files || files.length === 0) return;
+    const generation = stagedGeneration;
+    let skippedType = 0;
+    let skippedCap = 0;
+    // Hold canSend off for the WHOLE batch (not per file) so a multi-image
+    // send can't fire with only part of the selection uploaded.
+    setUploading(true);
+    try {
+      for (const file of Array.from(files)) {
+        if (
+          !file.type.startsWith("image/") &&
+          !file.type.startsWith("video/")
+        ) {
+          skippedType++;
+          continue;
+        }
+        if (staged().length >= MAX_CHAT_ATTACHMENTS) {
+          skippedCap++;
+          continue;
+        }
+        if (file.size > MAX_CHAT_MEDIA_SIZE) {
+          app.toast("ファイルは 20MB までです", "error");
+          continue;
+        }
+        try {
+          const uploaded = await uploadMedia(file);
+          // The conversation switched while uploading: this file belongs to
+          // the previous thread — drop it instead of staging it here.
+          if (generation !== stagedGeneration) return;
+          setStaged((prev) => [
+            ...prev,
+            {
+              url: uploaded.url,
+              r2_key: uploaded.r2_key,
+              content_type: uploaded.content_type,
+              // The filename doubles as the fallback label for a staged
+              // video whose first frame hasn't decoded.
+              ...(file.type.startsWith("video/") ? { name: file.name } : {}),
+              preview: URL.createObjectURL(file),
+            },
+          ]);
+        } catch {
+          app.toast("アップロードに失敗しました", "error");
+        }
       }
-      setUploading(true);
-      try {
-        const uploaded = await uploadMedia(file);
-        setStaged((prev) => [
-          ...prev,
-          {
-            url: uploaded.url,
-            r2_key: uploaded.r2_key,
-            content_type: uploaded.content_type,
-            preview: URL.createObjectURL(file),
-          },
-        ]);
-      } catch {
-        app.toast("画像のアップロードに失敗しました", "error");
-      } finally {
-        setUploading(false);
+      if (skippedType > 0) {
+        app.toast("画像・動画以外は添付できません", "error");
       }
+      if (skippedCap > 0) {
+        app.toast(`添付は ${MAX_CHAT_ATTACHMENTS} 件までです`, "error");
+      }
+    } finally {
+      if (generation === stagedGeneration) setUploading(false);
+      if (fileInput) fileInput.value = "";
     }
-    if (fileInput) fileInput.value = "";
   };
 
   const removeStaged = (index: number) => {
@@ -146,6 +301,24 @@ export function ChatPane() {
     el.scrollTo({ top: el.scrollHeight, behavior: smooth ? "smooth" : "auto" });
   };
 
+  // Chat images have no reserved height: when one decodes it grows the
+  // scroll height AFTER the auto scroll-to-bottom already ran. Re-pin while
+  // the reader is at the bottom; when it grew fully above the viewport
+  // (freshly prepended older history) shift scrollTop by the growth so the
+  // visible messages don't jump.
+  const onMediaLoad = (event: Event) => {
+    const el = scrollRef;
+    if (!el) return;
+    if (nearBottom) {
+      scrollToBottom(false);
+      return;
+    }
+    const media = event.currentTarget as HTMLElement;
+    const mediaBox = media.getBoundingClientRect();
+    const hostBox = el.getBoundingClientRect();
+    if (mediaBox.bottom <= hostBox.top) el.scrollTop += mediaBox.height;
+  };
+
   const loadOlderPreservingScroll = async () => {
     const el = scrollRef;
     if (!el || chat.loadingOlder() || !chat.messagesHasMore()) return;
@@ -180,6 +353,8 @@ export function ChatPane() {
     const content = draft().trim();
     const attachments = staged();
     if ((!content && attachments.length === 0) || uploading()) return;
+    const apId = chat.selected()?.ap_id;
+    if (apId) clearDraft(apId);
     setDraft("");
     setStaged([]);
     attachments.forEach((item) => URL.revokeObjectURL(item.preview));
@@ -217,17 +392,27 @@ export function ChatPane() {
     prevCount = msgs.length;
     if (!apId) {
       setNewBelow(0);
+      setIncoming("");
       nearBottom = true;
       return;
     }
     if (switched || (!hadMessages && lastId !== undefined)) {
       setNewBelow(0);
+      setIncoming("");
       nearBottom = true;
       requestAnimationFrame(() => scrollToBottom(false));
       return;
     }
     if (!appended || !last) return;
     const mine = last.sender.ap_id === app.actor().ap_id;
+    if (!mine) {
+      // The content usually differs message-to-message so aria-live re-fires;
+      // media-only messages still announce something meaningful.
+      const preview =
+        last.content?.trim() ||
+        ((last.attachments?.length ?? 0) > 0 ? "画像を送信しました" : "");
+      setIncoming(`${titleFor(last.sender)}: ${preview}`);
+    }
     if (mine || nearBottom) {
       setNewBelow(0);
       requestAnimationFrame(() => scrollToBottom(true));
@@ -293,7 +478,107 @@ export function ChatPane() {
                     </div>
                   </A>
                 </Show>
+                <button
+                  class="p-talk-chat-action"
+                  classList={{ "is-active": searchOpen() }}
+                  type="button"
+                  aria-label="トーク内を検索"
+                  aria-pressed={searchOpen()}
+                  onClick={toggleSearch}
+                >
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <circle cx="11" cy="11" r="7" />
+                    <path d="m20 20-3.5-3.5" />
+                  </svg>
+                </button>
               </div>
+              <Show when={searchOpen()}>
+                <div class="p-talk-chat-search" role="search">
+                  <div class="p-talk-chat-search__field">
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                      <circle cx="11" cy="11" r="7" />
+                      <path d="m20 20-3.5-3.5" />
+                    </svg>
+                    <input
+                      ref={searchInput}
+                      type="text"
+                      inputmode="search"
+                      placeholder="メッセージを検索"
+                      aria-label="トーク内のメッセージを検索"
+                      value={searchQuery()}
+                      onInput={(event) =>
+                        setSearchQuery(event.currentTarget.value)
+                      }
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" && !event.isComposing) {
+                          event.preventDefault();
+                          // Enter walks backward through history (older), the
+                          // way messenger search steps up the thread.
+                          stepHit(event.shiftKey ? 1 : -1);
+                        }
+                      }}
+                    />
+                    <Show when={searchQuery().trim().length > 0}>
+                      <span
+                        class="p-talk-chat-search__count"
+                        aria-live="polite"
+                      >
+                        {searchHits().length > 0
+                          ? `${searchIndex() + 1}/${searchHits().length}`
+                          : "一致なし"}
+                      </span>
+                    </Show>
+                  </div>
+                  <div class="p-talk-chat-search__nav">
+                    <button
+                      type="button"
+                      aria-label="前の一致（古い方へ）"
+                      disabled={searchHits().length === 0 || searchIndex() <= 0}
+                      onClick={() => stepHit(-1)}
+                    >
+                      <svg viewBox="0 0 24 24" aria-hidden="true">
+                        <path d="m6 15 6-6 6 6" />
+                      </svg>
+                    </button>
+                    <button
+                      type="button"
+                      aria-label="次の一致（新しい方へ）"
+                      disabled={
+                        searchHits().length === 0 ||
+                        searchIndex() >= searchHits().length - 1
+                      }
+                      onClick={() => stepHit(1)}
+                    >
+                      <svg viewBox="0 0 24 24" aria-hidden="true">
+                        <path d="m6 9 6 6 6-6" />
+                      </svg>
+                    </button>
+                    <button
+                      type="button"
+                      class="p-talk-chat-search__close"
+                      aria-label="検索を閉じる"
+                      onClick={() => {
+                        setSearchOpen(false);
+                        setSearchQuery("");
+                      }}
+                    >
+                      <CloseIcon />
+                    </button>
+                  </div>
+                </div>
+              </Show>
+              <Show when={chat.connectionLost()}>
+                <div class="p-conn-banner" role="status">
+                  接続を確認しています…
+                </div>
+              </Show>
+              <p
+                class="yc-visually-hidden"
+                aria-live="polite"
+                aria-atomic="true"
+              >
+                {incoming()}
+              </p>
               <div
                 class="p-talk-chat-main"
                 ref={(el) => (scrollRef = el)}
@@ -304,239 +589,293 @@ export function ChatPane() {
                     when={!chat.messagesLoading()}
                     fallback={<li class="p-home-empty">読み込み中...</li>}
                   >
-                    <Show when={chat.messagesHasMore()}>
-                      <li class="p-talk-chat-older">
-                        <button
-                          type="button"
-                          disabled={chat.loadingOlder()}
-                          onClick={() => void loadOlderPreservingScroll()}
-                        >
-                          {chat.loadingOlder()
-                            ? "読み込み中…"
-                            : "以前のメッセージを読み込む"}
-                        </button>
-                      </li>
-                    </Show>
-                    <For
-                      each={chat.messages()}
+                    <Show
+                      when={!chat.messagesError()}
                       fallback={
                         <li class="p-talk-chat-empty-row">
-                          まだメッセージがありません。あいさつを送ってみましょう。
+                          メッセージを読み込めませんでした
+                          <div class="p-talk-chat-older">
+                            <button
+                              type="button"
+                              onClick={() => chat.reloadMessages()}
+                            >
+                              再試行
+                            </button>
+                          </div>
                         </li>
                       }
                     >
-                      {(message, index) => {
-                        // Reactive lookups: history prepends shift `index()`,
-                        // so day dividers / avatar grouping must recompute.
-                        const prev = () => chat.messages()[index() - 1];
-                        const showDay = () =>
-                          index() === 0 ||
-                          !sameDay(message.created_at, prev()!.created_at);
-                        const mine = message.sender.ap_id === app.actor().ap_id;
-                        const primary = () =>
-                          showDay() ||
-                          prev()?.sender.ap_id !== message.sender.ap_id;
-                        return (
-                          <>
-                            <Show when={showDay()}>
-                              <li class="c-talk-date">
-                                <div class="c-talk-chat-date-box">
-                                  <p>{formatDayLabel(message.created_at)}</p>
-                                </div>
-                              </li>
-                            </Show>
-                            <li
-                              classList={{
-                                "c-talk-chat": true,
-                                self: mine,
-                                other: !mine,
-                                primary: primary(),
-                                subsequent: !primary(),
-                                "is-pending": !!message.pending,
-                                "is-failed": !!message.failed,
-                              }}
-                            >
-                              <div class="c-talk-chat-box">
-                                <Show when={!mine && primary()}>
-                                  <A
-                                    class="c-talk-chat-icon"
-                                    href={profilePath(message.sender.ap_id)}
-                                  >
-                                    <Avatar value={message.sender} />
-                                  </A>
-                                </Show>
-                                <Show when={mine}>
-                                  <div class="c-talk-chat-date">
-                                    <Show when={readLabel(message)}>
-                                      {(label) => (
-                                        <span class="c-talk-chat-read">
-                                          {label()}
-                                        </span>
-                                      )}
-                                    </Show>
-                                    <p>{formatTime(message.created_at)}</p>
+                      <Show when={chat.messagesHasMore()}>
+                        <li class="p-talk-chat-older">
+                          <button
+                            type="button"
+                            disabled={chat.loadingOlder()}
+                            onClick={() => void loadOlderPreservingScroll()}
+                          >
+                            {chat.loadingOlder()
+                              ? "読み込み中…"
+                              : "以前のメッセージを読み込む"}
+                          </button>
+                        </li>
+                      </Show>
+                      <For
+                        each={chat.messages()}
+                        fallback={
+                          <li class="p-talk-chat-empty-row">
+                            まだメッセージがありません。あいさつを送ってみましょう。
+                          </li>
+                        }
+                      >
+                        {(message, index) => {
+                          // Reactive lookups: history prepends shift `index()`,
+                          // so day dividers / avatar grouping must recompute.
+                          const prev = () => chat.messages()[index() - 1];
+                          const showDay = () =>
+                            index() === 0 ||
+                            !sameDay(message.created_at, prev()!.created_at);
+                          const mine =
+                            message.sender.ap_id === app.actor().ap_id;
+                          const primary = () =>
+                            showDay() ||
+                            prev()?.sender.ap_id !== message.sender.ap_id;
+                          return (
+                            <>
+                              <Show when={showDay()}>
+                                <li class="c-talk-date">
+                                  <div class="c-talk-chat-date-box">
+                                    <p>{formatDayLabel(message.created_at)}</p>
                                   </div>
-                                </Show>
-                                <div class="c-talk-chat-right">
+                                </li>
+                              </Show>
+                              <li
+                                ref={(el) => messageEls.set(message.id, el)}
+                                classList={{
+                                  "c-talk-chat": true,
+                                  self: mine,
+                                  other: !mine,
+                                  primary: primary(),
+                                  subsequent: !primary(),
+                                  "is-pending": !!message.pending,
+                                  "is-failed": !!message.failed,
+                                  "is-search-hit":
+                                    searchOpen() &&
+                                    searchHitSet().has(message.id),
+                                  "is-search-current":
+                                    searchOpen() &&
+                                    currentHitId() === message.id,
+                                }}
+                              >
+                                <div class="c-talk-chat-box">
                                   <Show when={!mine && primary()}>
                                     <A
-                                      class="c-talk-chat-name"
+                                      class="c-talk-chat-icon"
                                       href={profilePath(message.sender.ap_id)}
                                     >
-                                      <p>{titleFor(message.sender)}</p>
+                                      <Avatar value={message.sender} />
                                     </A>
                                   </Show>
-                                  <div
-                                    classList={{
-                                      "c-talk-chat-msg": true,
-                                      "has-media":
-                                        (message.attachments?.length ?? 0) > 0,
-                                    }}
-                                  >
-                                    <Show
-                                      when={
-                                        (message.attachments?.length ?? 0) > 0
-                                      }
-                                    >
-                                      <div class="c-talk-chat-media">
-                                        <For each={message.attachments}>
-                                          {(attachment) => {
-                                            const src = attachmentSrc(
-                                              attachment,
-                                              app.origin(),
-                                            );
-                                            if (!src) return null;
-                                            return (
-                                              <Show
-                                                when={(
-                                                  attachment.content_type ?? ""
-                                                ).startsWith("video/")}
-                                                fallback={
-                                                  <a
-                                                    href={src}
-                                                    target="_blank"
-                                                    rel="noopener noreferrer"
-                                                  >
-                                                    <img
-                                                      src={src}
-                                                      alt={
-                                                        attachment.name ?? ""
-                                                      }
-                                                      loading="lazy"
-                                                    />
-                                                  </a>
-                                                }
-                                              >
-                                                <video
-                                                  src={src}
-                                                  controls
-                                                  preload="metadata"
-                                                  playsinline
-                                                />
-                                              </Show>
-                                            );
-                                          }}
-                                        </For>
-                                      </div>
-                                    </Show>
-                                    <Show when={message.content}>
-                                      <p>{renderRichText(message.content)}</p>
-                                    </Show>
-                                    <button
-                                      type="button"
-                                      class="c-talk-msg-action"
-                                      aria-label="メッセージ操作"
-                                      onClick={() =>
-                                        setMenuFor(
-                                          menuFor() === message.id
-                                            ? null
-                                            : message.id,
-                                        )
-                                      }
-                                    >
-                                      <svg
-                                        viewBox="0 0 24 24"
-                                        aria-hidden="true"
+                                  <Show when={mine}>
+                                    <div class="c-talk-chat-date">
+                                      <Show when={readLabel(message)}>
+                                        {(label) => (
+                                          <span class="c-talk-chat-read">
+                                            {label()}
+                                          </span>
+                                        )}
+                                      </Show>
+                                      <p>{formatTime(message.created_at)}</p>
+                                    </div>
+                                  </Show>
+                                  <div class="c-talk-chat-right">
+                                    <Show when={!mine && primary()}>
+                                      <A
+                                        class="c-talk-chat-name"
+                                        href={profilePath(message.sender.ap_id)}
                                       >
-                                        <circle cx="5" cy="12" r="1.6" />
-                                        <circle cx="12" cy="12" r="1.6" />
-                                        <circle cx="19" cy="12" r="1.6" />
-                                      </svg>
-                                    </button>
-                                    <Show when={menuFor() === message.id}>
+                                        <p>{titleFor(message.sender)}</p>
+                                      </A>
+                                    </Show>
+                                    <div
+                                      classList={{
+                                        "c-talk-chat-msg": true,
+                                        "has-media":
+                                          (message.attachments?.length ?? 0) >
+                                          0,
+                                      }}
+                                    >
+                                      <Show
+                                        when={
+                                          (message.attachments?.length ?? 0) > 0
+                                        }
+                                      >
+                                        <div class="c-talk-chat-media">
+                                          <For each={message.attachments}>
+                                            {(attachment) => {
+                                              const src = attachmentSrc(
+                                                attachment,
+                                                app.origin(),
+                                              );
+                                              if (!src) return null;
+                                              return (
+                                                <Show
+                                                  when={(
+                                                    attachment.content_type ??
+                                                    ""
+                                                  ).startsWith("video/")}
+                                                  fallback={
+                                                    <a
+                                                      href={src}
+                                                      target="_blank"
+                                                      rel="noopener noreferrer"
+                                                      onClick={(event) => {
+                                                        // Plain tap opens the
+                                                        // in-app lightbox; the
+                                                        // real link stays for
+                                                        // long-press / modified
+                                                        // clicks.
+                                                        if (
+                                                          event.metaKey ||
+                                                          event.ctrlKey ||
+                                                          event.shiftKey
+                                                        ) {
+                                                          return;
+                                                        }
+                                                        event.preventDefault();
+                                                        setLightbox(src);
+                                                      }}
+                                                    >
+                                                      <img
+                                                        src={src}
+                                                        alt={
+                                                          attachment.name ?? ""
+                                                        }
+                                                        loading="lazy"
+                                                        onLoad={onMediaLoad}
+                                                      />
+                                                    </a>
+                                                  }
+                                                >
+                                                  <video
+                                                    src={src}
+                                                    controls
+                                                    preload="metadata"
+                                                    playsinline
+                                                  />
+                                                </Show>
+                                              );
+                                            }}
+                                          </For>
+                                        </div>
+                                      </Show>
+                                      <Show when={message.content}>
+                                        <p>
+                                          {renderRichText(
+                                            message.content,
+                                            searchOpen()
+                                              ? searchQuery()
+                                              : undefined,
+                                          )}
+                                        </p>
+                                      </Show>
                                       <button
                                         type="button"
-                                        class="c-talk-msg-scrim"
-                                        aria-label="閉じる"
-                                        onClick={() => setMenuFor(null)}
-                                      />
-                                      <div class="c-talk-msg-menu" role="menu">
+                                        class="c-talk-msg-action"
+                                        aria-label="メッセージ操作"
+                                        onClick={() =>
+                                          setMenuFor(
+                                            menuFor() === message.id
+                                              ? null
+                                              : message.id,
+                                          )
+                                        }
+                                      >
+                                        <svg
+                                          viewBox="0 0 24 24"
+                                          aria-hidden="true"
+                                        >
+                                          <circle cx="5" cy="12" r="1.6" />
+                                          <circle cx="12" cy="12" r="1.6" />
+                                          <circle cx="19" cy="12" r="1.6" />
+                                        </svg>
+                                      </button>
+                                      <Show when={menuFor() === message.id}>
                                         <button
                                           type="button"
-                                          role="menuitem"
-                                          onClick={() =>
-                                            void copyMessage(message.content)
-                                          }
-                                        >
-                                          コピー
-                                        </button>
-                                        <Show
-                                          when={
-                                            mine &&
-                                            !message.pending &&
-                                            !message.failed &&
-                                            chat.selected()?.type ===
-                                              "community"
-                                          }
+                                          class="c-talk-msg-scrim"
+                                          aria-label="閉じる"
+                                          onClick={() => setMenuFor(null)}
+                                        />
+                                        <div
+                                          class="c-talk-msg-menu"
+                                          role="menu"
                                         >
                                           <button
                                             type="button"
                                             role="menuitem"
-                                            class="is-danger"
                                             onClick={() =>
-                                              void removeMessage(message.id)
+                                              void copyMessage(message.content)
                                             }
                                           >
-                                            削除
+                                            コピー
                                           </button>
-                                        </Show>
+                                          <Show
+                                            when={
+                                              mine &&
+                                              !message.pending &&
+                                              !message.failed &&
+                                              chat.selected()?.type ===
+                                                "community"
+                                            }
+                                          >
+                                            <button
+                                              type="button"
+                                              role="menuitem"
+                                              class="is-danger"
+                                              onClick={() =>
+                                                void removeMessage(message.id)
+                                              }
+                                            >
+                                              削除
+                                            </button>
+                                          </Show>
+                                        </div>
+                                      </Show>
+                                    </div>
+                                    <Show when={message.failed}>
+                                      <div class="c-talk-chat-failed">
+                                        <span>送信できませんでした</span>
+                                        <button
+                                          type="button"
+                                          onClick={() =>
+                                            void chat.resendMessage(message.id)
+                                          }
+                                        >
+                                          再送
+                                        </button>
+                                        <button
+                                          type="button"
+                                          class="is-danger"
+                                          onClick={() =>
+                                            chat.discardMessage(message.id)
+                                          }
+                                        >
+                                          削除
+                                        </button>
                                       </div>
                                     </Show>
                                   </div>
-                                  <Show when={message.failed}>
-                                    <div class="c-talk-chat-failed">
-                                      <span>送信できませんでした</span>
-                                      <button
-                                        type="button"
-                                        onClick={() =>
-                                          void chat.resendMessage(message.id)
-                                        }
-                                      >
-                                        再送
-                                      </button>
-                                      <button
-                                        type="button"
-                                        class="is-danger"
-                                        onClick={() =>
-                                          chat.discardMessage(message.id)
-                                        }
-                                      >
-                                        削除
-                                      </button>
+                                  <Show when={!mine}>
+                                    <div class="c-talk-chat-date">
+                                      <p>{formatTime(message.created_at)}</p>
                                     </div>
                                   </Show>
                                 </div>
-                                <Show when={!mine}>
-                                  <div class="c-talk-chat-date">
-                                    <p>{formatTime(message.created_at)}</p>
-                                  </div>
-                                </Show>
-                              </div>
-                            </li>
-                          </>
-                        );
-                      }}
-                    </For>
+                              </li>
+                            </>
+                          );
+                        }}
+                      </For>
+                    </Show>
                   </Show>
                 </ul>
               </div>
@@ -561,10 +900,27 @@ export function ChatPane() {
                     <For each={staged()}>
                       {(item, index) => (
                         <span class="p-talk-chat-attach-item">
-                          <img src={item.preview} alt="" />
+                          <Show
+                            when={(item.content_type ?? "").startsWith(
+                              "video/",
+                            )}
+                            fallback={<img src={item.preview} alt="" />}
+                          >
+                            <video
+                              src={item.preview}
+                              muted
+                              playsinline
+                              preload="metadata"
+                            />
+                            <Show when={item.name}>
+                              <span class="p-talk-chat-attach-name">
+                                {item.name}
+                              </span>
+                            </Show>
+                          </Show>
                           <button
                             type="button"
-                            aria-label="画像を削除"
+                            aria-label="添付を削除"
                             onClick={() => removeStaged(index())}
                           >
                             <CloseIcon />
@@ -590,7 +946,7 @@ export function ChatPane() {
                   <button
                     type="button"
                     class="p-talk-chat-send__attach"
-                    aria-label="画像を添付"
+                    aria-label="画像・動画を添付"
                     disabled={
                       uploading() || staged().length >= MAX_CHAT_ATTACHMENTS
                     }
@@ -605,7 +961,7 @@ export function ChatPane() {
                   <input
                     ref={fileInput}
                     type="file"
-                    accept="image/*"
+                    accept="image/*,video/*"
                     multiple
                     hidden
                     onChange={(event) =>
@@ -630,7 +986,10 @@ export function ChatPane() {
                           if (
                             event.key === "Enter" &&
                             !event.shiftKey &&
+                            // Safari fires the IME confirm-Enter with
+                            // isComposing=false but the legacy keyCode 229.
                             !event.isComposing &&
+                            event.keyCode !== 229 &&
                             !coarsePointer
                           ) {
                             event.preventDefault();
@@ -652,6 +1011,37 @@ export function ChatPane() {
                   </button>
                 </form>
               </div>
+              <Show when={lightbox()}>
+                {(src) => (
+                  <div
+                    class="p-chat-lightbox"
+                    role="dialog"
+                    aria-modal="true"
+                    aria-label="画像プレビュー"
+                    ref={(el) => (lightboxRoot = el)}
+                  >
+                    <DialogA11y
+                      root={() => lightboxRoot}
+                      onClose={() => setLightbox(null)}
+                    />
+                    <button
+                      type="button"
+                      class="p-chat-lightbox-dismiss"
+                      aria-label="閉じる"
+                      onClick={() => setLightbox(null)}
+                    />
+                    <img src={src()} alt="" />
+                    <button
+                      type="button"
+                      class="p-chat-lightbox-close"
+                      aria-label="閉じる"
+                      onClick={() => setLightbox(null)}
+                    >
+                      <CloseIcon />
+                    </button>
+                  </div>
+                )}
+              </Show>
             </>
           )}
         </Show>

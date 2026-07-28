@@ -1,9 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { readFile } from "node:fs/promises";
 
-const [packageSource, moduleSource] = await Promise.all([
+const [packageSource, moduleSource, takoformModuleSource] = await Promise.all([
   readFile(new URL("../package.json", import.meta.url), "utf8"),
   readFile(new URL("../main.tf", import.meta.url), "utf8"),
+  readFile(new URL("../deploy/takoform/main.tf", import.meta.url), "utf8"),
 ]);
 
 const packageVersion = (JSON.parse(packageSource) as { version: string })
@@ -12,12 +13,22 @@ const expectedReleaseTag = `v${packageVersion}`;
 
 describe("release version", () => {
   test("keeps the OpenTofu artifact default aligned", () => {
-    const releaseVariable = moduleSource.match(
-      /variable\s+"worker_release_tag"\s*\{([\s\S]*?)\n\}/,
-    )?.[1];
+    for (const source of [moduleSource, takoformModuleSource]) {
+      const releaseVariable = source.match(
+        /variable\s+"worker_release_tag"\s*\{([\s\S]*?)\n\}/,
+      )?.[1];
 
-    expect(releaseVariable).toBeDefined();
-    expect(releaseVariable).toContain(`default     = "${expectedReleaseTag}"`);
+      expect(releaseVariable).toBeDefined();
+      expect(releaseVariable).toContain(
+        `default     = "${expectedReleaseTag}"`,
+      );
+      if (source === takoformModuleSource) {
+        expect(source).toContain(
+          `/releases/download/${expectedReleaseTag}/worker.js`,
+        );
+        expect(source).toMatch(/default\s+=\s+"sha256:[a-f0-9]{64}"/);
+      }
+    }
   });
 
   test("matches the Git tag when the release workflow runs", () => {

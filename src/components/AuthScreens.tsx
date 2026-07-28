@@ -1,5 +1,6 @@
 import { createSignal, For, onMount, Show } from "solid-js";
 import {
+  claimTakosumiOidcAutoStart,
   parseAuthConfig,
   shouldAutoStartTakosumiOidc,
   type AuthConfig,
@@ -73,7 +74,10 @@ export function SignedOut(props: { origin: string }) {
         if (!response.ok) throw new Error("auth providers unavailable");
         const config = parseAuthConfig(await response.json());
         if (!config) throw new Error("invalid auth provider response");
-        if (shouldAutoStartTakosumiOidc(config)) {
+        if (
+          shouldAutoStartTakosumiOidc(config) &&
+          claimTakosumiOidcAutoStart()
+        ) {
           window.location.assign(
             serverUrl(props.origin, "/api/auth/login/takos"),
           );

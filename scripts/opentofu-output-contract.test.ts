@@ -5,6 +5,13 @@ const outputsSource = await readFile(
   new URL("../outputs.tf", import.meta.url),
   "utf8",
 );
+const packageSource = await readFile(
+  new URL("../package.json", import.meta.url),
+  "utf8",
+);
+const packageJson = JSON.parse(packageSource) as {
+  scripts?: Record<string, string>;
+};
 
 const outputNames = Array.from(
   outputsSource.matchAll(/output\s+"([^"]+)"\s*\{/g),
@@ -29,5 +36,23 @@ describe("OpenTofu output contract", () => {
       expect(outputNames).not.toContain(retired);
       expect(outputsSource).not.toContain(`output "${retired}"`);
     }
+  });
+});
+
+describe("release authority", () => {
+  test("exposes no legacy release or deployment aliases", () => {
+    for (const script of [
+      "release:plan",
+      "release:site:plan",
+      "deploy:cloudflare",
+      "db:migrate:cloudflare",
+    ]) {
+      expect(packageJson.scripts?.[script]).toBeUndefined();
+    }
+    expect(packageJson.scripts?.deploy).toBe("bun scripts/deploy.mjs");
+    expect(packageJson.scripts?.["takosumi:release"]).toBeUndefined();
+    expect(Object.values(packageJson.scripts ?? {}).join("\n")).not.toContain(
+      "scripts/release-safety/",
+    );
   });
 });

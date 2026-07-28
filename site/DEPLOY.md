@@ -3,23 +3,30 @@
 `site/` is the static landing site for Yurumeet. The runtime UI source lives in
 `src/` and is bundled with the Yurumeet app build.
 
-There is no site build step. Upload the directory as-is to the static hosting
-target you use for the product-facing website. Cloudflare Pages is one valid
-target:
+There is no site build step. The official ecosystem target currently has no
+runnable `yurumeet-site` adapter, so official publication remains fail-closed
+until a fixed adapter with authoritative readback is registered.
 
 ```sh
-bunx wrangler pages deploy site \
-  --project-name=yurumeet-website \
-  --branch=main
+# from the sibling takos-control repository, once the adapter exists
+bun run deploy
 ```
 
-Attach the custom domains `yurumeet.com` and `www.yurumeet.com` to that Pages
-project, then create proxied CNAME records in the `yurumeet.com` zone:
+`prepare` is read-only. Do not substitute a raw Pages upload when the adapter is
+missing. A self-hoster may publish a copy to infrastructure they own, under
+their own credentials, approval, and recovery policy; that action is not an
+official ecosystem release.
+
+The official Pages target uses the custom domains `yurumeet.com` and
+`www.yurumeet.com`:
 
 ```text
-CNAME  yurumeet.com (@)      -> yurumeet-website.pages.dev
-CNAME  www.yurumeet.com      -> yurumeet-website.pages.dev
+CNAME  yurumeet.com (@) -> yurumeet-website.pages.dev
+CNAME  www.yurumeet.com -> yurumeet-website.pages.dev
 ```
+
+Domain and DNS changes are operator-owned provisioning actions, not release
+steps.
 
 Keep this site product-facing only. The app UI source is under `src/`, and
 runtime API wiring belongs to same-origin Worker packaging, discovery metadata,

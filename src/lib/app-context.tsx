@@ -3,6 +3,13 @@ import type { Actor } from "@takosjp/yurucommu-api";
 
 export type ToastTone = "info" | "error";
 
+export type ToastAction = {
+  /** Button label, e.g. 「元に戻す」. */
+  label: string;
+  /** Runs when the user taps the action; the toast dismisses itself. */
+  run: () => void;
+};
+
 export type ConfirmOptions = {
   title: string;
   message?: string;
@@ -18,8 +25,8 @@ export type AppContextValue = {
   origin: Accessor<string>;
   /** Re-fetch the signed-in actor (e.g. after editing own profile). */
   refetchActor: () => void;
-  /** Show a transient toast message. */
-  toast: (message: string, tone?: ToastTone) => void;
+  /** Show a transient toast message (optionally with an action button). */
+  toast: (message: string, tone?: ToastTone, action?: ToastAction) => void;
   /** Ask the user to confirm an action with a styled in-app dialog. */
   confirm: (options: ConfirmOptions) => Promise<boolean>;
   /** Unread DM/community message count (nav badge). */

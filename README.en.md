@@ -89,41 +89,59 @@ bun run build:takos-worker
 The production client build writes to `dist/`. `bun run build:takos-worker`
 embeds those assets with the core backend into `dist/takos-worker.js`.
 
-Yurumeet has two equal installation paths.
+Yurumeet owns both a direct Cloudflare module and a portable Takoform Capsule,
+but their public availability is not the same. Cloudflare self-hosting is
+available now. The Takosumi managed-install link stays disabled until a live
+create, rollback, and destroy evidence set exists.
 
-### Deploy directly to Cloudflare
+### Self-host on Cloudflare
 
-Use [Deploy to Cloudflare](https://deploy.workers.cloudflare.com/?url=https://github.com/tako0614/yurumeet),
-or deploy from an authenticated CLI:
+This deployment is owned by the end user or their operator; it is not an
+official production target operated by us. `wrangler.jsonc` and the root
+OpenTofu module define the direct Cloudflare path, while credentials, approval,
+migrations, and recovery remain under that operator's runbook and authority.
+
+Distribution publication uses this repository's own entrypoint, which does not
+exist yet; the shared rules live in the sibling `takos-control` repository
+(`engineering.policy.json` → `deploy`):
 
 ```sh
-bunx wrangler d1 create yurumeet-db
-bunx wrangler queues create yurumeet-delivery
-bunx wrangler queues create yurumeet-delivery-dlq
-bunx wrangler secret put ENCRYPTION_KEY
-bunx wrangler secret put AUTH_PASSWORD_HASH
 bun run deploy
 ```
 
-`wrangler.jsonc` is the source of truth for direct deployment. `bun run deploy`
-builds the fullstack Worker, applies the shared core D1 migrations, and runs
-`wrangler deploy`. Deploy to Cloudflare also provisions D1, KV, R2, and Queues.
+These commands publish the official distribution; they do not deploy into an
+end user's environment. `prepare` is read-only. If the adapter is unavailable,
+release remains fail-closed and does not fall back to a raw Worker deployment
+or migration.
 
-### Install through Takosumi
+`wrangler.jsonc` is also the single source for the Worker compatibility date
+and flags. The root module and `deploy/takoform/` decode that file, so keep it
+as strict JSON without JSONC comments or trailing commas. The D1 migration
+ledger remains `yurucommu_migrations`, shared with the core runners, and the
+retention schedule runs hourly.
 
-Install this repo through Takosumi as a normal plain OpenTofu module:
+### Managed install through Takosumi (not yet public)
+
+The canonical managed graph is `deploy/takoform/`. Do not publish an install
+link until a fixed release containing that module and host-conformance evidence
+are available:
 
 ```json
 {
   "url": "https://github.com/tako0614/yurumeet.git",
-  "ref": "main",
-  "path": "."
+  "ref": "<verified-release-tag>",
+  "path": "deploy/takoform"
 }
 ```
 
-OpenTofu belongs to the Takosumi-managed path because it adds Plan, Apply,
-StateVersion, Output, and Audit management. A direct Cloudflare deployment does
-not require OpenTofu.
+Takosumi owns Plan, Apply, StateVersion, Output, and Audit on this path. The
+root `main.tf` is the direct Cloudflare module and is not the module selected by
+the managed-install CTA.
+
+Both modules expose `launch_url` and `api_url` as ordinary OpenTofu runtime URL
+outputs. Neither uses reserved `takosumi_release`, `app_deployment`,
+`service_exports`, or `service_bindings` outputs as runtime declarations or
+lifecycle authority.
 
 `outputs.tf` exposes `launch_url` and `api_url` as ordinary OpenTofu runtime URL
 outputs. Its remaining outputs are provider-native operational values for the

@@ -1,9 +1,14 @@
 import { readFile } from "node:fs/promises";
 
+import {
+  PRODUCT_CATALOG_KEY,
+  PRODUCT_WIRE_IDENTITY,
+} from "../src/product-identity.ts";
+
 type JsonRecord = Record<string, unknown>;
 
 const outputsPath = requiredEnv("TAKOSUMI_CAPSULE_OUTPUTS_FILE");
-const password = requiredEnv("YURUMEET_E2E_PASSWORD");
+const password = optionalEnv("YURUMEET_E2E_PASSWORD");
 const outputs = record(
   JSON.parse(await readFile(outputsPath, "utf8")),
   "Capsule outputs",
@@ -13,7 +18,7 @@ if (!launchUrl) throw new Error("Capsule outputs do not contain launch_url");
 
 const origin = new URL(launchUrl).origin;
 const checks: string[] = [];
-let sessionCookie = "";
+let sessionCookie = optionalEnv("YURUMEET_E2E_SESSION_COOKIE") ?? "";
 
 await expectStatus("/", 200);
 checks.push("shell");
@@ -28,32 +33,57 @@ if (
 }
 checks.push("health");
 
+const readiness = await requestJson("/readyz", 200);
+if (readiness.status !== "ok") {
+  throw new Error("readyz did not report a ready runtime");
+}
+checks.push("readiness");
+
 const discovery = await requestJson("/.well-known/social-server", 200);
 if (!Array.isArray(discovery.capabilities)) {
   throw new Error("social-server discovery does not contain capabilities[]");
 }
+// The probe asserts the wire identity the mobile shells gate on, not just the
+// document's shape. A deployed Worker that answers with the wrong `product`
+// token is reachable by every check above and by no mobile client at all.
+if (discovery.product !== PRODUCT_WIRE_IDENTITY.product) {
+  throw new Error(
+    `discovery advertises product ${JSON.stringify(discovery.product)}; expected ${JSON.stringify(PRODUCT_WIRE_IDENTITY.product)}`,
+  );
+}
 checks.push("social-server.discovery");
 
 const providers = await requestJson("/api/auth/providers", 200);
-if (providers.password_enabled !== true) {
-  throw new Error("password authentication is not enabled for the probe");
+if (typeof providers.password_enabled !== "boolean") {
+  throw new Error("auth provider response does not contain password_enabled");
 }
 checks.push("auth.providers");
 
-const login = await fetch(new URL("/api/auth/login", origin), {
-  method: "POST",
-  headers: jsonHeaders(),
-  body: JSON.stringify({ password }),
-});
-const loginBody = await login.text();
-if (login.status !== 200) {
-  throw new Error(
-    `POST /api/auth/login returned ${login.status}: ${loginBody.slice(0, 1000)}`,
-  );
+if (!sessionCookie) {
+  if (providers.password_enabled !== true) {
+    throw new Error(
+      "OIDC-only probe requires YURUMEET_E2E_SESSION_COOKIE from an operator-private authenticated setup step",
+    );
+  }
+  if (!password) {
+    throw new Error("password-enabled probe requires YURUMEET_E2E_PASSWORD");
+  }
+  const login = await fetch(new URL("/api/auth/login", origin), {
+    method: "POST",
+    headers: jsonHeaders(),
+    body: JSON.stringify({ password }),
+  });
+  const loginBody = await login.text();
+  if (login.status !== 200) {
+    throw new Error(
+      `POST /api/auth/login returned ${login.status}: ${loginBody.slice(0, 1000)}`,
+    );
+  }
+  sessionCookie =
+    login.headers.get("set-cookie")?.split(";", 1)[0]?.trim() ?? "";
+  if (!sessionCookie) throw new Error("login did not return a session cookie");
+  checks.push("auth.login");
 }
-sessionCookie = login.headers.get("set-cookie")?.split(";", 1)[0]?.trim() ?? "";
-if (!sessionCookie) throw new Error("login did not return a session cookie");
-checks.push("auth.login");
 
 const me = await requestJson("/api/auth/me", 200);
 if (!isRecord(me.actor) || typeof me.actor.ap_id !== "string") {
@@ -88,9 +118,10 @@ console.log(
   JSON.stringify({
     kind: "takosumi.capsule-functional-probe@v1",
     status: "passed",
-    product: "yurumeet",
+    // Catalog key, not the discovery wire token — different namespaces.
+    product: PRODUCT_CATALOG_KEY,
     checks: checks.map((name) => ({ name, status: "passed" })),
-    cleanupVerified: true,
+    cleanupDelegatedToDestroy: true,
   }),
 );
 
@@ -146,5 +177,14 @@ function stringValue(value: unknown): string | null {
 function requiredEnv(name: string): string {
   const value = process.env[name]?.trim();
   if (!value) throw new Error(`${name} is required`);
+  return value;
+}
+
+function optionalEnv(name: string): string | undefined {
+  const value = process.env[name]?.trim();
+  if (!value) return undefined;
+  if (/[\r\n]/.test(value)) {
+    throw new Error(`${name} must be a single line`);
+  }
   return value;
 }

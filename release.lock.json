@@ -1,0 +1,19 @@
+{
+  "kind": "takos.release-artifact-lock@v1",
+  "app": "yurumeet",
+  "releases": {
+    "v0.1.1": {
+      "artifact": {
+        "filename": "worker.js",
+        "url": "https://github.com/tako0614/yurumeet/releases/download/v0.1.1/worker.js",
+        "sha256": "sha256:12dbf659613caa79c7e1696cb44a6078216bba92e61e812d3e84cd8d23370472"
+      },
+      "manifest": {
+        "url": "https://github.com/tako0614/yurumeet/releases/download/v0.1.1/takosumi-artifact.json",
+        "sha256": "sha256:0f05830bb0792a7233cdbde5ed34576e039deb54479c927149a97bdfc5603689"
+      },
+      "commit": "c55e2c54d760157a4a9aa7a5788b5932128d54da",
+      "seededFrom": "read-only GET of the published GitHub Release assets on 2026-07-28; reconciled against manifest kind, app, releaseTag, artifact SHA-256, and source commit"
+    }
+  }
+}

@@ -254,6 +254,12 @@ export function PostCard(props: {
 
   const handleMute = async () => {
     setMenuOpen(false);
+    const ok = await app.confirm({
+      title: "ミュート",
+      message: `${titleFor(props.post.author)} をミュートしますか?`,
+      confirmLabel: "ミュート",
+    });
+    if (!ok) return;
     try {
       await muteUser(props.post.author.ap_id);
       props.onRemove?.(props.post.ap_id);
@@ -265,6 +271,13 @@ export function PostCard(props: {
 
   const handleBlock = async () => {
     setMenuOpen(false);
+    const ok = await app.confirm({
+      title: "ブロック",
+      message: `${titleFor(props.post.author)} をブロックしますか?`,
+      confirmLabel: "ブロック",
+      danger: true,
+    });
+    if (!ok) return;
     try {
       await blockUser(props.post.author.ap_id);
       props.onRemove?.(props.post.ap_id);

@@ -1,8 +1,25 @@
-@import url("https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@100..900&display=swap");
-
+/*
+ * No webfont @import. The shared yurucommu-core CSP is `style-src 'self'` /
+ * `font-src 'self' data:` and is served to every family self-host, so pulling
+ * the stylesheet from fonts.googleapis.com was simply blocked — and widening
+ * that CSP would put a third-party runtime dependency on every deployment,
+ * including yurucommu, which does not want one. Bundling Noto Sans JP is not
+ * an option either: the generated Worker entry embeds dist/** inline and a
+ * Japanese subset would dominate the script size budget. Fall back to the
+ * platform's own Japanese face instead (same shape as the ecosystem type
+ * stack in docs/reference/design-language.md).
+ */
 * {
   box-sizing: border-box;
-  font-family: "Noto Sans JP", sans-serif;
+  font-family:
+    "Noto Sans JP",
+    -apple-system,
+    BlinkMacSystemFont,
+    "Hiragino Kaku Gothic ProN",
+    "Yu Gothic UI",
+    "Segoe UI",
+    Roboto,
+    sans-serif;
 }
 
 html,
@@ -730,6 +747,153 @@ ul {
   }
 }
 
+/* Header trailing action (in-conversation search toggle). */
+.p-talk-chat-action {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  flex: 0 0 34px;
+  margin-right: 6px;
+  place-items: center;
+  border: none;
+  border-radius: 50%;
+  outline: none;
+  background-color: transparent;
+  color: #55555e;
+  padding: 7px;
+  transition:
+    background-color 0.16s ease,
+    color 0.16s ease;
+}
+
+.p-talk-chat-action:hover {
+  background-color: rgba(17, 17, 22, 0.06);
+}
+
+.p-talk-chat-action.is-active {
+  background-color: #ffe1e1;
+  color: #ff3b3b;
+}
+
+.p-talk-chat-action svg {
+  width: 100%;
+  height: 100%;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* In-conversation search bar. */
+.p-talk-chat-search {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  border-bottom: #e6e6ee 1px solid;
+  background-color: #f0f0f5;
+  padding: 8px 12px;
+}
+
+.p-talk-chat-search__field {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  gap: 8px;
+  border-radius: 999px;
+  background-color: #ffffff;
+  padding: 0 12px;
+}
+
+.p-talk-chat-search__field svg {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+  fill: none;
+  stroke: #9a9aa4;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.p-talk-chat-search__field input {
+  min-width: 0;
+  flex: 1;
+  border: none;
+  outline: none;
+  background: transparent;
+  padding: 8px 0;
+  color: #17171c;
+  font-size: 14px;
+}
+
+.p-talk-chat-search__count {
+  flex: 0 0 auto;
+  color: #7d7d86;
+  font-size: 12px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.p-talk-chat-search__nav {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 2px;
+}
+
+.p-talk-chat-search__nav button {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  border: none;
+  border-radius: 50%;
+  background-color: transparent;
+  color: #55555e;
+  padding: 7px;
+  transition:
+    background-color 0.16s ease,
+    color 0.16s ease;
+}
+
+.p-talk-chat-search__nav button:hover {
+  background-color: rgba(17, 17, 22, 0.06);
+}
+
+.p-talk-chat-search__nav button:disabled {
+  color: #c9c9d2;
+}
+
+.p-talk-chat-search__nav button svg {
+  width: 100%;
+  height: 100%;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* Matched substring inside a message bubble. */
+.c-search-hit {
+  border-radius: 3px;
+  background-color: #ffe08a;
+  color: #17171c;
+  padding: 0 1px;
+}
+
+.c-talk-chat.self .c-search-hit {
+  background-color: #ffd83d;
+}
+
+/* The match the search has jumped to. */
+.c-talk-chat.is-search-current .c-talk-chat-msg {
+  outline: 2px solid #ff3b3b;
+  outline-offset: 2px;
+}
+
 .p-talk-chat-main {
   flex-grow: 1;
   overflow-y: auto;
@@ -1075,6 +1239,10 @@ ul {
 
 .p-talk-chat-send__dummy {
   min-height: 44px;
+  /* Cap auto-grow at ~6 lines (6 × 24px line + 20px padding); the textarea
+     scrolls internally past that instead of swallowing the thread. */
+  max-height: 164px;
+  overflow: hidden;
   visibility: hidden;
   white-space: break-spaces;
   overflow-wrap: anywhere;
@@ -1089,7 +1257,7 @@ ul {
   min-height: 44px;
   border: none;
   outline: none;
-  overflow: hidden;
+  overflow-y: auto;
   resize: none;
   background-color: transparent;
   padding: 10px 0 10px 16px;
@@ -2907,6 +3075,20 @@ ul {
   background: #c62828;
 }
 
+.yc-toast-action {
+  margin-left: 12px;
+  border: none;
+  background: transparent;
+  color: #7cc4ff;
+  font-size: 13px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.yc-toast-action:hover {
+  text-decoration: underline;
+}
+
 @keyframes yc-toast-in {
   from {
     opacity: 0;
@@ -4053,11 +4235,15 @@ ul {
   display: flex;
   width: min(100%, 440px);
   max-height: 80vh;
+  /* dvh tracks the iOS dynamic toolbar; vh above is the fallback. */
+  max-height: 80dvh;
   flex-direction: column;
   overflow: hidden;
   border-radius: 18px 18px 0 0;
   background: #ffffff;
   box-shadow: 0 -8px 40px rgba(0, 0, 0, 0.2);
+  /* viewport-fit=cover: keep the sheet's bottom edge above the home bar. */
+  padding-bottom: env(safe-area-inset-bottom);
 }
 
 @media (min-width: 640px) {
@@ -5078,9 +5264,18 @@ ul {
   stroke-linejoin: round;
 }
 
+/* Touch target: extend the 34px visual circle to a 44px hit area without
+   growing the painted background. */
+.c-talk-rooms-archive::after {
+  content: "";
+  position: absolute;
+  inset: -5px;
+}
+
 @media (hover: none) {
+  /* No hover exists to reveal it — keep the affordance fully visible. */
   .c-talk-rooms-archive {
-    opacity: 0.5;
+    opacity: 1;
   }
 }
 
@@ -5324,9 +5519,18 @@ ul {
   fill: currentColor;
 }
 
+/* Touch target: extend the 26px visual circle to a 44px hit area without
+   growing the painted background. */
+.c-talk-msg-action::after {
+  content: "";
+  position: absolute;
+  inset: -9px;
+}
+
 @media (hover: none) {
+  /* No hover exists to reveal it — keep the affordance fully visible. */
   .c-talk-msg-action {
-    opacity: 0.5;
+    opacity: 1;
   }
 }
 
@@ -5374,4 +5578,400 @@ ul {
 
 .c-talk-msg-menu button.is-danger {
   color: #ff3b3b;
+}
+
+/* QR contact exchange (友だち追加) modal. */
+.p-qr-tabs {
+  display: flex;
+  border-bottom: 1px solid #ededf3;
+}
+
+.p-qr-tabs button {
+  position: relative;
+  flex: 1;
+  border: none;
+  background: transparent;
+  padding: 10px 0;
+  color: #9a9aa4;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.p-qr-tabs button.is-active {
+  color: #17171c;
+}
+
+.p-qr-tabs button.is-active::after {
+  position: absolute;
+  bottom: -1px;
+  left: 50%;
+  width: 44px;
+  height: 3px;
+  border-radius: 999px;
+  background: #ff3b3b;
+  content: "";
+  transform: translateX(-50%);
+}
+
+.p-qr-body {
+  padding: 20px 16px;
+}
+
+.p-qr-mine,
+.p-qr-scan,
+.p-qr-result,
+.p-qr-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.p-qr-mine strong,
+.p-qr-result strong {
+  font-size: 16px;
+}
+
+.p-qr-mine small,
+.p-qr-result small {
+  color: #7d7d86;
+  font-size: 12px;
+}
+
+.p-qr-code {
+  margin-top: 8px;
+  border: 1px solid #ededf3;
+  border-radius: 16px;
+  background: #ffffff;
+  padding: 16px;
+}
+
+.p-qr-hint {
+  margin: 4px 0 0;
+  color: #9a9aa4;
+  font-size: 12px;
+  text-align: center;
+}
+
+.p-qr-share {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+  border: 1px solid #dedee8;
+  border-radius: 999px;
+  background: #ffffff;
+  padding: 8px 16px;
+  color: #17171c;
+  font-size: 13px;
+  font-weight: 700;
+  transition: background-color 0.16s ease;
+}
+
+.p-qr-share:hover {
+  background: #f2f2f8;
+}
+
+.p-qr-share svg {
+  width: 16px;
+  height: 16px;
+  stroke: currentColor;
+  stroke-width: 2;
+  fill: none;
+}
+
+.p-qr-viewfinder {
+  width: min(100%, 280px);
+  aspect-ratio: 1;
+  overflow: hidden;
+  border-radius: 16px;
+  background: #17171c;
+}
+
+.p-qr-viewfinder video {
+  width: 100%;
+  height: 100%;
+  /* contain, not cover: the qrbox overlay must match the decoder's actual
+     frame, or codes "inside the box" can sit outside the cropped feed. */
+  object-fit: contain;
+}
+
+.p-qr-state {
+  padding: 24px 0;
+  color: #7d7d86;
+  font-size: 13px;
+}
+
+.p-qr-state p {
+  margin: 0;
+}
+
+.p-qr-error {
+  color: #ff3b3b;
+  font-weight: 700;
+  text-align: center;
+}
+
+.p-qr-result-bio {
+  margin: 0;
+  max-width: 280px;
+  color: #55555e;
+  font-size: 12px;
+  text-align: center;
+}
+
+.p-qr-result-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.p-qr-follow {
+  border: none;
+  border-radius: 999px;
+  background: #ff3b3b;
+  padding: 9px 20px;
+  color: #ffffff;
+  font-size: 13px;
+  font-weight: 800;
+  transition: background-color 0.16s ease;
+}
+
+.p-qr-follow:hover {
+  background: #e63333;
+}
+
+.p-qr-follow:disabled {
+  background: #f0b1b1;
+}
+
+.p-qr-talk {
+  border: 1px solid #dedee8;
+  border-radius: 999px;
+  background: #ffffff;
+  padding: 9px 20px;
+  color: #17171c;
+  font-size: 13px;
+  font-weight: 800;
+  transition: background-color 0.16s ease;
+}
+
+.p-qr-talk:hover {
+  background: #f2f2f8;
+}
+
+.p-qr-followed {
+  border-radius: 999px;
+  background: #e9f8ee;
+  padding: 9px 20px;
+  color: #1d9d54;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.p-qr-followed.is-pending {
+  background: #f0f0f5;
+  color: #55555e;
+}
+
+.p-qr-self {
+  margin: 8px 0 0;
+  color: #9a9aa4;
+  font-size: 13px;
+}
+
+.p-qr-again {
+  margin-top: 8px;
+  border: none;
+  background: transparent;
+  color: #7d7d86;
+  font-size: 12px;
+  font-weight: 700;
+  text-decoration: underline;
+}
+
+.p-qr-again:hover {
+  color: #17171c;
+}
+
+/* Screen-reader-only text (e.g. story position announcements). */
+.yc-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+  padding: 0;
+}
+
+/* Connection-status banner shown after repeated background poll failures. */
+.p-conn-banner {
+  margin: 0 0 8px;
+  border-radius: 8px;
+  background: #fff6df;
+  color: #8a6d1a;
+  padding: 6px 10px;
+  text-align: center;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.p-talk-chat-container .p-conn-banner {
+  margin: 6px 10px 0;
+}
+
+/* Talk-tab header row: title + new-talk compose button. */
+.p-talk-list-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.p-talk-list-new {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  flex: 0 0 auto;
+  place-items: center;
+  border: none;
+  border-radius: 999px;
+  background: #f0f0f5;
+  color: #55555e;
+  padding: 0;
+}
+
+.p-talk-list-new:hover {
+  background: #e5e5ee;
+}
+
+.p-talk-list-new svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* In-app lightbox for chat image attachments. */
+.p-chat-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: grid;
+  place-items: center;
+  background: rgba(10, 10, 14, 0.88);
+  padding: 24px;
+}
+
+.p-chat-lightbox-dismiss {
+  position: absolute;
+  inset: 0;
+  border: none;
+  background: transparent;
+  padding: 0;
+}
+
+.p-chat-lightbox img {
+  position: relative;
+  max-width: 100%;
+  max-height: 100%;
+  border-radius: 8px;
+  object-fit: contain;
+}
+
+.p-chat-lightbox-close {
+  position: absolute;
+  top: calc(14px + env(safe-area-inset-top, 0px));
+  right: 14px;
+  display: grid;
+  width: 40px;
+  height: 40px;
+  place-items: center;
+  border: none;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.14);
+  color: #ffffff;
+  padding: 0;
+}
+
+.p-chat-lightbox-close svg {
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+}
+
+/* Staged video attachment: first-frame preview + filename fallback. */
+.p-talk-chat-attach-item video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.p-talk-chat-attach-item .p-talk-chat-attach-name {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  overflow: hidden;
+  background: rgba(17, 17, 22, 0.6);
+  color: #ffffff;
+  padding: 2px 4px;
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Typed confirmation input for account deletion. */
+.p-settings-delete-input {
+  width: 100%;
+  margin-top: 12px;
+  border: 1px solid #e6e6ee;
+  border-radius: 10px;
+  background: #fafaff;
+  padding: 10px 12px;
+  font-size: 14px;
+}
+
+.yc-confirm-ok:disabled {
+  opacity: 0.5;
+}
+
+/* Minimal 404 for unknown paths. */
+.p-notfound {
+  display: grid;
+  height: 100%;
+  place-items: center;
+  padding: 24px;
+  text-align: center;
+}
+
+.p-notfound h1 {
+  margin: 0 0 8px;
+  font-size: 20px;
+}
+
+.p-notfound p {
+  margin: 0 0 16px;
+  color: #55555e;
+  font-size: 14px;
+}
+
+.p-notfound a {
+  display: inline-block;
+  border-radius: 999px;
+  background: #17171c;
+  color: #ffffff;
+  padding: 10px 18px;
+  font-size: 14px;
+  font-weight: 800;
+  text-decoration: none;
 }

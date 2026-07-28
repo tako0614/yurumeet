@@ -32,6 +32,16 @@ function focusableIn(root: HTMLElement): HTMLElement[] {
   );
 }
 
+/**
+ * Full-surface dismiss scrims (`*-dismiss` / `*-scrim` buttons) render before
+ * the panel, so they'd win initial focus — an invisible landing spot. They
+ * stay in the Tab order; they just don't get focus first.
+ */
+function isScrimControl(el: HTMLElement): boolean {
+  const cls = typeof el.className === "string" ? el.className : "";
+  return cls.includes("dismiss") || cls.includes("scrim");
+}
+
 export function DialogA11y(props: {
   /** Accessor for the dialog's root element (set via `ref`). */
   root: () => HTMLElement | undefined;
@@ -54,8 +64,11 @@ export function DialogA11y(props: {
       ) {
         return; // an [autofocus] element already took focus
       }
+      const candidates = focusableIn(root);
       const preferred =
-        root.querySelector<HTMLElement>("[autofocus]") ?? focusableIn(root)[0];
+        root.querySelector<HTMLElement>("[autofocus]") ??
+        candidates.find((el) => !isScrimControl(el)) ??
+        candidates[0];
       preferred?.focus();
     });
 

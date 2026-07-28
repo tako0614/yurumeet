@@ -1,6 +1,8 @@
 import { build, stop } from "esbuild";
 import { readdir, readFile, rm, writeFile } from "node:fs/promises";
 
+import { PRODUCT_WIRE_IDENTITY } from "../src/product-identity.ts";
+
 type StaticAsset = {
   contentType: string;
   body: string;
@@ -14,23 +16,10 @@ const tempEntryFile = new URL(
 );
 const outputFile = new URL("../dist/takos-worker.js", import.meta.url);
 
-const discovery = {
-  product: "yurumeet",
-  name: "Yurumeet",
-  serverId: "yurumeet-server",
-  serverName: "Yurumeet Server",
-  clients: [
-    { id: "yurume", name: "Yurumeet", defaultEntry: "messages" },
-    { id: "yurucommu", name: "Yurucommu", defaultEntry: "feed" },
-  ],
-  capabilities: [
-    "api.social.v1",
-    "activitypub.server.v1",
-    "client.yurume.messages.v1",
-    "client.yurucommu.feed.v1",
-    "notification.pushers.v1",
-  ],
-};
+// Wire identity is never spelled out here. It is baked into the deployed
+// Worker, so a literal in this file is the one copy nobody can compare against
+// the clients that read it. See src/product-identity.ts.
+const discovery = PRODUCT_WIRE_IDENTITY;
 
 function contentTypeFor(path: string): string {
   if (path.endsWith(".html")) return "text/html; charset=utf-8";
@@ -109,7 +98,7 @@ async function run(command: string[]): Promise<void> {
 }
 
 export function createEntrySource(assets: Record<string, StaticAsset>): string {
-  return `import {
+  return `import yurucommuCore, {
   createYurucommuBackendApp,
   handleYurucommuQueueBatch,
   wrapCloudflareBindings,
@@ -127,7 +116,9 @@ import type {
   MessageBatch,
   Queue,
   R2Bucket,
+  ScheduledController,
 } from "@cloudflare/workers-types";
+import { withYurumeetDocumentPolicy } from "../src/runtime-policy.ts";
 
 type RuntimeEnv = Omit<Env, "ASSETS"> & { ASSETS?: Fetcher };
 type WorkerBindings = EnvVars & {
@@ -216,7 +207,8 @@ export default {
     const runtimeEnv = envWithAppUrl.ASSETS
       ? envWithAppUrl
       : { ...envWithAppUrl, ASSETS: embeddedAssetsFetcher };
-    return backendApp.fetch(request, runtimeEnv as Env, ctx);
+    const response = await backendApp.fetch(request, runtimeEnv as Env, ctx);
+    return withYurumeetDocumentPolicy(response);
   },
 
   async queue(
@@ -224,6 +216,33 @@ export default {
     env: WorkerBindings,
   ): Promise<void> {
     return handleYurucommuQueueBatch(batch, wrapCloudflareBindings(env) as Env);
+  },
+
+  // Cron-triggered retention (delivery/session/call-session purge, media-orphan
+  // GC, story expiry, tombstone reap). This entry builds its own default object
+  // instead of re-exporting the core one, so a cron trigger alone would fire at
+  // a module that exports no \`scheduled\` and nothing would ever be purged —
+  // the handler has to be forwarded here. It is read off the core default at
+  // call time so a core release without the retention handler fails loudly on
+  // the first tick rather than silently sweeping nothing.
+  async scheduled(
+    controller: ScheduledController,
+    env: WorkerBindings,
+    ctx: ExecutionContext,
+  ): Promise<void> {
+    const runRetention = (yurucommuCore as {
+      scheduled?: (
+        controller: ScheduledController,
+        env: WorkerBindings,
+        ctx: ExecutionContext,
+      ) => Promise<void>;
+    }).scheduled;
+    if (typeof runRetention !== "function") {
+      throw new Error(
+        "@takosjp/yurucommu-core exposes no scheduled() retention handler; upgrade @takosjp/yurucommu-core",
+      );
+    }
+    await runRetention(controller, env, ctx);
   },
 };
 `;

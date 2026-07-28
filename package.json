@@ -9,20 +9,17 @@
     "dev:mock": "bun scripts/dev-mock.ts",
     "dev:mock:api": "bun scripts/dev-mock-server.ts",
     "dev:site": "bunx serve site",
-    "check": "tsc --noEmit && bun scripts/check-brand-assets.mjs",
-    "test": "bun test src/ scripts/opentofu-output-contract.test.ts scripts/release-version.test.ts scripts/takosumi-release.test.ts scripts/check-core-release.test.ts && bun scripts/dev-mock-server.ts --self-test",
+    "check": "bun run fmt:check && bun run lint && bun run test && bun run build:takos-worker",
+    "deploy": "bun scripts/deploy.mjs",
+    "test": "bun test src/ scripts/worker-entry-contract.test.ts scripts/product-identity-contract.test.ts scripts/opentofu-output-contract.test.ts scripts/release-version.test.ts scripts/runtime-config-contract.test.ts scripts/takoform-capsule.test.ts scripts/site-install-surface.test.ts scripts/check-core-release.test.ts && bun scripts/dev-mock-server.ts --self-test",
     "build": "bun run build:client",
     "build:client": "bunx vite build --config vite.config.ts",
     "build:takos-worker": "bun scripts/build-takos-worker.ts",
-    "deploy": "bun run deploy:cloudflare",
-    "deploy:cloudflare": "bun run build:takos-worker && bun run db:migrate:cloudflare && bunx wrangler deploy",
-    "db:migrate:cloudflare": "bunx wrangler d1 migrations apply DB --remote",
     "check:core-release": "bun scripts/check-core-release.mjs",
-    "takosumi:release": "bun run check:core-release && bun scripts/takosumi-release.ts",
     "smoke:postdeploy": "bun scripts/post-deploy-smoke.ts",
-    "lint": "bun run check",
-    "fmt": "bunx prettier --write index.html vite.config.ts src site scripts README.md",
-    "fmt:check": "bunx prettier --check index.html vite.config.ts src site scripts README.md"
+    "lint": "tsc --noEmit && bun scripts/check-brand-assets.mjs",
+    "fmt": "bunx prettier --write package.json index.html vite.config.ts src site scripts README.md README.en.md",
+    "fmt:check": "bunx prettier --check package.json index.html vite.config.ts src site scripts README.md README.en.md"
   },
   "cloudflare": {
     "bindings": {
@@ -38,6 +35,8 @@
     "@solidjs/router": "^0.15.0",
     "@takosjp/yurucommu-api": "^3.1.0",
     "@takosjp/yurucommu-core": "^3.1.0",
+    "html5-qrcode": "^2.3.8",
+    "qrcode-generator": "^2.0.4",
     "solid-js": "^1.9.0"
   },
   "devDependencies": {

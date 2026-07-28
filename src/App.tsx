@@ -53,6 +53,7 @@ import {
   attachmentSrc,
   communityPath,
   contactSubtitle,
+  formatBadgeCount,
   formatListTime,
   formatNoteExpiry,
   formatPostTime,
@@ -61,15 +62,35 @@ import {
   UserAvatar as Avatar,
 } from "./lib/ui.tsx";
 import { StoryBar } from "./components/story/StoryBar.tsx";
+import { QRCodeModal } from "./components/QRCodeModal.tsx";
 
 type AppTab = "home" | "talk" | "timeline";
 const MAX_NOTE_LENGTH = 80;
+/** Same media-size cap as the chat composer, mirrored client-side. */
+const MAX_STORY_MEDIA_SIZE = 20 * 1024 * 1024;
+/** Keep the リクエスト chip fresh on the same cadence as the contact rows. */
+const REQUESTS_POLL_MS = 20000;
 
 function normalizeTab(value: unknown): AppTab {
   if (value === "yurucommu") return "timeline";
   return value === "home" || value === "talk" || value === "timeline"
     ? value
     : "talk";
+}
+
+// The main-tab views unmount on tab switch, losing scroll position. Keep the
+// last offset at module scope and restore it when the view remounts (the row
+// data lives in signals that survive the switch, so the height is back by the
+// next frame).
+const tabScrollMemory = new Map<string, number>();
+function preserveTabScroll(key: string) {
+  return (el: HTMLElement) => {
+    requestAnimationFrame(() => {
+      const stored = tabScrollMemory.get(key);
+      if (stored) el.scrollTop = stored;
+    });
+    onCleanup(() => tabScrollMemory.set(key, el.scrollTop));
+  };
 }
 
 function parseStoryDuration(value: string | null | undefined): number {
@@ -149,6 +170,7 @@ function HomeView(props: {
   const [allCommunities, { refetch: refetchCommunities }] =
     createResource(fetchCommunities);
   const [creating, setCreating] = createSignal(false);
+  const [qrOpen, setQrOpen] = createSignal(false);
   const [joiningId, setJoiningId] = createSignal<string | null>(null);
   const joinedIds = () =>
     new Set(
@@ -194,7 +216,7 @@ function HomeView(props: {
   };
 
   return (
-    <section class="p-home">
+    <section class="p-home" ref={preserveTabScroll("home")}>
       <A class="p-home-account" href="/profile">
         <Avatar value={props.actor} />
         <div class="p-home-account-main">
@@ -234,6 +256,14 @@ function HomeView(props: {
         <div class="p-home-section-head">
           <h2>友だち</h2>
           <span>{people().length}</span>
+          <button
+            type="button"
+            class="p-home-section-add"
+            aria-label="QRコードで友だち追加"
+            onClick={() => setQrOpen(true)}
+          >
+            <QrIcon />
+          </button>
         </div>
         <ul>
           <Show
@@ -254,6 +284,13 @@ function HomeView(props: {
                     fallback={<>一致する友だちはいません</>}
                   >
                     まだ友だちはいません
+                    <button
+                      type="button"
+                      class="p-home-empty-cta"
+                      onClick={() => setQrOpen(true)}
+                    >
+                      QRコードで友だち追加
+                    </button>
                     <A class="p-home-empty-cta" href="/?tab=timeline">
                       タイムラインで友だちを探す
                     </A>
@@ -263,7 +300,15 @@ function HomeView(props: {
             >
               {(contact) => (
                 <li>
-                  <button type="button" onClick={() => props.onTalk(contact)}>
+                  <button
+                    type="button"
+                    aria-label={
+                      (contact.unread_count ?? 0) > 0
+                        ? `${titleFor(contact)}、未読 ${contact.unread_count}件`
+                        : undefined
+                    }
+                    onClick={() => props.onTalk(contact)}
+                  >
                     <Avatar value={contact} />
                     <span class="p-home-contact-main">
                       <strong>{titleFor(contact)}</strong>
@@ -273,7 +318,7 @@ function HomeView(props: {
                       </small>
                     </span>
                     <Show when={(contact.unread_count ?? 0) > 0}>
-                      <em>{contact.unread_count}</em>
+                      <em>{formatBadgeCount(contact.unread_count ?? 0)}</em>
                     </Show>
                   </button>
                 </li>
@@ -309,7 +354,15 @@ function HomeView(props: {
             >
               {(contact) => (
                 <li>
-                  <button type="button" onClick={() => props.onTalk(contact)}>
+                  <button
+                    type="button"
+                    aria-label={
+                      (contact.unread_count ?? 0) > 0
+                        ? `${titleFor(contact)}、未読 ${contact.unread_count}件`
+                        : undefined
+                    }
+                    onClick={() => props.onTalk(contact)}
+                  >
                     <Avatar value={contact} />
                     <span class="p-home-contact-main">
                       <strong>{titleFor(contact)}</strong>
@@ -324,7 +377,7 @@ function HomeView(props: {
                         <GroupMembersMeta count={contact.member_count ?? 0} />
                       }
                     >
-                      <em>{contact.unread_count}</em>
+                      <em>{formatBadgeCount(contact.unread_count ?? 0)}</em>
                     </Show>
                   </button>
                 </li>
@@ -386,6 +439,9 @@ function HomeView(props: {
           onClose={() => setCreating(false)}
           onCreated={onCreated}
         />
+      </Show>
+      <Show when={qrOpen()}>
+        <QRCodeModal onClose={() => setQrOpen(false)} />
       </Show>
     </section>
   );
@@ -502,6 +558,17 @@ function PlusIcon() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true">
       <path d="M12 5v14M5 12h14" />
+    </svg>
+  );
+}
+
+function QrIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <rect x="4" y="4" width="6" height="6" rx="1" />
+      <rect x="14" y="4" width="6" height="6" rx="1" />
+      <rect x="4" y="14" width="6" height="6" rx="1" />
+      <path d="M14 14h3v3h-3zM20 14v2M14 20h2M18 18h2v2h-2z" />
     </svg>
   );
 }
@@ -727,6 +794,7 @@ function TalkListPane(props: {
 }) {
   const app = useApp();
   const chat = useChat();
+  const navigate = useNavigate();
   const [query, setQuery] = createSignal("");
   const [view, setView] = createSignal<"list" | "requests" | "archived">(
     "list",
@@ -742,6 +810,13 @@ function TalkListPane(props: {
 
   const [requests, { refetch: refetchRequests }] =
     createResource(fetchDMRequests);
+  // The リクエスト chip otherwise only reflects mount time; keep it fresh on
+  // the same cadence as the contact rows.
+  const requestsTimer = window.setInterval(() => {
+    if (document.visibilityState !== "visible") return;
+    void refetchRequests();
+  }, REQUESTS_POLL_MS);
+  onCleanup(() => window.clearInterval(requestsTimer));
   const [archived, { refetch: refetchArchived }] = createResource(
     () => (view() === "archived" ? "load" : false),
     () => fetchArchivedDMConversations(),
@@ -756,6 +831,8 @@ function TalkListPane(props: {
         chat.refetchContacts();
         void refetchRequests();
         setView("list");
+      } else {
+        app.toast("相互フォローになるとトークできます");
       }
     } catch {
       app.toast("トークを開けませんでした", "error");
@@ -784,7 +861,20 @@ function TalkListPane(props: {
       if (props.selected?.ap_id === contact.ap_id) chat.selectContact(null);
       chat.refetchContacts();
       app.refreshBadges();
-      app.toast("アーカイブしました");
+      app.toast("アーカイブしました", "info", {
+        label: "元に戻す",
+        run: () => {
+          void (async () => {
+            try {
+              await unarchiveDMConversation(contact.ap_id);
+              chat.refetchContacts();
+              app.refreshBadges();
+            } catch {
+              app.toast("操作に失敗しました", "error");
+            }
+          })();
+        },
+      });
     } catch {
       app.toast("操作に失敗しました", "error");
     } finally {
@@ -807,6 +897,44 @@ function TalkListPane(props: {
     }
   };
 
+  // LINE behavior: opening a conversation from the archived view returns it
+  // to the talk list; the toast's 元に戻す re-archives it. The conversation
+  // opens either way — a failed unarchive must not block reading it.
+  const openArchived = async (contact: DMContact) => {
+    if (busyId()) return;
+    setBusyId(contact.ap_id);
+    try {
+      await unarchiveDMConversation(contact.ap_id);
+      void refetchArchived();
+      chat.refetchContacts();
+      app.refreshBadges();
+      app.toast("アーカイブから戻しました", "info", {
+        label: "元に戻す",
+        run: () => {
+          void (async () => {
+            try {
+              await archiveDMConversation(contact.ap_id);
+              if (chat.selected()?.ap_id === contact.ap_id) {
+                chat.selectContact(null);
+              }
+              void refetchArchived();
+              chat.refetchContacts();
+              app.refreshBadges();
+            } catch {
+              app.toast("操作に失敗しました", "error");
+            }
+          })();
+        },
+      });
+    } catch {
+      app.toast("アーカイブから戻せませんでした", "error");
+    } finally {
+      setBusyId(null);
+    }
+    chat.selectContact(contact);
+    setView("list");
+  };
+
   return (
     <section class="p-talk-rooms-pane">
       <Show
@@ -824,7 +952,28 @@ function TalkListPane(props: {
           </button>
         }
       >
-        <h1 class="p-talk-list-title">トーク</h1>
+        <div class="p-talk-list-head">
+          <h1 class="p-talk-list-title">トーク</h1>
+          {/* Starting a talk happens from the Home friend list — surface
+              that from the talk tab instead of requiring users to know. */}
+          <button
+            type="button"
+            class="p-talk-list-new"
+            aria-label="新しいトークを始める"
+            title="新しいトークを始める"
+            onClick={() => navigate("/?tab=home")}
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M4 20l1.2-4.2L16.6 4.4a2 2 0 0 1 2.9 0l.1.1a2 2 0 0 1 0 2.9L8.2 18.8 4 20Z" />
+            </svg>
+          </button>
+        </div>
+      </Show>
+
+      <Show when={chat.connectionLost()}>
+        <div class="p-conn-banner" role="status">
+          接続を確認しています…
+        </div>
       </Show>
 
       <Show when={view() === "list"}>
@@ -864,7 +1013,7 @@ function TalkListPane(props: {
         </div>
       </Show>
 
-      <div class="p-talk-list-rooms">
+      <div class="p-talk-list-rooms" ref={preserveTabScroll("talk")}>
         <Show when={view() === "list"}>
           <Show
             when={!props.contactsLoading}
@@ -894,6 +1043,11 @@ function TalkListPane(props: {
                   >
                     <button
                       type="button"
+                      aria-label={
+                        (contact.unread_count ?? 0) > 0
+                          ? `${titleFor(contact)}、未読 ${contact.unread_count}件`
+                          : undefined
+                      }
                       onClick={() => props.onSelect(contact)}
                     >
                       <span class="c-talk-rooms-icon">
@@ -920,7 +1074,7 @@ function TalkListPane(props: {
                       </span>
                       <Show when={(contact.unread_count ?? 0) > 0}>
                         <span class="c-talk-rooms-badge">
-                          {contact.unread_count}
+                          {formatBadgeCount(contact.unread_count ?? 0)}
                         </span>
                       </Show>
                     </button>
@@ -1001,10 +1155,8 @@ function TalkListPane(props: {
                   <li class="c-talk-rooms">
                     <button
                       type="button"
-                      onClick={() => {
-                        chat.selectContact(contact);
-                        setView("list");
-                      }}
+                      disabled={busyId() === contact.ap_id}
+                      onClick={() => void openArchived(contact)}
                     >
                       <span class="c-talk-rooms-icon">
                         <Avatar value={contact} />
@@ -1084,7 +1236,7 @@ function TimelineView(props: {
     onCleanup(() => observer.disconnect());
   });
   return (
-    <section class="p-timeline">
+    <section class="p-timeline" ref={preserveTabScroll("timeline")}>
       <StoryBar
         actor={props.actor}
         actorStories={props.stories}
@@ -1188,24 +1340,59 @@ function StoryViewerModal(props: {
   const [mediaError, setMediaError] = createSignal(false);
   const [paused, setPaused] = createSignal(false);
 
-  createEffect(() => {
-    const next = props.initialActorIndex;
-    if (next === null || props.actorStories.length === 0) return;
-    const nextActorIndex = Math.min(
-      Math.max(next, 0),
-      props.actorStories.length - 1,
-    );
-    const storyCount = props.actorStories[nextActorIndex]?.stories.length ?? 0;
-    setActorIndex(nextActorIndex);
-    setStoryIndex(
-      Math.min(
-        Math.max(props.initialStoryIndex ?? 0, 0),
-        Math.max(storyCount - 1, 0),
-      ),
-    );
-    setMediaError(false);
-    setPaused(false);
-  });
+  // Adopt the open target ONLY when the viewer is (re)opened at a given
+  // group — keyed on the index prop, NOT on actorStories content, so a
+  // refetch while the viewer is open (view/like/share) can't yank the
+  // reader back to the initial position.
+  createEffect(
+    on(
+      () => props.initialActorIndex,
+      (next) => {
+        if (next === null || props.actorStories.length === 0) return;
+        const nextActorIndex = Math.min(
+          Math.max(next, 0),
+          props.actorStories.length - 1,
+        );
+        const storyCount =
+          props.actorStories[nextActorIndex]?.stories.length ?? 0;
+        setActorIndex(nextActorIndex);
+        setStoryIndex(
+          Math.min(
+            Math.max(props.initialStoryIndex ?? 0, 0),
+            Math.max(storyCount - 1, 0),
+          ),
+        );
+        setMediaError(false);
+        setPaused(false);
+      },
+    ),
+  );
+
+  // A refetch while the viewer is open may also REORDER the story groups;
+  // re-anchor the open group by actor identity so the viewer never switches
+  // to a different actor mid-view.
+  createEffect(
+    on(
+      () => props.actorStories,
+      (groups, prevGroups) => {
+        if (props.initialActorIndex === null || !prevGroups) return;
+        const openApId = prevGroups[actorIndex()]?.actor.ap_id;
+        if (!openApId) return;
+        const nextIndex = groups.findIndex(
+          (group) => group.actor.ap_id === openApId,
+        );
+        if (nextIndex >= 0 && nextIndex !== actorIndex()) {
+          setActorIndex(nextIndex);
+        }
+        const storyCount =
+          groups[nextIndex >= 0 ? nextIndex : actorIndex()]?.stories.length ??
+          0;
+        if (storyCount > 0 && storyIndex() >= storyCount) {
+          setStoryIndex(storyCount - 1);
+        }
+      },
+    ),
+  );
 
   const currentActorStories = createMemo(
     () => props.actorStories[actorIndex()] ?? null,
@@ -1362,6 +1549,11 @@ function StoryViewerModal(props: {
                 )}
               </For>
             </div>
+            {/* The progress bars stay decorative; announce the position for
+                screen readers as the story advances. */}
+            <p class="yc-visually-hidden" aria-live="polite">
+              {storyCount()}件中{storyIndex() + 1}件目
+            </p>
             <header class="p-story-viewer-head">
               <A
                 class="p-story-viewer-author"
@@ -1412,7 +1604,7 @@ function StoryViewerModal(props: {
               />
               <Show
                 when={mediaSrc(story(), props.origin)}
-                fallback={<strong>{story().caption || "Story"}</strong>}
+                fallback={<strong>{story().caption || "ストーリー"}</strong>}
               >
                 {(src) => (
                   <Show
@@ -1525,14 +1717,17 @@ function StoryComposerModal(props: {
         displayDuration: selected.type.startsWith("video/") ? "PT10S" : "PT5S",
         caption: caption().trim() || undefined,
       });
-      await props.onSuccess();
-      reset();
-      props.onClose();
     } catch (err) {
       console.error("Failed to create story:", err);
       setError("ストーリーの作成に失敗しました");
       setSaving(false);
+      return;
     }
+    // The story exists now; a failed story-bar refresh must not roll the form
+    // back into an error state and invite a duplicate re-submit.
+    reset();
+    props.onClose();
+    void Promise.resolve(props.onSuccess()).catch(() => undefined);
   };
 
   let dialogRoot: HTMLDivElement | undefined;
@@ -1571,7 +1766,16 @@ function StoryComposerModal(props: {
               type="file"
               accept="image/jpeg,image/png,image/gif,image/webp,video/mp4,video/webm"
               onInput={(event) => {
-                setFile(event.currentTarget.files?.[0] ?? null);
+                const selected = event.currentTarget.files?.[0] ?? null;
+                // Mirror the server-side media cap up front instead of
+                // surfacing a generic upload failure later.
+                if (selected && selected.size > MAX_STORY_MEDIA_SIZE) {
+                  event.currentTarget.value = "";
+                  setFile(null);
+                  setError("ファイルは 20MB までです");
+                  return;
+                }
+                setFile(selected);
                 setError(null);
               }}
             />
@@ -1622,6 +1826,10 @@ export default function App() {
       setFeedHasMore(page.hasMore);
     } catch {
       setFeedError(true);
+      // With posts already on screen the full-page error state stays hidden,
+      // so a failed manual "最新に更新" / stale-return refresh would otherwise
+      // give no feedback at all.
+      if (feedPosts().length > 0) app.toast("更新できませんでした", "error");
     } finally {
       feedLoadedAt = Date.now();
       setFeedLoading(false);
@@ -1697,6 +1905,9 @@ export default function App() {
       if (storyIndex < 0) continue;
       setStoryViewerStoryIndex(storyIndex);
       setStoryViewerActorIndex(actorIndex);
+      // Consume the param immediately: a later stories() refetch must not
+      // re-run this effect and yank the open viewer back to the target.
+      setSearchParams({ story: undefined }, { replace: true });
       return;
     }
 
@@ -1804,6 +2015,8 @@ export default function App() {
               if (contact) {
                 navigate("/?tab=talk");
                 chat.selectContact(contact);
+              } else {
+                app.toast("相互フォローになるとトークできます");
               }
             } catch {
               app.toast("トークを開けませんでした", "error");

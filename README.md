@@ -85,40 +85,53 @@ bun run build:takos-worker
 production のクライアントビルドは `dist/` に出力されます。`bun run build:takos-worker` は
 その asset を core backend と一緒に `dist/takos-worker.js` に埋め込みます。
 
-Yurumeetには対等な2つの導入方法があります。
+Yurumeet は direct Cloudflare module と portable Takoform Capsule
+の両方を所有します。ただし公開状態は同じではありません。Cloudflare
+self-host は現在利用でき、Takosumi 管理付き導入は実環境の作成・rollback・destroy
+証跡がそろうまで公開導線を閉じています。
 
-### Cloudflareへ直接デプロイ
+### Cloudflare への self-host
 
-[Deploy to Cloudflare](https://deploy.workers.cloudflare.com/?url=https://github.com/tako0614/yurumeet)
-を使うか、CloudflareへログインしたCLIからデプロイできます。
+これは利用者またはその operator が所有する deployment であり、私たちが運営する
+公式 release target ではありません。`wrangler.jsonc` と root OpenTofu module が
+direct Cloudflare path を定義しますが、credential、承認、migration、rollback は
+利用者側の runbook と authority で管理してください。
+
+distribution artifact を公開するときは、この repository の entrypoint を使います
+(まだ存在しないので、作るのが次の作業です)。共通 rule は sibling `takos-control` の
+`engineering.policy.json` → `deploy` が正本です。
 
 ```sh
-bunx wrangler d1 create yurumeet-db
-bunx wrangler queues create yurumeet-delivery
-bunx wrangler queues create yurumeet-delivery-dlq
-bunx wrangler secret put ENCRYPTION_KEY
-bunx wrangler secret put AUTH_PASSWORD_HASH
 bun run deploy
 ```
 
-`wrangler.jsonc`が直接デプロイの正本です。`bun run deploy`はfullstack Workerをビルドし、
-共有coreのD1 migrationを適用してから`wrangler deploy`を実行します。CloudflareのDeployボタンでは
-D1・KV・R2・Queuesもセットアップされます。
+`prepare` は read-only です。adapter が未登録なら fail closed のままにし、
+raw Worker deploy や migration へ fallback しません。
 
-### Takosumiでインストール
+Worker compatibility date / flags の正本も `wrangler.jsonc` です。root module と
+`deploy/takoform/` はこのファイルを `jsondecode` するため、JSONC 拡張のコメントや trailing comma
+は追加せず、strict JSON として維持します。D1 migration ledger は core と同じ
+`yurucommu_migrations`、retention schedule は毎時です。
 
-この repo は、通常の plain OpenTofu module として Takosumi からインストールできます。
+### Takosumi 管理付き導入（公開検証前）
+
+管理付き導入の正本は `deploy/takoform/` の portable resource graph です。公開リンクはまだ提供せず、
+この module を含む固定リリースと host conformance の証跡がそろってから有効化します。
 
 ```json
 {
   "url": "https://github.com/tako0614/yurumeet.git",
-  "ref": "main",
-  "path": "."
+  "ref": "<verified-release-tag>",
+  "path": "deploy/takoform"
 }
 ```
 
-OpenTofuはTakosumiがPlan・Apply・StateVersion・Output・Auditを管理する経路で使います。
-Cloudflareへ直接デプロイするだけならOpenTofuは必要ありません。
+この経路では Takosumi が Plan・Apply・StateVersion・Output・Audit を管理します。
+root `main.tf` は direct Cloudflare module であり、管理付き導入の CTA から選びません。
+
+両 module が公開する runtime URL は、通常の OpenTofu Output である `launch_url` と `api_url`
+です。`takosumi_release` / `app_deployment` / `service_exports` / `service_bindings`
+のような予約 Output を runtime 宣言や lifecycle authority として使いません。
 
 `outputs.tf` が公開するruntime URLは、通常のOpenTofu Outputである `launch_url` と `api_url` です。
 そのほかのOutputはCloudflare providerが作成したresourceの運用値です。Takosumi上のlauncher Interfaceは

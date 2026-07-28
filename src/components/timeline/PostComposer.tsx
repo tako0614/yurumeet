@@ -83,34 +83,54 @@ export function PostComposer(props: {
 
   const handleFiles = async (files: FileList | null) => {
     if (!files) return;
-    for (const file of Array.from(files)) {
-      if (media().length >= MAX_ATTACHMENTS) break;
-      if (!file.type.startsWith("image/")) continue;
-      if (file.size > MAX_IMAGE_SIZE) {
-        setError("画像は 20MB までです");
-        continue;
+    let skippedType = 0;
+    let skippedCap = 0;
+    let skippedSize = 0;
+    let uploadFailed = false;
+    // Hold the post button off for the WHOLE batch (not per file) so a submit
+    // can't fire between two sequential uploads with only part of the
+    // selection staged.
+    setUploading(true);
+    setError(null);
+    try {
+      for (const file of Array.from(files)) {
+        if (!file.type.startsWith("image/")) {
+          skippedType++;
+          continue;
+        }
+        if (media().length >= MAX_ATTACHMENTS) {
+          skippedCap++;
+          continue;
+        }
+        if (file.size > MAX_IMAGE_SIZE) {
+          skippedSize++;
+          continue;
+        }
+        try {
+          const uploaded = await uploadMedia(file);
+          setMedia((prev) => [
+            ...prev,
+            {
+              url: uploaded.url,
+              r2_key: uploaded.r2_key,
+              content_type: uploaded.content_type,
+              preview: URL.createObjectURL(file),
+              name: "",
+            },
+          ]);
+        } catch {
+          uploadFailed = true;
+        }
       }
-      setUploading(true);
-      setError(null);
-      try {
-        const uploaded = await uploadMedia(file);
-        setMedia((prev) => [
-          ...prev,
-          {
-            url: uploaded.url,
-            r2_key: uploaded.r2_key,
-            content_type: uploaded.content_type,
-            preview: URL.createObjectURL(file),
-            name: "",
-          },
-        ]);
-      } catch {
-        setError("アップロードに失敗しました");
-      } finally {
-        setUploading(false);
-      }
+      // Surface what was dropped instead of silently ignoring it.
+      if (uploadFailed) setError("アップロードに失敗しました");
+      else if (skippedSize > 0) setError("画像は 20MB までです");
+      else if (skippedCap > 0) setError(`画像は ${MAX_ATTACHMENTS} 枚までです`);
+      else if (skippedType > 0) setError("画像ファイルを選んでください");
+    } finally {
+      setUploading(false);
+      if (fileInput) fileInput.value = "";
     }
-    if (fileInput) fileInput.value = "";
   };
 
   const removeMedia = (index: number) => {

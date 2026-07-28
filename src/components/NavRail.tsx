@@ -1,7 +1,7 @@
 import { For, Show, type JSX } from "solid-js";
 import { A, useLocation, useSearchParams } from "@solidjs/router";
 import type { Actor } from "@takosjp/yurucommu-api";
-import { UserAvatar } from "../lib/ui.tsx";
+import { formatBadgeCount, UserAvatar } from "../lib/ui.tsx";
 
 function tabKey(value: unknown): NavKey {
   return value === "home" || value === "timeline" ? value : "talk";
@@ -105,7 +105,7 @@ export function NavRail(props: {
                 <span>{tab.label}</span>
                 <Show when={badgeFor(tab.key) > 0}>
                   <em class="l-header__badge" aria-hidden="true">
-                    {badgeFor(tab.key) > 99 ? "99+" : badgeFor(tab.key)}
+                    {formatBadgeCount(badgeFor(tab.key))}
                   </em>
                 </Show>
               </A>

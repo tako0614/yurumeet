@@ -19,12 +19,14 @@ import {
 } from "@takosjp/yurucommu-api";
 import { PageLayout, PageHeader } from "../components/PageLayout.tsx";
 import { useApp } from "../lib/app-context.tsx";
+import { DialogA11y } from "../lib/dialog.tsx";
 import { fullHandle, profilePath, titleFor, UserAvatar } from "../lib/ui.tsx";
 import {
   clearYurumeBrowserPushBeforeSignOut,
   resolveYurumeBrowserPushConfig,
   yurumeBrowserPushConfig,
 } from "../lib/browser-push.ts";
+import { suppressTakosumiOidcAutoStart } from "../lib/auth-config.ts";
 
 export default function SettingsPage() {
   const app = useApp();
@@ -40,20 +42,24 @@ export default function SettingsPage() {
   const [pushBusy, setPushBusy] = createSignal(false);
   const [pushConfigResolved, setPushConfigResolved] = createSignal(false);
   const [pushRegistrationError, setPushRegistrationError] = createSignal(false);
+  const [listsError, setListsError] = createSignal(false);
 
-  onMount(() => {
-    void fetchAccounts()
-      .then((r) => {
+  // A failed fetch must be distinguishable from genuinely empty lists —
+  // otherwise 「なし」 looks authoritative while blocks/mutes silently exist.
+  const loadLists = () => {
+    setListsError(false);
+    void Promise.all([
+      fetchAccounts().then((r) => {
         setAccounts(r.accounts);
         setCurrentApId(r.current_ap_id);
-      })
-      .catch(() => {});
-    void fetchBlockedUsers()
-      .then(setBlocked)
-      .catch(() => {});
-    void fetchMutedUsers()
-      .then(setMuted)
-      .catch(() => {});
+      }),
+      fetchBlockedUsers().then(setBlocked),
+      fetchMutedUsers().then(setMuted),
+    ]).catch(() => setListsError(true));
+  };
+
+  onMount(() => {
+    loadLists();
     void (async () => {
       try {
         const config = await resolveYurumeBrowserPushConfig();
@@ -112,6 +118,10 @@ export default function SettingsPage() {
       confirmLabel: "ログアウト",
     });
     if (!ok) return;
+    // Armed before the reload (sessionStorage survives it): the Takosumi
+    // session outlives ours, so an unsuppressed auto-start would redirect and
+    // sign the user straight back in.
+    suppressTakosumiOidcAutoStart();
     try {
       await clearYurumeBrowserPushBeforeSignOut();
       await logout();
@@ -121,20 +131,29 @@ export default function SettingsPage() {
     window.location.reload();
   };
 
-  const handleDelete = async () => {
-    const ok = await app.confirm({
-      title: "アカウントを削除",
-      message: "本当にアカウントを削除しますか? この操作は取り消せません。",
-      confirmLabel: "削除する",
-      danger: true,
-    });
-    if (!ok) return;
+  // Account deletion is irreversible: a reflexive OK on a generic confirm is
+  // too cheap. Require typing 「削除」 before the destructive button enables.
+  const [deleteOpen, setDeleteOpen] = createSignal(false);
+  const [deleteText, setDeleteText] = createSignal("");
+  const [deleteBusy, setDeleteBusy] = createSignal(false);
+  const deleteConfirmed = () => deleteText().trim() === "削除";
+  let deleteDialogRoot: HTMLDivElement | undefined;
+
+  const handleDelete = () => {
+    setDeleteText("");
+    setDeleteOpen(true);
+  };
+
+  const confirmDelete = async () => {
+    if (!deleteConfirmed() || deleteBusy()) return;
+    setDeleteBusy(true);
     try {
       await clearYurumeBrowserPushBeforeSignOut();
       await deleteAccount();
       window.location.reload();
     } catch {
       app.toast("削除に失敗しました", "error");
+      setDeleteBusy(false);
     }
   };
 
@@ -162,6 +181,21 @@ export default function SettingsPage() {
     <PageLayout>
       <PageHeader title="設定" />
       <div class="p-page-body p-settings">
+        <Show when={listsError()}>
+          <section class="p-settings-section">
+            <div class="p-settings-account">
+              <span class="p-settings-account-main">
+                <strong>設定を読み込めませんでした</strong>
+                <small>
+                  アカウント・ブロック・ミュートの一覧が最新ではありません
+                </small>
+              </span>
+              <button type="button" class="p-settings-btn" onClick={loadLists}>
+                再試行
+              </button>
+            </div>
+          </section>
+        </Show>
         <section class="p-settings-section">
           <h2>アカウント</h2>
           <For each={accounts()}>
@@ -237,7 +271,14 @@ export default function SettingsPage() {
         <section class="p-settings-section">
           <h2>プライバシー</h2>
           <h3>ブロック中のユーザー</h3>
-          <For each={blocked()} fallback={<p class="p-settings-empty">なし</p>}>
+          <For
+            each={blocked()}
+            fallback={
+              <p class="p-settings-empty">
+                {listsError() ? "読み込めませんでした" : "なし"}
+              </p>
+            }
+          >
             {(actor) => (
               <ModRow
                 actor={actor}
@@ -247,7 +288,14 @@ export default function SettingsPage() {
             )}
           </For>
           <h3>ミュート中のユーザー</h3>
-          <For each={muted()} fallback={<p class="p-settings-empty">なし</p>}>
+          <For
+            each={muted()}
+            fallback={
+              <p class="p-settings-empty">
+                {listsError() ? "読み込めませんでした" : "なし"}
+              </p>
+            }
+          >
             {(actor) => (
               <ModRow
                 actor={actor}
@@ -262,12 +310,64 @@ export default function SettingsPage() {
           <button
             type="button"
             class="p-settings-danger"
-            onClick={() => void handleDelete()}
+            onClick={handleDelete}
           >
             アカウントを削除
           </button>
         </section>
       </div>
+      <Show when={deleteOpen()}>
+        <div
+          class="yc-confirm-scrim"
+          role="presentation"
+          onClick={(event) => {
+            if (event.target === event.currentTarget) setDeleteOpen(false);
+          }}
+        >
+          <div
+            class="yc-confirm"
+            role="alertdialog"
+            aria-modal="true"
+            aria-label="アカウントを削除"
+            ref={(el) => (deleteDialogRoot = el)}
+          >
+            <DialogA11y
+              root={() => deleteDialogRoot}
+              onClose={() => setDeleteOpen(false)}
+            />
+            <strong>アカウントを削除</strong>
+            <p>
+              この操作は取り消せません。続けるには「削除」と入力してください。
+            </p>
+            <input
+              class="p-settings-delete-input"
+              type="text"
+              value={deleteText()}
+              placeholder="削除"
+              aria-label="確認のため「削除」と入力"
+              autofocus
+              onInput={(event) => setDeleteText(event.currentTarget.value)}
+            />
+            <div class="yc-confirm-actions">
+              <button
+                type="button"
+                class="yc-confirm-cancel"
+                onClick={() => setDeleteOpen(false)}
+              >
+                キャンセル
+              </button>
+              <button
+                type="button"
+                class="yc-confirm-ok is-danger"
+                disabled={!deleteConfirmed() || deleteBusy()}
+                onClick={() => void confirmDelete()}
+              >
+                {deleteBusy() ? "削除中" : "削除する"}
+              </button>
+            </div>
+          </div>
+        </div>
+      </Show>
     </PageLayout>
   );
 }

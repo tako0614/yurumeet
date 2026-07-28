@@ -6,7 +6,7 @@
     <title>yurumeet — 自分のサーバーで、トークする。</title>
     <meta
       name="description"
-      content="yurumeet は、LINE のようにトーク中心で使えるセルフホスト・メッセージングアプリ。中央のサービスに預けず、自分のサーバーに置いて、自分たちだけのトークにする。"
+      content="yurumeet は、LINE のようにトーク中心で使えるセルフホスト・メッセージングアプリです。中央のサービスに預けず、自分のサーバーに置いて、自分たちだけのトークにできます。"
     />
     <meta
       property="og:title"
@@ -14,7 +14,7 @@
     />
     <meta
       property="og:description"
-      content="トーク中心の、セルフホスト・メッセンジャー。中央に預けず、自分のサーバーに置いて動かすソフトウェアです。"
+      content="トーク中心のセルフホスト・メッセンジャーです。中央に預けず、自分のサーバーに置いて動かすソフトウェアです。"
     />
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content="yurumeet" />
@@ -33,7 +33,7 @@
     />
     <meta
       name="twitter:description"
-      content="トーク中心の、セルフホスト・メッセンジャー。中央に預けず、自分のサーバーに置いて動かすソフトウェアです。"
+      content="トーク中心のセルフホスト・メッセンジャーです。中央に預けず、自分のサーバーに置いて動かすソフトウェアです。"
     />
     <meta name="twitter:image" content="https://yurumeet.com/og.png" />
     <meta
@@ -222,6 +222,16 @@
       .btn.primary:hover {
         background: #ff2b2b;
         box-shadow: 0 12px 26px -12px rgba(255, 59, 59, 0.7);
+      }
+
+      .btn.disabled,
+      .btn.disabled:hover {
+        border-color: var(--line-2);
+        background: #ececf2;
+        color: var(--dim);
+        box-shadow: none;
+        cursor: not-allowed;
+        transform: none;
       }
 
       .btn.sm {
@@ -724,16 +734,23 @@
             <span class="soft">自分のサーバーに。</span>
           </h1>
           <p class="lede">
-            yurumeet は、LINE のようにトーク中心で使えるメッセージングアプリ。
-            中央のサービスに預けず、自分のサーバーに置いて、自分たちだけのトークにする。
-            DM・グループ・タイムライン・Story まで、ぜんぶひとつの画面で。
+            yurumeet は、LINE
+            のようにトーク中心で使えるメッセージングアプリです。
+            中央のサービスに預けず、自分のサーバーに置いて、自分たちだけのトークにできます。
+            DM・グループ・タイムライン・Story
+            まで、ぜんぶひとつの画面にまとまっています。
           </p>
           <div class="cta">
-            <a class="btn primary" href="#install">導入する</a>
+            <span
+              class="btn primary disabled"
+              aria-disabled="true"
+              title="固定リリースを使った実環境の導入・破棄証跡を確認後に有効化します"
+              >Takosumi 導入は検証中</span
+            >
             <a class="btn" href="#features">できることを見る</a>
           </div>
           <p class="hero-note">
-            hosted app ではありません。自分で動かすソフトウェアです。
+            どこかにホストされたサービスではありません。自分で動かすソフトウェアです。
           </p>
         </div>
       </section>
@@ -784,7 +801,7 @@
                 </svg>
               </div>
               <h3>ホーム</h3>
-              <p>友だち・グループ・Story を、ひとつの入口にまとめる。</p>
+              <p>友だち・グループ・Story を、ひとつの入口にまとめます。</p>
             </article>
             <article class="feature">
               <div class="fi">
@@ -802,7 +819,7 @@
                 </svg>
               </div>
               <h3>トーク</h3>
-              <p>DM とコミュニティチャットを、吹き出し主体の画面で。</p>
+              <p>DM とコミュニティチャットを、吹き出し主体の画面で使えます。</p>
             </article>
             <article class="feature">
               <div class="fi">
@@ -819,7 +836,7 @@
                 </svg>
               </div>
               <h3>タイムライン</h3>
-              <p>投稿を、yurumeet の流れで読む・書く。</p>
+              <p>投稿の読み書きも、同じ画面の流れの中でできます。</p>
             </article>
             <article class="feature">
               <div class="fi">
@@ -836,7 +853,7 @@
                 </svg>
               </div>
               <h3>Story</h3>
-              <p>開いて、リアクションして、そのまま共有する。</p>
+              <p>開いて、リアクションして、そのまま共有できます。</p>
             </article>
           </div>
         </div>
@@ -849,8 +866,8 @@
             <span class="eyebrow">On the go</span>
             <h2>ポケットの中に、<br />自分のサーバー。</h2>
             <p>
-              スマホでも、同じトーク。ホーム画面から開いて、DM
-              もグループもタイムラインも Story も、片手で。
+              スマホでも、同じトークをそのまま使えます。ホーム画面から開けば、DM
+              もグループもタイムラインも Story も、片手で扱えます。
             </p>
           </div>
           <div class="phone">
@@ -875,27 +892,28 @@
               <h2>預けない。<br />自分のサーバーで動かす。</h2>
               <p>
                 yurumeet
-                は、中央のサービスに預けるアプリではありません。自分のインフラに置いて、アカウントもトークも自分の手元に。中身はぜんぶオープンなので、確認して、必要なら自分で変えられます。
+                は、中央のサービスに預けるアプリではありません。自分のインフラに置けば、アカウントもトークも自分の手元に残ります。中身はぜんぶオープンなので、確認して、必要なら自分で変えられます。
               </p>
             </div>
             <div class="facts">
               <div class="fact">
                 <b>self-host</b>
                 <span
-                  >中央に預けず、自分のサーバーで。アカウントもデータも自分の手元に。</span
+                  >中央に預けず、自分のサーバーで動かします。アカウントもデータも自分の手元に残ります。</span
                 >
               </div>
               <div class="fact">
                 <b>ActivityPub</b>
                 <span
-                  >標準プロトコルで動く。閉じずに、ほかのサーバーともつながる。</span
+                  >標準プロトコルで動きます。閉じずに、ほかのサーバーともつながります。</span
                 >
               </div>
               <div class="fact">
                 <b>open source</b>
                 <span
-                  >AGPL-3.0
-                  のオープンソース。Wranglerで直接、またはOpenTofuで管理付きdeploy。</span
+                  >AGPL-3.0 のオープンソースです。現在は Cloudflare
+                  へのセルフホストを利用でき、Takosumi
+                  の管理付き導入は公開前の検証中です。</span
                 >
               </div>
             </div>
@@ -910,50 +928,55 @@
             <span class="eyebrow">Self-host</span>
             <h2>好きな場所に、置いて動かす。</h2>
             <p>
-              yurumeet
-              は中央でホストされるアプリではありません。Takosumiで管理しながら、自分の環境にデプロイします。Cloudflareへの直接デプロイも選べます。
+              yurumeet は中央でホストされるアプリではありません。現在利用できる
+              Cloudflare セルフホストと、公開前の検証を進めている Takosumi
+              管理付き導入があります。
             </p>
           </div>
           <!-- honesty note: keep it right next to the CTA target, before the
                steps, so visitors see the current install status first -->
           <p class="note">
             <strong
-              >Takosumiでの管理付き導入を主導線として案内しています。</strong
+              >Takosumi の公開導入リンクは、まだ有効化していません。</strong
             >
-            Cloudflareへの直接deployも現在利用できます。Takosumiで本番Applyするにはimmutable
-            releaseが必要です。<br />
+            固定リリースからの作成、認証、キュー、定期実行、migration、公開
+            URL、rollback、destroy を実環境で確認してから有効化します。現在は
+            Cloudflare へのセルフホストを利用できます。<br />
             <strong>yurumeet.com はこの紹介サイトです。</strong>
             実際に動く yurumeet
             は、あなたが選んだ場所にデプロイした実行環境のほうです。このページ自体はアプリではありません。
           </p>
           <div class="install-grid">
             <div class="code">
-              <div class="code-bar">TAKOSUMI · MANAGED INSTALL</div>
-              <pre><span class="c"># managed install</span>
-Takosumi: Git URL / ref / path
+              <div class="code-bar">TAKOSUMI · PLANNED MANAGED SOURCE</div>
+              <pre><span class="c"># public verification pending</span>
+ref=&lt;verified-release-tag&gt;
+path=deploy/takoform
 
-<span class="c"># direct alternative</span>
+<span class="c"># available self-host path</span>
 bun install
-bun run deploy</pre>
+bun run check
+<span class="c"># then follow your operator-owned self-host runbook</span></pre>
             </div>
             <div class="steps">
               <div class="step">
                 <span class="n">1</span>
                 <div>
-                  <h3>Takosumiで管理</h3>
+                  <h3>Takosumi の証跡を確認</h3>
                   <p>
-                    OpenTofu
-                    CapsuleとしてPlan、Apply、StateVersion、Output、Auditまで管理する。
+                    <code>deploy/takoform</code> を含む固定リリースで、作成から
+                    destroy まで成功した証跡がそろうまで公開導線を閉じています。
                   </p>
                 </div>
               </div>
               <div class="step">
                 <span class="n">2</span>
                 <div>
-                  <h3>Cloudflareへ直接</h3>
+                  <h3>Cloudflare へ直接</h3>
                   <p>
-                    Deployボタン、または<code>bun run deploy</code>でUIとcore
-                    backendを 1つのWorkerとして公開する。
+                    root OpenTofu module を使い、credential、承認、migration、
+                    recovery を自分の operator authority で管理します。公式
+                    distribution の公開とは別の経路です。
                   </p>
                 </div>
               </div>
@@ -963,7 +986,7 @@ bun run deploy</pre>
                   <h3>トークする</h3>
                   <p>
                     自分のサーバーのアカウントでログインして、トーク中心の UI
-                    を開く。
+                    を開きます。
                   </p>
                 </div>
               </div>
@@ -973,15 +996,16 @@ bun run deploy</pre>
             class="cta"
             style="justify-content: flex-start; margin-top: 30px"
           >
-            <a
-              class="btn primary"
-              href="https://app.takosumi.com/install?git=https%3A%2F%2Fgithub.com%2Ftako0614%2Fyurumeet.git&amp;ref=main&amp;path=.&amp;name=yurumeet"
-              >Takosumiでインストール</a
+            <span
+              class="btn primary disabled"
+              aria-disabled="true"
+              title="固定リリースを使った実環境の導入・破棄証跡を確認後に有効化します"
+              >Takosumi 導入は検証中</span
             >
             <a
               class="btn"
               href="https://deploy.workers.cloudflare.com/?url=https://github.com/tako0614/yurumeet"
-              >Cloudflareに直接デプロイ</a
+              >Cloudflare に直接デプロイ</a
             >
           </div>
         </div>
@@ -1018,7 +1042,7 @@ bun run deploy</pre>
           <p class="foot-legal">
             Self-hosted talk-first messenger. AGPL-3.0-only ·
             <code style="font-family: var(--mono)">yurume</code> は client id /
-            短縮名です。 yurucommu 互換のアカウント / API で動作。 ©
+            短縮名です。 yurucommu 互換のアカウント / API で動作します。 ©
             分散通信基盤株式会社
           </p>
         </div>

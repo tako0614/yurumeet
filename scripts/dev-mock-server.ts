@@ -1,3 +1,5 @@
+import { PRODUCT_WIRE_IDENTITY } from "../src/product-identity.ts";
+
 type Actor = {
   ap_id: string;
   username: string;
@@ -905,18 +907,20 @@ function notesResponse(): JsonValue {
 function discovery(request: Request): JsonValue {
   const apiBaseUrl = new URL(request.url).origin;
   return {
-    product: "yurucommu",
-    name: "Yurucommu Mock Server",
+    // Identity comes from the same module the deployed Worker bakes in. The
+    // mock used to hand-roll its own tokens, which is how it stayed compatible
+    // with the mobile shells while the real Worker was not: the disagreement
+    // was invisible precisely because development never touched the Worker's
+    // copy.
+    product: PRODUCT_WIRE_IDENTITY.product,
+    name: `${PRODUCT_WIRE_IDENTITY.name} Mock Server`,
     server: {
-      id: "yurucommu-server",
-      name: "Yurucommu Mock Server",
+      id: PRODUCT_WIRE_IDENTITY.serverId,
+      name: `${PRODUCT_WIRE_IDENTITY.serverName} (mock)`,
       canonicalOrigin: apiBaseUrl,
       activitypubOrigin: origin,
     },
-    clients: [
-      { id: "yurucommu", name: "Yurucommu", defaultEntry: "feed" },
-      { id: "yurume", name: "Yurumeet", defaultEntry: "messages" },
-    ],
+    clients: PRODUCT_WIRE_IDENTITY.clients,
     issuer: apiBaseUrl,
     apiBaseUrl,
     activitypubOrigin: origin,

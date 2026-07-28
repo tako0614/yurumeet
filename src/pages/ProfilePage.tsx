@@ -18,12 +18,14 @@ import {
   unmuteUser,
 } from "@takosjp/yurucommu-api";
 import { PageLayout, PageHeader } from "../components/PageLayout.tsx";
+import { QRCodeModal } from "../components/QRCodeModal.tsx";
 import { PostCard } from "../components/timeline/PostCard.tsx";
 import { ProfileEditModal } from "../components/profile/ProfileEditModal.tsx";
 import { useApp } from "../lib/app-context.tsx";
 import { useChat } from "../lib/chat-context.tsx";
 import { createEscapeClose, DialogA11y } from "../lib/dialog.tsx";
 import { clearYurumeBrowserPushBeforeSignOut } from "../lib/browser-push.ts";
+import { suppressTakosumiOidcAutoStart } from "../lib/auth-config.ts";
 import {
   attachmentSrc,
   CloseIcon,
@@ -62,6 +64,7 @@ export default function ProfilePage() {
   >(null);
   const [menuOpen, setMenuOpen] = createSignal(false);
   const [ownMenuOpen, setOwnMenuOpen] = createSignal(false);
+  const [qrOpen, setQrOpen] = createSignal(false);
   const [reportOpen, setReportOpen] = createSignal(false);
   const [muted, setMuted] = createSignal(false);
   const [blocked, setBlocked] = createSignal(false);
@@ -149,6 +152,8 @@ export default function ProfilePage() {
         // tab (back then closes the chat instead of resurrecting this page).
         navigate("/?tab=talk");
         chat.selectContact(contact);
+      } else {
+        app.toast("相互フォローになるとトークできます");
       }
     } catch {
       app.toast("トークを開けませんでした", "error");
@@ -227,6 +232,9 @@ export default function ProfilePage() {
       confirmLabel: "ログアウト",
     });
     if (!ok) return;
+    // See SettingsPage: suppress the OIDC auto-start before the reload so
+    // signing out cannot immediately sign the user back in.
+    suppressTakosumiOidcAutoStart();
     try {
       await clearYurumeBrowserPushBeforeSignOut();
       await logout();
@@ -249,10 +257,15 @@ export default function ProfilePage() {
 
   const handleFollow = async () => {
     const target = profile();
-    if (!target || followBusy() || followPending()) return;
+    if (!target || followBusy()) return;
     setFollowBusy(true);
     try {
-      if (isFollowing()) {
+      if (followPending()) {
+        // A pending request is cancellable (Undo Follow), not a dead end.
+        await unfollow(target.ap_id);
+        setFollowPending(false);
+        app.toast("リクエストを取り消しました");
+      } else if (isFollowing()) {
         await unfollow(target.ap_id);
         setIsFollowing(false);
         setProfile((p) =>
@@ -349,6 +362,16 @@ export default function ProfilePage() {
                                     onClick={() => setOwnMenuOpen(false)}
                                   />
                                   <div class="c-post-menu-list" role="menu">
+                                    <button
+                                      type="button"
+                                      role="menuitem"
+                                      onClick={() => {
+                                        setOwnMenuOpen(false);
+                                        setQrOpen(true);
+                                      }}
+                                    >
+                                      QRコード
+                                    </button>
                                     <button
                                       type="button"
                                       role="menuitem"
@@ -462,7 +485,12 @@ export default function ProfilePage() {
                               "is-following": isFollowing(),
                               "is-pending": followPending(),
                             }}
-                            disabled={followBusy() || followPending()}
+                            disabled={followBusy()}
+                            aria-label={
+                              followPending()
+                                ? "フォローリクエストを取り消す"
+                                : undefined
+                            }
                             onClick={() => void handleFollow()}
                           >
                             {followPending()
@@ -645,6 +673,10 @@ export default function ProfilePage() {
           onClose={() => setReportOpen(false)}
           onSubmit={submitReport}
         />
+      </Show>
+
+      <Show when={qrOpen()}>
+        <QRCodeModal onClose={() => setQrOpen(false)} />
       </Show>
     </PageLayout>
   );

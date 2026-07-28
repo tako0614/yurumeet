@@ -1,6 +1,7 @@
 import { Show, type JSX } from "solid-js";
 import { A } from "@solidjs/router";
 import { serverUrl } from "../server-config.ts";
+import { splitHighlight } from "./message-search.ts";
 
 /** Minimal actor-ish shape shared by Actor, PostAuthor, DMContact, etc. */
 export type ActorLike = {
@@ -51,11 +52,14 @@ export function fullHandle(value: ActorLike): string {
   return actorHandle(value);
 }
 
+// Date formatters pin the "ja" locale explicitly: the surrounding UI copy is
+// hardcoded Japanese, so a non-JA browser locale must not produce
+// mixed-language dates (e.g. "Jul 18" between 「今日」 and 「昨日」).
 export function formatTime(value: string | null | undefined): string {
   if (!value) return "";
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "";
-  return new Intl.DateTimeFormat(undefined, {
+  return new Intl.DateTimeFormat("ja", {
     hour: "2-digit",
     minute: "2-digit",
   }).format(date);
@@ -73,7 +77,7 @@ export function formatPostTime(value: string | null | undefined): string {
   if (hours < 24) return `${hours}時間`;
   const days = Math.floor(hours / 24);
   if (days < 7) return `${days}日`;
-  return new Intl.DateTimeFormat(undefined, {
+  return new Intl.DateTimeFormat("ja", {
     month: "short",
     day: "numeric",
   }).format(date);
@@ -96,12 +100,12 @@ export function formatListTime(value: string | null | undefined): string {
   if (diffDays <= 0) return formatTime(value);
   if (diffDays === 1) return "昨日";
   if (diffDays < 365) {
-    return new Intl.DateTimeFormat(undefined, {
+    return new Intl.DateTimeFormat("ja", {
       month: "numeric",
       day: "numeric",
     }).format(date);
   }
-  return new Intl.DateTimeFormat(undefined, {
+  return new Intl.DateTimeFormat("ja", {
     year: "numeric",
     month: "numeric",
     day: "numeric",
@@ -112,7 +116,7 @@ export function formatDateTime(value: string | null | undefined): string {
   if (!value) return "";
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "";
-  return new Intl.DateTimeFormat(undefined, {
+  return new Intl.DateTimeFormat("ja", {
     year: "numeric",
     month: "short",
     day: "numeric",
@@ -125,10 +129,15 @@ export function formatJoined(value: string | null | undefined): string {
   if (!value) return "";
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "";
-  return new Intl.DateTimeFormat(undefined, {
+  return new Intl.DateTimeFormat("ja", {
     year: "numeric",
     month: "long",
   }).format(date);
+}
+
+/** Cap unread badge counts LINE-style so wide numbers don't stretch the pill. */
+export function formatBadgeCount(count: number): string {
+  return count > 99 ? "99+" : String(count);
 }
 
 export function sameDay(a: string, b: string): boolean {
@@ -152,7 +161,7 @@ export function formatDayLabel(value: string): string {
   );
   if (diffDays === 0) return "今日";
   if (diffDays === 1) return "昨日";
-  return new Intl.DateTimeFormat(undefined, {
+  return new Intl.DateTimeFormat("ja", {
     month: "long",
     day: "numeric",
   }).format(d);
@@ -162,15 +171,31 @@ export function formatDayLabel(value: string): string {
  * Render plain post text with URLs turned into real links and `@mentions` /
  * `#hashtags` highlighted. Links stop click propagation so tapping them does not
  * also trigger an ancestor's navigate-to-detail handler.
+ *
+ * When `highlight` is a non-empty query, matching substrings inside the plain
+ * (non-link/non-tag) text are wrapped in `<mark>` for in-conversation search.
  */
-export function renderRichText(text: string): JSX.Element {
+export function renderRichText(text: string, highlight?: string): JSX.Element {
+  const query = highlight?.trim() ?? "";
+  const pushText = (value: string) => {
+    if (!value) return;
+    if (!query) {
+      nodes.push(value);
+      return;
+    }
+    for (const seg of splitHighlight(value, query)) {
+      nodes.push(
+        seg.hit ? <mark class="c-search-hit">{seg.text}</mark> : seg.text,
+      );
+    }
+  };
   const pattern =
     /(https?:\/\/[^\s]+)|(@[\p{L}\p{N}_.-]+(?:@[\p{L}\p{N}_.-]+)?)|(#[\p{L}\p{N}_]+)/gu;
   const nodes: JSX.Element[] = [];
   let last = 0;
   let match: RegExpExecArray | null;
   while ((match = pattern.exec(text)) !== null) {
-    if (match.index > last) nodes.push(text.slice(last, match.index));
+    if (match.index > last) pushText(text.slice(last, match.index));
     const [whole, url, mention, hashtag] = match;
     if (url) {
       const href = url.replace(/[.,!?;:)]+$/, "");
@@ -192,11 +217,11 @@ export function renderRichText(text: string): JSX.Element {
     } else if (hashtag) {
       nodes.push(<span class="c-rich-tag">{hashtag}</span>);
     } else {
-      nodes.push(whole);
+      pushText(whole);
     }
     last = match.index + whole.length;
   }
-  if (last < text.length) nodes.push(text.slice(last));
+  if (last < text.length) pushText(text.slice(last));
   return nodes;
 }
 
@@ -213,9 +238,13 @@ export function formatNoteExpiry(value: string | null | undefined): string {
 
 export function stripHtml(value: string): string {
   if (typeof document === "undefined") return value.replace(/<[^>]*>/g, " ");
-  const el = document.createElement("div");
-  el.innerHTML = value;
-  return el.textContent || el.innerText || "";
+  // Parse into a <template>: its content belongs to an inert document, so
+  // untrusted post HTML (fediverse content) can't start image/media loads or
+  // fire inline `onerror`/`onload` handlers the way a detached <div>.innerHTML
+  // would. We only ever read the resulting text.
+  const template = document.createElement("template");
+  template.innerHTML = value;
+  return template.content.textContent || "";
 }
 
 export function attachmentSrc(
@@ -224,7 +253,13 @@ export function attachmentSrc(
 ): string | undefined {
   const direct = attachment.url;
   if (direct) {
-    if (/^https?:\/\//.test(direct)) return direct;
+    if (/^https?:\/\//i.test(direct)) return direct;
+    // A federated attachment url is untrusted and flows into <a href>/<img
+    // src> sinks. Only http(s) is a valid absolute media URL; any other
+    // explicit scheme (javascript:, data:, …) must never reach a link, so
+    // treat only scheme-less values as server-relative paths and reject the
+    // rest instead of handing the raw scheme to the sink.
+    if (/^[a-z][a-z0-9+.-]*:/i.test(direct)) return undefined;
     return origin ? serverUrl(origin, direct) : direct;
   }
   const key = attachment.r2_key?.replace(/^uploads\//, "");

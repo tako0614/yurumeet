@@ -98,20 +98,72 @@ function olderCursor(messages: ChatMessage[]): string | null {
   return `${oldest.created_at} ${oldest.id}`;
 }
 
+function sameRenderedMessage(a: ChatMessage, b: ChatMessage): boolean {
+  if (a.content !== b.content || a.created_at !== b.created_at) return false;
+  const aAtt = a.attachments ?? [];
+  const bAtt = b.attachments ?? [];
+  return (
+    aAtt.length === bAtt.length &&
+    aAtt.every((att, index) => att.url === bAtt[index]?.url)
+  );
+}
+
 /**
- * Append messages from a polled window that aren't displayed yet. Existing
- * messages (loaded history, optimistic sends) keep their position; the SAME
- * array reference is returned when nothing changed so scroll effects don't
- * re-fire on every poll.
+ * Merge a polled newest-page window into the displayed list. Known messages
+ * keep their position but adopt the server copy when edited; messages that
+ * fall INSIDE the fetched window yet are missing from it were deleted
+ * remotely and are dropped. Anything OLDER than the window wasn't fetched,
+ * and anything NEWER may simply have committed after this poll's snapshot —
+ * both are left untouched (as are local pending/failed sends). Genuinely new
+ * messages append. The SAME array reference is returned when nothing changed
+ * so scroll effects don't re-fire on every poll.
  */
-function appendFresh(
+function reconcileFetchedWindow(
   existing: ChatMessage[],
   fetched: ChatMessage[],
 ): ChatMessage[] {
   if (existing.length === 0) return fetched;
+  if (fetched.length === 0) return existing;
+  const byId = new Map(fetched.map((m) => [m.id, m]));
+  const oldest = fetched[0];
+  const newest = fetched[fetched.length - 1];
+  // Composite (created_at, id) comparison, mirroring the server's keyset
+  // cursor, so same-millisecond messages resolve deterministically.
+  const notBefore = (m: ChatMessage, ref: ChatMessage) =>
+    m.created_at > ref.created_at ||
+    (m.created_at === ref.created_at && m.id >= ref.id);
+  let changed = false;
+  const next: ChatMessage[] = [];
+  for (const message of existing) {
+    if (message.pending || message.failed) {
+      next.push(message);
+      continue;
+    }
+    const server = byId.get(message.id);
+    if (server) {
+      // Keep the SAME object when nothing rendered changed so <For> doesn't
+      // recreate every row each poll.
+      if (sameRenderedMessage(message, server)) {
+        next.push(message);
+      } else {
+        next.push(server);
+        changed = true;
+      }
+      continue;
+    }
+    if (notBefore(message, oldest) && notBefore(newest, message)) {
+      changed = true; // deleted remotely
+      continue;
+    }
+    next.push(message);
+  }
   const known = new Set(existing.map((m) => m.id));
   const fresh = fetched.filter((m) => !known.has(m.id));
-  return fresh.length === 0 ? existing : [...existing, ...fresh];
+  if (fresh.length > 0) {
+    next.push(...fresh);
+    changed = true;
+  }
+  return changed ? next : existing;
 }
 
 function isWideViewport(): boolean {
@@ -128,6 +180,10 @@ export type ChatContextValue = {
   selectContact: (contact: DMContact | null) => void;
   messages: Accessor<ChatMessage[]>;
   messagesLoading: Accessor<boolean>;
+  /** True when the initial history load for the open conversation failed. */
+  messagesError: Accessor<boolean>;
+  /** Retry the failed initial history load for the open conversation. */
+  reloadMessages: () => void;
   /** Whether an older page of history exists for the open conversation. */
   messagesHasMore: Accessor<boolean>;
   loadingOlder: Accessor<boolean>;
@@ -141,6 +197,16 @@ export type ChatContextValue = {
   /** Per-member read positions for the open group chat (local members only). */
   readStates: Accessor<CommunityReadState[]>;
   send: (content: string, attachments?: MediaAttachment[]) => Promise<boolean>;
+  /**
+   * Forward a message's text (and any media refs) to another talk via the same
+   * DM/community send path. The target need not be the open conversation; when
+   * it is, the sent message appears optimistically like a normal send.
+   */
+  forwardMessage: (
+    target: DMContact,
+    content: string,
+    attachments?: MediaAttachment[],
+  ) => Promise<boolean>;
   /** Retry a message whose delivery failed. */
   resendMessage: (messageId: string) => Promise<boolean>;
   /** Drop a failed optimistic message without sending it. */
@@ -150,6 +216,11 @@ export type ChatContextValue = {
   refetchContacts: () => void;
   isTyping: Accessor<boolean>;
   notifyTyping: () => void;
+  /**
+   * True after ≥2 consecutive background polls (messages or contacts)
+   * failed; cleared by the next success. Drives the connection banner.
+   */
+  connectionLost: Accessor<boolean>;
 };
 
 const ChatContext = createContext<ChatContextValue>();
@@ -174,6 +245,7 @@ export function ChatProvider(props: { children: JSX.Element }) {
   const [selected, setSelected] = createSignal<DMContact | null>(null);
   const [messages, setMessages] = createSignal<ChatMessage[]>([]);
   const [messagesLoading, setMessagesLoading] = createSignal(false);
+  const [messagesError, setMessagesError] = createSignal(false);
   const [messagesHasMore, setMessagesHasMore] = createSignal(false);
   const [loadingOlder, setLoadingOlder] = createSignal(false);
   const [partnerLastReadAt, setPartnerLastReadAt] = createSignal<string | null>(
@@ -183,7 +255,63 @@ export function ChatProvider(props: { children: JSX.Element }) {
   const [isTyping, setIsTyping] = createSignal(false);
   const [didAutoSelect, setDidAutoSelect] = createSignal(false);
 
-  const contacts = () => contactsResource() ?? [];
+  // The 20s contacts refetch can re-sort the rows; applying that while a
+  // finger is down makes the tap land on the wrong row. Hold the refreshed
+  // order while a pointer is down and apply it on release.
+  const [displayedContacts, setDisplayedContacts] = createSignal<DMContact[]>(
+    [],
+  );
+  let pointerHeld = false;
+  let pendingContacts: DMContact[] | null = null;
+  createEffect(() => {
+    const next = contactsResource() ?? [];
+    if (pointerHeld) {
+      pendingContacts = next;
+      return;
+    }
+    setDisplayedContacts(next);
+  });
+  if (typeof window !== "undefined") {
+    const onPointerDown = () => {
+      pointerHeld = true;
+    };
+    const onPointerRelease = () => {
+      pointerHeld = false;
+      if (pendingContacts) {
+        setDisplayedContacts(pendingContacts);
+        pendingContacts = null;
+      }
+    };
+    window.addEventListener("pointerdown", onPointerDown);
+    window.addEventListener("pointerup", onPointerRelease);
+    window.addEventListener("pointercancel", onPointerRelease);
+    onCleanup(() => {
+      window.removeEventListener("pointerdown", onPointerDown);
+      window.removeEventListener("pointerup", onPointerRelease);
+      window.removeEventListener("pointercancel", onPointerRelease);
+    });
+  }
+
+  const contacts = () => displayedContacts();
+
+  // Consecutive background-poll failures surface an unobtrusive
+  // 「接続を確認しています…」 banner; any success clears it immediately.
+  // One failed tick stays silent — flaky mobile networks drop single polls.
+  const [connectionLost, setConnectionLost] = createSignal(false);
+  let consecutivePollFailures = 0;
+  const notePollFailure = () => {
+    consecutivePollFailures++;
+    if (consecutivePollFailures >= 2) setConnectionLost(true);
+  };
+  const notePollSuccess = () => {
+    consecutivePollFailures = 0;
+    setConnectionLost(false);
+  };
+  createEffect(() => {
+    if (contactsResource.state === "ready") notePollSuccess();
+    else if (contactsResource.state === "errored") notePollFailure();
+  });
+
   const isSelectedContact = (contact: DMContact): boolean => {
     const current = selected();
     return current?.type === contact.type && current.ap_id === contact.ap_id;
@@ -227,6 +355,17 @@ export function ChatProvider(props: { children: JSX.Element }) {
   };
 
   if (typeof window !== "undefined") {
+    // A reload while the mobile chat overlay was open leaves this history
+    // entry flagged: back would then need two presses (the first only pops
+    // the stale flag). The overlay never survives a reload, so strip it.
+    const bootState = window.history.state as {
+      yurumeChatOpen?: boolean;
+    } | null;
+    if (bootState?.yurumeChatOpen) {
+      const cleaned = { ...bootState };
+      delete cleaned.yurumeChatOpen;
+      window.history.replaceState(cleaned, "");
+    }
     const onPopState = (event: PopStateEvent) => {
       const state = event.state as { yurumeChatOpen?: boolean } | null;
       if (pushedHistoryEntry && !state?.yurumeChatOpen) {
@@ -271,47 +410,56 @@ export function ChatProvider(props: { children: JSX.Element }) {
   // generation fence prevents a slow A request from overwriting B after a
   // rapid conversation switch.
   let messageLoadGeneration = 0;
+  const loadConversation = async (contact: DMContact) => {
+    const generation = ++messageLoadGeneration;
+    setMessages([]);
+    setMessagesLoading(true);
+    setMessagesError(false);
+    try {
+      const page = await loadMessagesPage(contact);
+      if (generation !== messageLoadGeneration || !isSelectedContact(contact)) {
+        return;
+      }
+      setMessages(page.messages);
+      setMessagesHasMore(page.hasMore);
+      setPartnerLastReadAt(page.partnerLastReadAt);
+      setReadStates(page.readStates);
+      markRead(contact);
+    } catch {
+      // Surface the failure instead of masquerading as an empty thread; the
+      // 再試行 button and the poll both provide recovery paths.
+      if (generation === messageLoadGeneration && isSelectedContact(contact)) {
+        setMessagesError(true);
+      }
+    } finally {
+      if (generation === messageLoadGeneration && isSelectedContact(contact)) {
+        setMessagesLoading(false);
+      }
+    }
+  };
+
   createEffect(
-    on(selected, async (contact) => {
-      const generation = ++messageLoadGeneration;
+    on(selected, (contact) => {
+      messageLoadGeneration++; // invalidate any in-flight load
       setIsTyping(false);
       setMessagesHasMore(false);
       setLoadingOlder(false);
       setPartnerLastReadAt(null);
       setReadStates([]);
+      setMessagesError(false);
       if (!contact) {
         setMessages([]);
         setMessagesLoading(false);
         return;
       }
-      setMessages([]);
-      setMessagesLoading(true);
-      try {
-        const page = await loadMessagesPage(contact);
-        if (
-          generation !== messageLoadGeneration ||
-          !isSelectedContact(contact)
-        ) {
-          return;
-        }
-        setMessages(page.messages);
-        setMessagesHasMore(page.hasMore);
-        setPartnerLastReadAt(page.partnerLastReadAt);
-        setReadStates(page.readStates);
-        markRead(contact);
-      } catch {
-        // Keep the selected conversation empty; polling provides the next
-        // recovery attempt without letting this async effect reject globally.
-      } finally {
-        if (
-          generation === messageLoadGeneration &&
-          isSelectedContact(contact)
-        ) {
-          setMessagesLoading(false);
-        }
-      }
+      void loadConversation(contact);
     }),
   );
+
+  const reloadMessages = () => {
+    const contact = selected();
+    if (contact) void loadConversation(contact);
+  };
 
   const loadOlderMessages = async () => {
     const contact = selected();
@@ -346,17 +494,23 @@ export function ChatProvider(props: { children: JSX.Element }) {
   createEffect(
     on(selected, (contact) => {
       if (!contact) return;
-      const timer = window.setInterval(() => {
-        if (
-          typeof document !== "undefined" &&
-          document.visibilityState !== "visible"
-        ) {
-          return;
-        }
+      // Skip a tick while the previous poll is still in flight so slow
+      // responses don't stack and land out of order.
+      let pollInFlight = false;
+      const poll = () => {
+        if (pollInFlight) return;
+        pollInFlight = true;
         void (async () => {
           try {
             const page = await loadMessagesPage(contact);
+            notePollSuccess();
             if (!isSelectedContact(contact)) return;
+            // A failed initial load left the thread empty with paging
+            // disabled — the first successful poll is the recovery path.
+            if (messagesError()) {
+              setMessagesError(false);
+              setMessagesHasMore(page.hasMore);
+            }
             let receivedWhileOpen = false;
             setMessages((prev) => {
               const known = new Set(prev.map((message) => message.id));
@@ -365,7 +519,7 @@ export function ChatProvider(props: { children: JSX.Element }) {
                   !known.has(message.id) &&
                   message.sender.ap_id !== app.actor().ap_id,
               );
-              return appendFresh(prev, page.messages);
+              return reconcileFetchedWindow(prev, page.messages);
             });
             // Keep the read receipts fresh: the partner/member read positions
             // advance while the thread is open.
@@ -382,11 +536,35 @@ export function ChatProvider(props: { children: JSX.Element }) {
               }
             }
           } catch {
-            /* transient */
+            // Transient for the message list, but counted toward the
+            // connection banner.
+            notePollFailure();
+          } finally {
+            pollInFlight = false;
           }
         })();
+      };
+      const timer = window.setInterval(() => {
+        if (
+          typeof document !== "undefined" &&
+          document.visibilityState !== "visible"
+        ) {
+          return;
+        }
+        poll();
       }, POLL_MS);
       onCleanup(() => window.clearInterval(timer));
+      if (typeof document !== "undefined") {
+        // Polling pauses while the tab is hidden; catch up immediately when
+        // the user comes back instead of waiting out the current interval.
+        const onVisible = () => {
+          if (document.visibilityState === "visible") poll();
+        };
+        document.addEventListener("visibilitychange", onVisible);
+        onCleanup(() =>
+          document.removeEventListener("visibilitychange", onVisible),
+        );
+      }
     }),
   );
 
@@ -431,12 +609,18 @@ export function ChatProvider(props: { children: JSX.Element }) {
               )
             ).message;
       if (isSelectedContact(contact)) {
-        // Replace the optimistic placeholder with the server's copy in place.
+        // Replace the optimistic placeholder with the server's copy at the
+        // SAME index, so a partner message polled in mid-flight doesn't end
+        // up rendered before this earlier send.
         setMessages((current) => {
-          const without = current.filter((m) => m.id !== temp.id);
-          return without.some((m) => m.id === sent.id)
-            ? without
-            : [...without, sent];
+          if (current.some((m) => m.id === sent.id)) {
+            return current.filter((m) => m.id !== temp.id);
+          }
+          const at = current.findIndex((m) => m.id === temp.id);
+          if (at < 0) return [...current, sent];
+          const next = [...current];
+          next[at] = sent;
+          return next;
         });
       }
       void refetchContacts();
@@ -454,15 +638,12 @@ export function ChatProvider(props: { children: JSX.Element }) {
     }
   };
 
-  const send = async (
+  const buildOutgoing = (
     content: string,
     attachments?: MediaAttachment[],
-  ): Promise<boolean> => {
-    const contact = selected();
-    if (!contact) return false;
-    if (!content && (attachments?.length ?? 0) === 0) return false;
+  ): ChatMessage => {
     const actor = app.actor();
-    const temp: ChatMessage = {
+    return {
       id: `temp-${++tempSeq}`,
       sender: {
         ap_id: actor.ap_id,
@@ -476,8 +657,32 @@ export function ChatProvider(props: { children: JSX.Element }) {
       created_at: new Date().toISOString(),
       pending: true,
     };
+  };
+
+  const send = async (
+    content: string,
+    attachments?: MediaAttachment[],
+  ): Promise<boolean> => {
+    const contact = selected();
+    if (!contact) return false;
+    if (!content && (attachments?.length ?? 0) === 0) return false;
+    const temp = buildOutgoing(content, attachments);
     setMessages((prev) => [...prev, temp]);
     return deliverMessage(contact, temp);
+  };
+
+  const forwardMessage = async (
+    target: DMContact,
+    content: string,
+    attachments?: MediaAttachment[],
+  ): Promise<boolean> => {
+    if (!content && (attachments?.length ?? 0) === 0) return false;
+    const temp = buildOutgoing(content, attachments);
+    // Only paint the optimistic bubble when the forward target is the open
+    // conversation; forwarding to a different talk must not inject a message
+    // into the thread currently on screen.
+    if (isSelectedContact(target)) setMessages((prev) => [...prev, temp]);
+    return deliverMessage(target, temp);
   };
 
   const resendMessage = async (messageId: string): Promise<boolean> => {
@@ -535,18 +740,22 @@ export function ChatProvider(props: { children: JSX.Element }) {
         selectContact,
         messages,
         messagesLoading,
+        messagesError,
+        reloadMessages,
         messagesHasMore,
         loadingOlder,
         loadOlderMessages,
         partnerLastReadAt,
         readStates,
         send,
+        forwardMessage,
         resendMessage,
         discardMessage,
         deleteMessage,
         refetchContacts: () => void refetchContacts(),
         isTyping,
         notifyTyping,
+        connectionLost,
       }}
     >
       {props.children}

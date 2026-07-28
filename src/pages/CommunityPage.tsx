@@ -62,6 +62,7 @@ export default function CommunityPage() {
   const [requests, setRequests] = createSignal<CommunityJoinRequest[]>([]);
   const [loading, setLoading] = createSignal(true);
   const [error, setError] = createSignal(false);
+  const [membersError, setMembersError] = createSignal(false);
   const [busy, setBusy] = createSignal(false);
   const [settingsOpen, setSettingsOpen] = createSignal(false);
   const [inviting, setInviting] = createSignal(false);
@@ -84,6 +85,7 @@ export default function CommunityPage() {
     const myGen = ++gen;
     setLoading(true);
     setError(false);
+    setMembersError(false);
     setCommunity(null);
     setMembers([]);
     setRequests([]);
@@ -92,9 +94,11 @@ export default function CommunityPage() {
         const detail = await fetchCommunity(id);
         if (myGen !== gen) return;
         setCommunity(detail);
-        const list = await fetchCommunityMembers(id).catch(() => []);
+        // A members fetch failure must not render as 「メンバーがいません」.
+        const list = await fetchCommunityMembers(id).catch(() => null);
         if (myGen !== gen) return;
-        setMembers(list);
+        setMembersError(list === null);
+        setMembers(list ?? []);
         if (detail.member_role === "owner") {
           const reqs = await fetchCommunityJoinRequests(id).catch(() => []);
           if (myGen !== gen) return;
@@ -119,6 +123,10 @@ export default function CommunityPage() {
         // tab (back then closes the chat instead of resurrecting this page).
         navigate("/?tab=talk");
         chat.selectContact(contact);
+      } else {
+        // Don't leave the button as a silent dead end when the group chat
+        // can't be resolved.
+        app.toast("トークを開けませんでした", "error");
       }
     } catch {
       app.toast("トークを開けませんでした", "error");
@@ -206,7 +214,10 @@ export default function CommunityPage() {
     setInviting(true);
     try {
       const invite = await createCommunityInvite(c.ap_id);
-      const url = `${window.location.origin}/communities/${encodeURIComponent(
+      // Canonical share origin = the server origin, matching QR / profile
+      // share links (which must resolve there for federation). The yurumeet
+      // worker serves the app at that origin, so the invite route works.
+      const url = `${app.origin()}/communities/${encodeURIComponent(
         c.ap_id,
       )}?invite=${encodeURIComponent(invite.invite_id)}`;
       await navigator.clipboard.writeText(url);
@@ -414,9 +425,21 @@ export default function CommunityPage() {
 
                 <section class="p-community-section">
                   <h2>メンバー ({c().member_count})</h2>
+                  <Show when={membersError()}>
+                    <div class="p-timeline-state">
+                      <p>メンバーを読み込めませんでした</p>
+                      <button type="button" onClick={load}>
+                        再読み込み
+                      </button>
+                    </div>
+                  </Show>
                   <For
                     each={members()}
-                    fallback={<p class="p-detail-empty">メンバーがいません</p>}
+                    fallback={
+                      <Show when={!membersError()}>
+                        <p class="p-detail-empty">メンバーがいません</p>
+                      </Show>
+                    }
                   >
                     {(member) => (
                       <div class="p-community-member">
