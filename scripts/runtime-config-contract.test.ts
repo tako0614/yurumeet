@@ -20,17 +20,13 @@ describe("Worker runtime configuration", () => {
     ]);
   });
 
-  test("both OpenTofu modules read the canonical config instead of copying it", () => {
+  test("the direct module owns Cloudflare compatibility while the portable graph stays generic", () => {
     expect(rootModule).toContain(
       'jsondecode(file("${path.module}/wrangler.jsonc"))',
     );
-    expect(takoformModule).toContain(
-      'jsondecode(file("${path.module}/../../wrangler.jsonc"))',
-    );
-    for (const moduleSource of [rootModule, takoformModule]) {
-      expect(moduleSource).not.toMatch(
-        /variable\s+"worker_compatibility_date"\s*\{[\s\S]*?default\s*=\s*"\d{4}-\d{2}-\d{2}"/,
-      );
-    }
+    expect(takoformModule).not.toContain("compatibility_date");
+    expect(takoformModule).not.toContain("compatibility_flags");
+    expect(takoformModule).not.toContain("wrangler.jsonc");
+    expect(takoformModule).toContain('runtime         = "javascript"');
   });
 });

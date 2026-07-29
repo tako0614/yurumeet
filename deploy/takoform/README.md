@@ -1,8 +1,8 @@
 # Yurumeet Takoform Capsule
 
 This directory is the canonical managed-resource definition for Yurumeet. It
-uses Takoform resources directly and does not point a Cloudflare provider at a
-Takosumi compatibility endpoint.
+uses current Takoform resources directly and does not point a Cloudflare
+provider at a Takosumi compatibility endpoint.
 
 The selected Worker release URL and SHA-256 are pinned in this Capsule. A
 product release updates the tag, URL, and digest together.
@@ -21,6 +21,11 @@ The Capsule intentionally asks for queue `consume` and `publish` permissions
 and a `Schedule -> EdgeWorker` trigger. A host must reject the installation
 until it can materialize those requirements. It must not silently downgrade
 them.
+
+The graph also owns its opaque `yurumeet.launcher@1` Interface document. The
+provider has no UI-specific resource: it stores app-authored JSON and asks the
+host to resolve the public `HttpService` origin. Runtime discovery and access
+remain host-governed.
 
 Do not make this module selectable in the public Store until the pinned
 Takoform provider/Form package is published and the selected host proves:
