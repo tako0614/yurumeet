@@ -14,6 +14,19 @@
       },
       "commit": "c55e2c54d760157a4a9aa7a5788b5932128d54da",
       "seededFrom": "read-only GET of the published GitHub Release assets on 2026-07-28; reconciled against manifest kind, app, releaseTag, artifact SHA-256, and source commit"
+    },
+    "v0.1.2": {
+      "artifact": {
+        "filename": "worker.js",
+        "url": "https://github.com/tako0614/yurumeet/releases/download/v0.1.2/worker.js",
+        "sha256": "sha256:12dbf659613caa79c7e1696cb44a6078216bba92e61e812d3e84cd8d23370472"
+      },
+      "manifest": {
+        "url": "https://github.com/tako0614/yurumeet/releases/download/v0.1.2/takosumi-artifact.json",
+        "sha256": "sha256:dd49b560dec05a2c3487f55f60cb7d40c466a4d95adfe2ea3eccfd96838ca231"
+      },
+      "commit": "9a5c990340635736832c2a9eb9daf06337f9bd51",
+      "seededFrom": "read-only GET of the published GitHub Release assets on 2026-08-03; reconciled against manifest kind, app, releaseTag, artifact filename, artifact SHA-256, source commit, and both downloaded digests"
     }
   }
 }
