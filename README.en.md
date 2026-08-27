@@ -122,21 +122,21 @@ retention schedule runs hourly.
 
 ### Managed install through Takosumi (not yet public)
 
-The canonical managed graph is `deploy/takoform/`. Do not publish an install
-link until a fixed release containing that module and host-conformance evidence
-are available:
+Pass the Git repository URL to Takosumi's New app or `/install` screen:
 
-```json
-{
-  "url": "https://github.com/tako0614/yurumeet.git",
-  "ref": "<verified-release-tag>",
-  "path": "deploy/takoform"
-}
+```text
+https://app.takosumi.com/install?git=https%3A%2F%2Fgithub.com%2Ftako0614%2Fyurumeet.git
 ```
 
+Takosumi scans the OpenTofu tree at the requested Git revision and reads
+[`.well-known/takosumi.json`](.well-known/takosumi.json) for input UI hints and
+host service declarations. Set the ref, module path, or service name in the
+screen when you need an override. The `deploy/takoform/` managed graph stays
+off the public CTA until a fixed release and Host conformance evidence exist,
+but it can still be checked from a direct Git URL and module path.
+
 Takosumi owns Plan, Apply, StateVersion, Output, and Audit on this path. The
-root `main.tf` is the direct Cloudflare module and is not the module selected by
-the managed-install CTA.
+root `main.tf` is the direct Cloudflare module.
 
 Both modules expose `launch_url` and `api_url` as ordinary OpenTofu runtime URL
 outputs. Neither uses reserved `takosumi_release`, `app_deployment`,

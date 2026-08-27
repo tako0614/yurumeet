@@ -16,7 +16,20 @@ const manifest = JSON.parse(manifestText) as {
         inputs: Array<{
           name: string;
           source: { kind: string };
+          label: { ja: string; en: string };
           secret?: boolean;
+        }>;
+        requires?: Array<{
+          kind: string;
+          deliver?: Record<string, unknown>;
+        }>;
+        interfaces?: Array<{
+          name: string;
+          spec: {
+            type: string;
+            version: string;
+            access: Record<string, unknown>;
+          };
         }>;
         installExperience?: {
           projections: Array<
@@ -37,11 +50,6 @@ const manifest = JSON.parse(manifestText) as {
     >;
   };
 };
-const sourceOptions = JSON.parse(
-  await readFile(new URL("install-options.json", rootUrl), "utf8"),
-) as {
-  options: Array<{ source: { url: string; path: string } }>;
-};
 const rootModuleSource = await readFile(new URL("main.tf", rootUrl), "utf8");
 const site = await readFile(new URL("site/index.html", rootUrl), "utf8");
 
@@ -56,7 +64,7 @@ function projectionVariables(projection: {
 }
 
 describe("repository-owned Takosumi install UX", () => {
-  test("uses the closed Repository envelope for the only public source option", () => {
+  test("publishes repository input and service hints", () => {
     expect(Object.keys(manifest).sort()).toEqual([
       "apiVersion",
       "install",
@@ -66,15 +74,10 @@ describe("repository-owned Takosumi install UX", () => {
     expect(manifest.kind).toBe("Repository");
     expect(Object.keys(manifest.install)).toEqual(["modules"]);
     expect(Object.keys(manifest.install.modules)).toEqual(["."]);
-    expect(sourceOptions.options.map((option) => option.source)).toEqual([
-      {
-        url: "https://github.com/tako0614/yurumeet.git",
-        path: ".",
-      },
-    ]);
+    expect(manifest.install.modules["."]).toBeDefined();
   });
 
-  test("references only real root-module variables and defaults", () => {
+  test("repository install hints reference real root-module variables and services", () => {
     const module = manifest.install.modules["."];
     const moduleVariables = new Set(
       Array.from(
@@ -103,6 +106,25 @@ describe("repository-owned Takosumi install UX", () => {
           nextBlock < 0 ? undefined : nextBlock,
         ),
       ).toMatch(/\n\s+default\s+=/);
+    }
+    for (const input of module.inputs) {
+      expect(input.name).toMatch(/^[A-Za-z_][A-Za-z0-9_]*$/);
+      expect(typeof input.label.ja).toBe("string");
+      expect(typeof input.label.en).toBe("string");
+    }
+    for (const requirement of module.requires ?? []) {
+      expect(["http.endpoint", "identity.oidc", "interface.consume"]).toContain(
+        requirement.kind,
+      );
+      if (requirement.deliver) {
+        expect(Object.keys(requirement.deliver)).toHaveLength(1);
+      }
+    }
+    for (const service of module.interfaces ?? []) {
+      expect(typeof service.name).toBe("string");
+      expect(typeof service.spec.type).toBe("string");
+      expect(typeof service.spec.version).toBe("string");
+      expect(service.spec.access).toBeDefined();
     }
   });
 

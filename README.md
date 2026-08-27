@@ -115,19 +115,21 @@ Worker compatibility date / flags の正本も `wrangler.jsonc` です。root mo
 
 ### Takosumi 管理付き導入（公開検証前）
 
-管理付き導入の正本は `deploy/takoform/` の portable resource graph です。公開リンクはまだ提供せず、
-この module を含む固定リリースと host conformance の証跡がそろってから有効化します。
+Takosumi の「新しいアプリ」または `/install` 画面へ Git repository URL を渡します。
 
-```json
-{
-  "url": "https://github.com/tako0614/yurumeet.git",
-  "ref": "<verified-release-tag>",
-  "path": "deploy/takoform"
-}
+```text
+https://app.takosumi.com/install?git=https%3A%2F%2Fgithub.com%2Ftako0614%2Fyurumeet.git
 ```
 
+Takosumi は指定した Git revision の OpenTofu tree を走査し、
+[`.well-known/takosumi.json`](.well-known/takosumi.json) から入力 UI hint と host
+service declaration を読み取ります。必要な場合だけ画面で ref、module path、
+サービス名を上書きしてください。`deploy/takoform/` の managed graph は固定
+release と Host conformance の証跡がそろうまで公開導線に載せませんが、直接の
+Git URL / module path から tree を検証できます。
+
 この経路では Takosumi が Plan・Apply・StateVersion・Output・Audit を管理します。
-root `main.tf` は direct Cloudflare module であり、管理付き導入の CTA から選びません。
+root `main.tf` は direct Cloudflare module です。
 
 両 module が公開する runtime URL は、通常の OpenTofu Output である `launch_url` と `api_url`
 です。`takosumi_release` / `app_deployment` / `service_exports` / `service_bindings`
@@ -138,11 +140,6 @@ root `main.tf` は direct Cloudflare module であり、管理付き導入の CT
 service-side InstallConfigが `launch_url` を明示mappingし、D1 migrationも同じInstallConfigのlifecycle actionが
 実行します。`takosumi_release` / `app_deployment` / `service_exports` / `service_bindings` のような
 予約Outputをmoduleのruntime宣言やlifecycle authorityとして使いません。
-
-[`install-options.json`](install-options.json) は、現在実行可能な Cloudflare OpenTofu module を選ぶための任意の
-`CapsuleSourceOptions` 表示ドキュメントです。Takosumi 専用 manifest ではなく、通常の Git URL + module path での
-直接インストールには不要です。この文書は、それを含む次の通常の安定版タグから利用できます。別クラウドの選択肢は、
-対応する実在 module を出荷したときだけ追加します。
 
 Yurumeet は中央でホストされるアプリではなく、自分で動かすソフトウェアです。
 `https://yurumeet.com` は `site` にある製品紹介・ランディングサイトにすぎず、
