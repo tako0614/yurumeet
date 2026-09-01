@@ -70,7 +70,7 @@ CSRF_ALLOWED_ORIGINS=https://talk.your-yurucommu.example
 - `src/assets/takosui/` — Yurumeet アプリ用
 - `site/assets/takosui/` — product website の mock 用
 
-Yurumeet のブランドロゴは `public/yurumeet-logo.png` を配信用の正本とし、
+Yurumeet のブランドロゴは `public/yurumeet-logo.png` を配信用の正本 (正とする情報)とし、
 アプリbundle用の `src/assets/yurumeet-logo.png` と product website用の
 `site/assets/yurumeet-logo.png` を同一内容に保ちます。`bun run check` は3つの
 PNGが一致することも検証します。
@@ -105,7 +105,7 @@ distribution artifact を公開するときは、この repository の entrypoin
 bun run deploy
 ```
 
-`prepare` は read-only です。adapter が未登録なら fail closed のままにし、
+`prepare` は read-only です。adapter が未登録なら安全側に停止のままにし、
 raw Worker deploy や migration へ fallback しません。
 
 Worker compatibility date / flags の正本も `wrangler.jsonc` です。root module と
@@ -157,7 +157,7 @@ Yurumeet は中央でホストされるアプリではなく、自分で動か�
 
 OpenTofu で Worker を作る場合は、次の 3 変数を設定します。
 
-- `notification_push_gateway_url` — stateless push gateway の公開 HTTPS notify endpoint
+- `notification_push_gateway_url` — 状態を持たない push gateway の公開 HTTPS notify endpoint
 - `notification_push_gateway_token` — Worker だけが gateway 呼び出しに使う secret bearer
 - `notification_push_web_push_public_key` — gateway の公開 VAPID key（秘密値ではありません）
 
