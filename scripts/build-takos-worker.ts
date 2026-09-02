@@ -98,37 +98,41 @@ async function run(command: string[]): Promise<void> {
 }
 
 export function createEntrySource(assets: Record<string, StaticAsset>): string {
-  return `import yurucommuCore, {
+  return `import {
   createYurucommuBackendApp,
   handleYurucommuQueueBatch,
-  wrapCloudflareBindings,
+  runYurucommuRetention,
+  withRequiredBackgroundPublicOrigin,
+  wrapRuntimeMessageBatch,
 } from "@takosjp/yurucommu-core/server";
 import type {
   DeliveryDlqMessageV1,
   DeliveryQueueMessageV1,
+  EdgeQueueBatch,
   Env,
-  EnvVars,
+  IQueueBatch,
 } from "@takosjp/yurucommu-core/server";
+import {
+  resolveYurumeetRuntimeLane,
+  wrapYurumeetWorkerBindings,
+} from "../scripts/yurumeet-worker-bindings.ts";
 import type {
-  D1Database,
+  YurumeetRuntimeEnv,
+  YurumeetWorkerBindings,
+} from "../scripts/yurumeet-worker-bindings.ts";
+import type {
   Fetcher,
-  KVNamespace,
   MessageBatch,
-  Queue,
-  R2Bucket,
   ScheduledController,
 } from "@cloudflare/workers-types";
 import { withYurumeetDocumentPolicy } from "../src/runtime-policy.ts";
 
-type RuntimeEnv = Omit<Env, "ASSETS"> & { ASSETS?: Fetcher };
-type WorkerBindings = EnvVars & {
-  DB: D1Database;
-  MEDIA?: R2Bucket;
-  KV: KVNamespace;
-  ASSETS?: Fetcher;
-  DELIVERY_QUEUE?: Queue<DeliveryQueueMessageV1>;
-  DELIVERY_DLQ?: Queue<DeliveryDlqMessageV1>;
-};
+type RuntimeEnv = YurumeetRuntimeEnv;
+type WorkerBindings = YurumeetWorkerBindings;
+type DeliveryMessage = DeliveryQueueMessageV1 | DeliveryDlqMessageV1;
+// Whichever shape the lane's host hands the queue handler: Cloudflare's
+// MessageBatch (ack/ackAll) or the edge.queue facade batch (acknowledgeAll).
+type DeliveryEvent = MessageBatch<DeliveryMessage> | EdgeQueueBatch;
 
 const backendApp = createYurucommuBackendApp({
   discovery: ${JSON.stringify(discovery, null, 2)},
@@ -190,11 +194,45 @@ const embeddedAssetsFetcher: Fetcher = {
   },
 };
 
-function withDefaultAppUrl(request: Request, env: RuntimeEnv): RuntimeEnv {
-  if (typeof env.APP_URL === "string" && env.APP_URL.trim().length > 0) {
-    return env;
+async function runRetention(runtimeEnv: RuntimeEnv): Promise<void> {
+  // The core retention implementation consumes DB/MEDIA/queue only. APP_URL
+  // is intentionally not invented for this native scheduled invocation.
+  await runYurucommuRetention(runtimeEnv as Env);
+}
+
+// Takes the ALREADY WRAPPED batch, not the raw event. Both lanes carry a queue
+// name — Cloudflare's \`MessageBatch.queue\` and the facade's
+// \`EdgeQueueBatch.queue\` — and \`wrapRuntimeMessageBatch\` copies it straight
+// through, so reading it here is one lane-independent read of exactly the value
+// \`handleYurucommuQueueBatch\` will compare its own configured names against.
+function withDeliveryConsumerIdentity(
+  batch: IQueueBatch<DeliveryMessage>,
+  env: RuntimeEnv,
+): RuntimeEnv {
+  const configuredDelivery = env.DELIVERY_QUEUE_NAME?.trim() ?? "";
+  const configuredDlq = env.DELIVERY_DLQ_NAME?.trim() ?? "";
+  if ((configuredDelivery.length > 0) !== (configuredDlq.length > 0)) {
+    throw new Error("Direct queue identities must declare delivery and DLQ together");
   }
-  return { ...env, APP_URL: new URL(request.url).origin };
+  if (configuredDelivery && configuredDlq) {
+    return env; // The direct adapter already declares both distinct queue identities.
+  }
+
+  const queueName = batch.queue.trim();
+  if (!queueName) {
+    throw new Error("Queue invocation has no native identity");
+  }
+  // The Takoform graph attaches exactly one QueueConsumer to this Worker, and
+  // that relation targets the delivery queue. The Provider is free to replace
+  // the logical Resource name with a collision-safe native name, so the app
+  // uses the authenticated invocation identity there. The direct Cloudflare
+  // adapter returns above with its separately configured delivery and DLQ
+  // identities intact because it attaches consumers for both queues.
+  return {
+    ...env,
+    DELIVERY_QUEUE_NAME: queueName,
+    DELIVERY_DLQ_NAME: "__unbound_dlq__:" + queueName,
+  };
 }
 
 export default {
@@ -203,46 +241,60 @@ export default {
     env: WorkerBindings,
     ctx: ExecutionContext,
   ): Promise<Response> {
-    const envWithAppUrl = withDefaultAppUrl(request, wrapCloudflareBindings(env));
-    const runtimeEnv = envWithAppUrl.ASSETS
-      ? envWithAppUrl
-      : { ...envWithAppUrl, ASSETS: embeddedAssetsFetcher };
-    const response = await backendApp.fetch(request, runtimeEnv as Env, ctx);
-    return withYurumeetDocumentPolicy(response);
+    // No origin handling here. \`createYurucommuBackendApp\` registers the
+    // core's public-origin middleware before every route, so on either lane
+    // this instance establishes its origin from the request and pins it unless
+    // an explicit \`APP_URL\` was set — one rule, owned by the package that
+    // mints the actor ids from it.
+    const bindings = wrapYurumeetWorkerBindings(env);
+    const runtimeEnv = bindings.ASSETS
+      ? bindings
+      : { ...bindings, ASSETS: embeddedAssetsFetcher };
+    return withYurumeetDocumentPolicy(
+      await backendApp.fetch(request, runtimeEnv as Env, ctx),
+    );
   },
 
   async queue(
-    batch: MessageBatch<DeliveryQueueMessageV1 | DeliveryDlqMessageV1>,
+    batch: DeliveryEvent,
     env: WorkerBindings,
+    ctx: ExecutionContext,
   ): Promise<void> {
-    return handleYurucommuQueueBatch(batch, wrapCloudflareBindings(env) as Env);
+    // The lane decides the batch's shape as much as the bindings', so both are
+    // adapted from the one declaration. A batch whose shape contradicts it
+    // (a facade batch on the cloudflare lane, or the reverse) is refused.
+    const lane = resolveYurumeetRuntimeLane(env);
+    const queueBatch = wrapRuntimeMessageBatch<DeliveryMessage>(batch, lane);
+    // Federation delivery signs from this instance's own actor ids and there is
+    // no request to read the origin off. \`APP_URL\`, then the pinned origin,
+    // then a \`PublicOriginError\` — the batch is retried once traffic has
+    // established one, rather than delivered under \`undefined/ap/users/...\`.
+    const runtimeEnv = withDeliveryConsumerIdentity(
+      queueBatch,
+      await withRequiredBackgroundPublicOrigin(
+        wrapYurumeetWorkerBindings(env) as Env,
+      ),
+    );
+    void ctx;
+    return handleYurucommuQueueBatch(queueBatch, runtimeEnv as Env);
   },
 
   // Cron-triggered retention (delivery/session/call-session purge, media-orphan
   // GC, story expiry, tombstone reap). This entry builds its own default object
   // instead of re-exporting the core one, so a cron trigger alone would fire at
   // a module that exports no \`scheduled\` and nothing would ever be purged —
-  // the handler has to be forwarded here. It is read off the core default at
-  // call time so a core release without the retention handler fails loudly on
-  // the first tick rather than silently sweeping nothing.
+  // the handler has to be forwarded here. The runtime-neutral core entrypoint
+  // receives the already adapted Env from whichever lane this deployment
+  // declared; an older core fails loudly rather than silently sweeping nothing.
   async scheduled(
     controller: ScheduledController,
     env: WorkerBindings,
     ctx: ExecutionContext,
   ): Promise<void> {
-    const runRetention = (yurucommuCore as {
-      scheduled?: (
-        controller: ScheduledController,
-        env: WorkerBindings,
-        ctx: ExecutionContext,
-      ) => Promise<void>;
-    }).scheduled;
-    if (typeof runRetention !== "function") {
-      throw new Error(
-        "@takosjp/yurucommu-core exposes no scheduled() retention handler; upgrade @takosjp/yurucommu-core",
-      );
-    }
-    await runRetention(controller, env, ctx);
+    void controller;
+    void ctx;
+    const runtimeEnv = wrapYurumeetWorkerBindings(env);
+    await runRetention(runtimeEnv);
   },
 };
 `;

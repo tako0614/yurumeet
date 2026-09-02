@@ -4,7 +4,7 @@
     "module": "Preserve",
     "moduleResolution": "bundler",
     "target": "ESNext",
-    "types": ["bun", "node"],
+    "types": ["bun", "node", "@cloudflare/workers-types"],
     "jsx": "preserve",
     "jsxImportSource": "solid-js",
     "allowImportingTsExtensions": true,
