@@ -4,7 +4,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-export const MINIMUM_NOTIFICATION_RELEASE = "3.1.0";
+export const MINIMUM_PRODUCT_RELEASE = "4.1.5";
 
 const PACKAGE_NAMES = ["@takosjp/yurucommu-core", "@takosjp/yurucommu-api"];
 const REQUIRED_API_EXPORTS = [
@@ -14,6 +14,32 @@ const REQUIRED_API_EXPORTS = [
   "fetchNotificationPusherPublicConfig",
   "getBrowserNotificationPushState",
   "refreshBrowserNotificationPush",
+];
+// The Worker entry composes through the runtime-lane selector, so a core that
+// predates it cannot run this product's bundle at all: it would hand the
+// portable edge.sql facade to drizzle-orm/d1 and fail at the first prepare().
+//
+// The public-origin exports are listed for the same reason even though the
+// entry imports only `withRequiredBackgroundPublicOrigin` of them. This product
+// deleted its own copy of the rule and now depends on the core owning it end to
+// end: the request path is established by the middleware
+// `createYurucommuBackendApp` registers, which is not something an import list
+// can name. A core that carries the version but not these symbols would leave
+// the portable lane with no origin at all and mint `undefined/ap/users/...`.
+const REQUIRED_CORE_EXPORTS = [
+  "CANONICAL_ORIGIN_KV_KEY",
+  "PublicOriginError",
+  "createManagedRuntimeKeyValueStore",
+  "createManagedRuntimeObjectStorage",
+  "createManagedRuntimeQueueProducer",
+  "createManagedRelationalDatabase",
+  "establishRequestPublicOrigin",
+  "resolveRuntimeLane",
+  "runYurucommuRetention",
+  "withRequiredBackgroundPublicOrigin",
+  "wrapPortableBindings",
+  "wrapRuntimeBindings",
+  "wrapRuntimeMessageBatch",
 ];
 
 function parseSemver(value) {
@@ -56,9 +82,7 @@ export function lockedPackageVersion(lockText, packageName) {
 }
 
 export function evaluateCoreRelease(input) {
-  const minimum = parseSemver(
-    input.minimumVersion ?? MINIMUM_NOTIFICATION_RELEASE,
-  );
+  const minimum = parseSemver(input.minimumVersion ?? MINIMUM_PRODUCT_RELEASE);
   if (!minimum) throw new Error("minimumVersion must be SemVer");
   const blockers = [];
 
@@ -104,6 +128,12 @@ export function evaluateCoreRelease(input) {
       blockers.push(`api_export.${exportName}_missing`);
     }
   }
+  const availableCoreExports = new Set(input.coreExports ?? []);
+  for (const exportName of REQUIRED_CORE_EXPORTS) {
+    if (!availableCoreExports.has(exportName)) {
+      blockers.push(`core_export.${exportName}_missing`);
+    }
+  }
 
   return { ok: blockers.length === 0, blockers };
 }
@@ -138,8 +168,14 @@ export async function inspectCurrentRepo(
     "0019_notification_push_delivery.sql",
   );
   let apiExports = [];
+  let coreExports = [];
   try {
     apiExports = Object.keys(await import("@takosjp/yurucommu-api"));
+  } catch {
+    // Missing or incompatible registry packages are reported as export blockers.
+  }
+  try {
+    coreExports = Object.keys(await import("@takosjp/yurucommu-core/server"));
   } catch {
     // Missing or incompatible registry packages are reported as export blockers.
   }
@@ -149,6 +185,7 @@ export async function inspectCurrentRepo(
     installedVersions,
     hasNotificationMigration: existsSync(migrationPath),
     apiExports,
+    coreExports,
   });
 }
 
@@ -156,7 +193,7 @@ if (import.meta.main) {
   const result = await inspectCurrentRepo();
   if (!result.ok) {
     console.error(
-      `Yurumeet notification release is blocked until registry core/API ${MINIMUM_NOTIFICATION_RELEASE} is published and this repo's package.json + bun.lock are updated from npm.`,
+      `Yurumeet release is blocked until registry core/API ${MINIMUM_PRODUCT_RELEASE} is published and this repo's package.json + bun.lock are updated from npm.`,
     );
     console.error(result.blockers.map((blocker) => `- ${blocker}`).join("\n"));
     console.error(
@@ -165,7 +202,7 @@ if (import.meta.main) {
     process.exitCode = 1;
   } else {
     console.log(
-      `Registry core/API ${MINIMUM_NOTIFICATION_RELEASE}+ and migration 0019 are ready for this product release.`,
+      `Registry core/API ${MINIMUM_PRODUCT_RELEASE}+ and the required runtime exports are ready for this product release.`,
     );
   }
 }
