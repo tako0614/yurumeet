@@ -108,15 +108,25 @@ bun run deploy
 `prepare` は read-only です。adapter が未登録なら fail closed のままにし、
 raw Worker deploy や migration へ fallback しません。
 
-Worker compatibility date / flags の正本も `wrangler.jsonc` です。root module と
-`deploy/takoform/` はこのファイルを `jsondecode` するため、JSONC 拡張のコメントや trailing comma
-は追加せず、strict JSON として維持します。D1 migration ledger は core と同じ
-`yurucommu_migrations`、retention schedule は毎時です。
+Worker compatibility date / flags の正本も `wrangler.jsonc` です。root module が
+このファイルを `jsondecode` するため、JSONC 拡張のコメントや trailing comma は追加せず、
+strict JSON として維持します。D1 migration ledger は core と同じ `yurucommu_migrations`、
+retention schedule は毎時です。`deploy/takoform/` は compatibility を宣言しません。
+どの runtime で動かすかは host の決定であり、portable module が宣言するのは
+Worker が export する handler だけです。
 
 ### Takosumi 管理付き導入（公開検証前）
 
 管理付き導入の正本は `deploy/takoform/` の portable resource graph です。公開リンクはまだ提供せず、
 この module を含む固定リリースと host conformance の証跡がそろってから有効化します。
+
+`.well-known/takosumi.json` は `takosumi.com/v2.4` で、この repository が持つ 2 つの module —
+root の direct Cloudflare module と `deploy/takoform/` — を両方 declare します。宣言することと
+提供することは別の行為です。宣言があっても、証跡がそろうまで公開 CTA は閉じたままにします。
+
+`deploy/takoform` の install は installer に何も secret を尋ねません。host が
+`ENCRYPTION_KEY` を生成し、Accounts OIDC の issuer / client / owner subject / redirect URI を
+runtime binding として渡します。manifest が持つのは slot の名前だけで、値は持ちません。
 
 ```json
 {
@@ -138,11 +148,6 @@ root `main.tf` は direct Cloudflare module であり、管理付き導入の CT
 service-side InstallConfigが `launch_url` を明示mappingし、D1 migrationも同じInstallConfigのlifecycle actionが
 実行します。`takosumi_release` / `app_deployment` / `service_exports` / `service_bindings` のような
 予約Outputをmoduleのruntime宣言やlifecycle authorityとして使いません。
-
-[`install-options.json`](install-options.json) は、現在実行可能な Cloudflare OpenTofu module を選ぶための任意の
-`CapsuleSourceOptions` 表示ドキュメントです。Takosumi 専用 manifest ではなく、通常の Git URL + module path での
-直接インストールには不要です。この文書は、それを含む次の通常の安定版タグから利用できます。別クラウドの選択肢は、
-対応する実在 module を出荷したときだけ追加します。
 
 Yurumeet は中央でホストされるアプリではなく、自分で動かすソフトウェアです。
 `https://yurumeet.com` は `site` にある製品紹介・ランディングサイトにすぎず、

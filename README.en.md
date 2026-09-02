@@ -115,10 +115,12 @@ release remains fail-closed and does not fall back to a raw Worker deployment
 or migration.
 
 `wrangler.jsonc` is also the single source for the Worker compatibility date
-and flags. The root module and `deploy/takoform/` decode that file, so keep it
-as strict JSON without JSONC comments or trailing commas. The D1 migration
-ledger remains `yurucommu_migrations`, shared with the core runners, and the
-retention schedule runs hourly.
+and flags. The root module decodes that file, so keep it as strict JSON without
+JSONC comments or trailing commas. The D1 migration ledger remains
+`yurucommu_migrations`, shared with the core runners, and the retention schedule
+runs hourly. `deploy/takoform/` declares no compatibility at all: which runtime
+serves the Worker is the host's decision, and the portable module states only
+which handlers the Worker exports.
 
 ### Managed install through Takosumi (not yet public)
 
@@ -137,6 +139,16 @@ are available:
 Takosumi owns Plan, Apply, StateVersion, Output, and Audit on this path. The
 root `main.tf` is the direct Cloudflare module and is not the module selected by
 the managed-install CTA.
+
+`.well-known/takosumi.json` is `takosumi.com/v2.4` and declares both of this
+repository's modules: the root direct-Cloudflare one and `deploy/takoform/`.
+Declaring a module and offering it are different acts — the public CTA stays
+closed until the conformance evidence exists.
+
+The `deploy/takoform` install asks the installer for no secret at all. The host
+generates `ENCRYPTION_KEY` and delivers the Accounts OIDC issuer, client, owner
+subject, and redirect URI as runtime bindings. The manifest carries slot names,
+never values.
 
 Both modules expose `launch_url` and `api_url` as ordinary OpenTofu runtime URL
 outputs. Neither uses reserved `takosumi_release`, `app_deployment`,
