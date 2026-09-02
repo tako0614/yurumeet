@@ -3,8 +3,8 @@ terraform {
 
   required_providers {
     takoform = {
-      source  = "registry.opentofu.org/tako0614/takoform"
-      version = "= 0.2.0"
+      source  = "registry.terraform.io/tako0614/takoform"
+      version = "= 4.0.0"
     }
   }
 }
@@ -20,163 +20,248 @@ variable "project_name" {
   }
 }
 
-variable "worker_release_tag" {
-  description = "Yurumeet GitHub release containing takosumi-artifact.json."
+# Which binding shape the Host will hand this Worker. The lane names the
+# BINDING SHAPE, not the tool that published the Worker, so it cannot be
+# inferred from the fact that this is a Takoform module: the same configuration
+# lands on either kind of Host.
+#
+#   cloudflare (default)  the Host projects raw Cloudflare bindings — a
+#                         D1Database, a KV namespace, an R2 bucket, Queues.
+#                         The production Takoserver backend is ordinary
+#                         Workers and is therefore this lane, as is a plain
+#                         `wrangler deploy`.
+#   portable              a wrapper host — a self-hosted or managed Takoserver
+#                         — replaces env before the module sees it and each
+#                         binding arrives as the facade its Interface names:
+#                         edge.sql, edge.kv, edge.objects, edge.queue.
+#
+# The Worker refuses to start when this disagrees with the bindings that
+# actually arrive, rather than handing a facade to a D1 client.
+variable "runtime_lane" {
+  description = "Binding shape this deployment's Host projects: cloudflare (raw Cloudflare bindings, the default) or portable (edge.* facades)."
   type        = string
-  default     = "v0.1.2"
+  default     = "cloudflare"
 
   validation {
-    condition     = trimspace(var.worker_release_tag) == "" || can(regex("^v[0-9]+\\.[0-9]+\\.[0-9]+([-+][0-9A-Za-z.-]+)?$", trimspace(var.worker_release_tag)))
-    error_message = "worker_release_tag must be empty or a SemVer-like Git tag beginning with v."
-  }
-}
-
-variable "worker_bundle_url" {
-  description = "Immutable HTTPS Worker artifact URL pinned by this Yurumeet release."
-  type        = string
-  default     = "https://github.com/tako0614/yurumeet/releases/download/v0.1.2/worker.js"
-
-  validation {
-    condition     = can(regex("^https://[^[:space:]]+$", trimspace(var.worker_bundle_url)))
-    error_message = "worker_bundle_url must be an https URL."
-  }
-}
-
-variable "worker_bundle_sha256" {
-  description = "Expected SHA-256 for the pinned Worker artifact."
-  type        = string
-  default     = "sha256:12dbf659613caa79c7e1696cb44a6078216bba92e61e812d3e84cd8d23370472"
-
-  validation {
-    condition     = can(regex("^(sha256:)?[a-f0-9]{64}$", trimspace(var.worker_bundle_sha256)))
-    error_message = "worker_bundle_sha256 must be lowercase SHA-256 hex or sha256:<hex>."
+    condition     = contains(["cloudflare", "portable"], var.runtime_lane)
+    error_message = "runtime_lane must be either \"cloudflare\" or \"portable\"."
   }
 }
 
 locals {
-  release_tag             = trimspace(var.worker_release_tag)
-  artifact_url            = trimspace(var.worker_bundle_url)
-  artifact_sha256         = trimspace(var.worker_bundle_sha256)
-  artifact_sha256_checked = startswith(local.artifact_sha256, "sha256:") ? local.artifact_sha256 : "sha256:${local.artifact_sha256}"
-  prefix                  = var.project_name
+  prefix              = var.project_name
+  worker_bundle_path  = "${path.module}/.generated/yurumeet-worker.js"
+  migration_root      = "${path.module}/migrations/sql"
+  migration_files     = fileset(local.migration_root, "*.sql")
+  delivery_queue_name = "${local.prefix}-delivery"
+  delivery_dlq_name   = "${local.prefix}-delivery-dlq"
+
+  # DELIVERY_QUEUE_NAME / DELIVERY_DLQ_NAME are not decoration: the engine's
+  # queue handler routes a batch by comparing `batch.queue` against these two
+  # values, and falls through to "unknown queue" when neither matches. Its
+  # built-in defaults are the *Yurucommu* queue names, so a Yurumeet install
+  # that left them unset would accept every delivery message and drain none of
+  # them. They are derived from the same locals the queues are named from, so
+  # renaming the Capsule cannot separate the two.
+  worker_plain_values = {
+    YURUCOMMU_RUNTIME_LANE = var.runtime_lane
+    DELIVERY_QUEUE_NAME    = local.delivery_queue_name
+    DELIVERY_DLQ_NAME      = local.delivery_dlq_name
+  }
 }
 
-resource "takoform_relational_database" "database" {
-  name   = "${local.prefix}-db"
-  engine = "sqlite"
+resource "takoform_module_worker" "worker" {
+  name = local.prefix
+
+  depends_on = [
+    takoform_sqlite_database.database,
+    takoform_edge_kv_namespace.kv,
+    takoform_edge_object_bucket.media,
+    takoform_at_least_once_queue.delivery,
+    takoform_at_least_once_queue.delivery_dlq,
+  ]
 }
 
-resource "takoform_object_bucket" "media" {
-  name          = "${local.prefix}-media"
-  storage_class = "standard"
+resource "takoform_sqlite_database" "database" {
+  name = "${local.prefix}-db"
 }
 
-resource "takoform_key_value_store" "kv" {
-  name        = "${local.prefix}-kv"
-  consistency = "eventual"
+resource "takoform_sqlite_migration_set" "schema" {
+  revision_owner = local.prefix
+
+  files = [
+    for relative_path in sort(local.migration_files) : {
+      path         = relative_path
+      media_type   = "application/sql"
+      content_file = "${local.migration_root}/${relative_path}"
+    }
+  ]
+
+  lifecycle {
+    create_before_destroy = true
+  }
 }
 
-resource "takoform_queue" "delivery" {
-  name           = "${local.prefix}-delivery"
-  max_retries    = 3
-  max_batch_size = 10
+resource "takoform_sqlite_migration_application" "schema" {
+  name          = "${local.prefix}-schema"
+  database      = takoform_sqlite_database.database.name
+  migration_set = takoform_sqlite_migration_set.schema.name
 }
 
-resource "takoform_queue" "delivery_dlq" {
-  name           = "${local.prefix}-delivery-dlq"
-  max_retries    = 1
-  max_batch_size = 10
+resource "takoform_edge_kv_namespace" "kv" {
+  name = "${local.prefix}-kv"
 }
 
-resource "takoform_http_service" "worker" {
-  name            = local.prefix
-  artifact_url    = local.artifact_url
-  artifact_sha256 = local.artifact_sha256_checked
-  runtime         = "javascript"
+# The worker consumes MEDIA through the edge.objects API (an R2-style bucket
+# binding), so the bucket is a portable ObjectBucket Form rather than an
+# external S3 service the host would have to supply out of band.
+resource "takoform_edge_object_bucket" "media" {
+  name = "${local.prefix}-media"
+}
 
-  connections = [
+resource "takoform_at_least_once_queue" "delivery" {
+  name                      = local.delivery_queue_name
+  message_retention_seconds = 345600
+  delivery_delay_seconds    = 0
+}
+
+resource "takoform_at_least_once_queue" "delivery_dlq" {
+  name                      = local.delivery_dlq_name
+  message_retention_seconds = 1209600
+  delivery_delay_seconds    = 0
+}
+
+resource "takoform_worker_bundle" "worker" {
+  revision_owner = takoform_module_worker.worker.name
+  main_module    = "yurumeet-worker.js"
+
+  modules = [
     {
-      name        = "DB"
-      resource    = takoform_relational_database.database.id
-      permissions = ["connect", "read", "write"]
-      projection  = "sql.binding.v1"
-    },
-    {
-      name        = "MEDIA"
-      resource    = takoform_object_bucket.media.id
-      permissions = ["read", "write"]
-      projection  = "object.binding.v1"
-    },
-    {
-      name        = "KV"
-      resource    = takoform_key_value_store.kv.id
-      permissions = ["read", "write"]
-      projection  = "keyvalue.binding.v1"
-    },
-    {
-      name        = "DELIVERY_QUEUE"
-      resource    = takoform_queue.delivery.id
-      permissions = ["consume", "publish"]
-      projection  = "queue.binding.v1"
-    },
-    {
-      name        = "DELIVERY_DLQ"
-      resource    = takoform_queue.delivery_dlq.id
-      permissions = ["consume", "publish"]
-      projection  = "queue.binding.v1"
+      name         = "yurumeet-worker.js"
+      content_type = "application/javascript+module"
+      content_file = local.worker_bundle_path
     },
   ]
 
   lifecycle {
-    precondition {
-      condition     = strcontains(local.artifact_url, "/releases/download/${local.release_tag}/")
-      error_message = "worker_bundle_url must select the exact worker_release_tag."
-    }
-
-    precondition {
-      condition     = can(regex("^https://[^[:space:]]+$", local.artifact_url)) && can(regex("^sha256:[a-f0-9]{64}$", local.artifact_sha256_checked))
-      error_message = "The selected Yurumeet Worker artifact must have an immutable HTTPS URL and SHA-256."
-    }
+    create_before_destroy = true
   }
 }
 
-resource "takoform_schedule" "retention" {
-  name     = "${local.prefix}-retention"
-  cron     = "0 * * * *"
-  timezone = "UTC"
+resource "takoform_worker_version" "worker" {
+  revision_owner = takoform_module_worker.worker.name
+  worker         = takoform_module_worker.worker.name
+  bundle         = takoform_worker_bundle.worker.name
+  handlers       = ["fetch", "queue", "scheduled"]
+  vars_json      = jsonencode(local.worker_plain_values)
 
-  connections = [
+  # The Host must have all five before the first request: the engine refuses to
+  # be config-complete without ENCRYPTION_KEY, and Accounts OIDC is the only
+  # authentication method this module offers — a Takoform install has no
+  # password-hash variable to fall back on.
+  required_sensitive_vars = [
+    "ENCRYPTION_KEY",
+    "TAKOSUMI_ACCOUNTS_ISSUER_URL",
+    "TAKOSUMI_ACCOUNTS_CLIENT_ID",
+    "TAKOSUMI_ACCOUNTS_OWNER_SUB",
+    "TAKOSUMI_ACCOUNTS_REDIRECT_URI",
+  ]
+
+  kv_bindings = [
     {
-      name        = "WORKER"
-      resource    = takoform_http_service.worker.id
-      permissions = ["invoke"]
-      projection  = "schedule.trigger.v1"
+      name        = "KV"
+      target_name = takoform_edge_kv_namespace.kv.name
+    },
+  ]
+
+  sqlite_bindings = [
+    {
+      name        = "DB"
+      target_name = takoform_sqlite_database.database.name
+    },
+  ]
+
+  queue_producer_bindings = [
+    {
+      name        = "DELIVERY_QUEUE"
+      target_name = takoform_at_least_once_queue.delivery.name
+    },
+    {
+      name        = "DELIVERY_DLQ"
+      target_name = takoform_at_least_once_queue.delivery_dlq.name
+    },
+  ]
+
+  bucket_bindings = [
+    {
+      name        = "MEDIA"
+      target_name = takoform_edge_object_bucket.media.name
+    },
+  ]
+
+  depends_on = [takoform_sqlite_migration_application.schema]
+
+  lifecycle {
+    create_before_destroy = true
+  }
+}
+
+resource "takoform_worker_deployment" "worker" {
+  name   = "${local.prefix}-deployment"
+  worker = takoform_module_worker.worker.name
+
+  versions = [
+    {
+      worker_version = takoform_worker_version.worker.name
+      weight         = 10000
     },
   ]
 }
 
-resource "takoform_interface" "launcher" {
-  name          = "yurumeet.launcher"
-  version       = "1"
-  resource_kind = "HttpService"
-  resource_name = takoform_http_service.worker.name
+resource "takoform_worker_endpoint" "worker" {
+  name   = "${local.prefix}-endpoint"
+  worker = takoform_module_worker.worker.name
 
-  document_json = jsonencode({
-    launcher = true
-    display = {
-      title = "Yurumeet"
-      icon  = "/yurumeet-logo.png"
-    }
-    endpoint = {
-      originInput = "origin"
-      path        = "/"
-    }
-  })
-  inputs_json = jsonencode([
-    {
-      name    = "origin"
-      source  = "output"
-      pointer = "/url"
-    }
-  ])
+  depends_on = [takoform_worker_deployment.worker]
+}
+
+resource "takoform_queue_consumer" "delivery" {
+  name                      = "${local.prefix}-delivery-consumer"
+  queue                     = takoform_at_least_once_queue.delivery.name
+  worker                    = takoform_module_worker.worker.name
+  max_batch_size            = 10
+  max_batch_timeout_seconds = 1
+  max_retries               = 3
+  retry_delay_seconds       = 60
+  dead_letter_queue         = takoform_at_least_once_queue.delivery_dlq.name
+  max_concurrency           = 4
+
+  depends_on = [takoform_worker_deployment.worker]
+}
+
+# The dead-letter queue needs a consumer of its own. The Worker's queue handler
+# treats a DLQ batch as repair work — it recovers messages the main queue
+# dead-lettered after exhausting their retries, so an unconsumed DLQ is not an
+# idle backlog but silently dropped federation deliveries and stranded push
+# outbox rows. Concurrency is 1: repairs touch the same durable rows the main
+# lane failed on, and there is no throughput to win here.
+resource "takoform_queue_consumer" "delivery_dlq" {
+  name                      = "${local.prefix}-delivery-dlq-consumer"
+  queue                     = takoform_at_least_once_queue.delivery_dlq.name
+  worker                    = takoform_module_worker.worker.name
+  max_batch_size            = 10
+  max_batch_timeout_seconds = 60
+  max_retries               = 1
+  retry_delay_seconds       = 300
+  max_concurrency           = 1
+
+  depends_on = [takoform_worker_deployment.worker]
+}
+
+resource "takoform_worker_cron_trigger" "retention" {
+  name   = "${local.prefix}-retention"
+  worker = takoform_module_worker.worker.name
+  cron   = "0 * * * *"
+
+  depends_on = [takoform_worker_deployment.worker]
 }

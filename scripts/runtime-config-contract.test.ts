@@ -27,6 +27,12 @@ describe("Worker runtime configuration", () => {
     expect(takoformModule).not.toContain("compatibility_date");
     expect(takoformModule).not.toContain("compatibility_flags");
     expect(takoformModule).not.toContain("wrangler.jsonc");
-    expect(takoformModule).toContain('runtime         = "javascript"');
+    // The portable graph names the handlers the Worker exports, not the
+    // runtime that serves them. A Host picks the runtime; a module that
+    // declared one would be describing its own installation.
+    expect(takoformModule).toContain(
+      'handlers       = ["fetch", "queue", "scheduled"]',
+    );
+    expect(takoformModule).not.toContain("runtime         =");
   });
 });

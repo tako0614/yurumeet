@@ -12,17 +12,74 @@ authorities:
 - `deploy/takoform/` declares the portable resource graph consumed by a
   Takoform host.
 - Takosumi owns install lifecycle, target selection, credentials, secrets,
-  migrations, public URLs, and rollback.
+  public URLs, and rollback.
 
-The Capsule intentionally asks for queue `consume` and `publish` permissions
-and a `Schedule -> EdgeWorker` trigger. A host must reject the installation
-until it can materialize those requirements. It must not silently downgrade
-them.
+## The graph
 
-The graph also owns its opaque `yurumeet.launcher@1` Interface document. The
-provider has no UI-specific resource: it stores app-authored JSON and asks the
-host to resolve the public `HttpService` origin. Runtime discovery and access
-remain host-governed.
+One `ModuleWorker` with its own bytes, schema, storage, and triggers:
+
+| Resource                                         | Why the module owns it                                  |
+| ------------------------------------------------ | ------------------------------------------------------- |
+| `takoform_module_worker`                         | The Worker identity every other resource attaches to.   |
+| `takoform_worker_bundle` / `_version`            | The exact bytes and the bindings they run with.         |
+| `takoform_worker_deployment` / `_endpoint`       | Serves that version and allocates the public URL.       |
+| `takoform_sqlite_database`                       | `DB`.                                                   |
+| `takoform_sqlite_migration_set` / `_application` | The schema, applied before any version serves.          |
+| `takoform_edge_kv_namespace`                     | `KV`.                                                   |
+| `takoform_edge_object_bucket`                    | `MEDIA`, owned rather than requested as an external S3. |
+| `takoform_at_least_once_queue` ×2                | `DELIVERY_QUEUE` and its dead-letter queue.             |
+| `takoform_queue_consumer` ×2                     | Drains both — see below.                                |
+| `takoform_worker_cron_trigger`                   | The hourly retention sweep.                             |
+
+The `WorkerVersion` depends on the migration application, so a Host cannot
+serve a version against a database whose schema has not been applied, and the
+`ModuleWorker` depends on every backing Form, so none of them can be destroyed
+while the Worker still exists.
+
+Both queues get a consumer. The dead-letter queue is not an archive: its
+batches are the recovery path for deliveries the main queue gave up on, so a
+graph that registered only the main consumer would drop exactly the messages
+that had already failed once.
+
+The launcher lives in `.well-known/takosumi.json`, not in the graph. The
+withdrawn `takoform_interface` resource used to carry it; a Host now reads the
+repository's own install manifest for the launcher and resolves `launch_url`
+from this module's ordinary Output.
+
+## Runtime configuration
+
+The module declares what it cannot run without and lets the Host supply it.
+`required_sensitive_vars` names `ENCRYPTION_KEY` and the four Takosumi Accounts
+OIDC values: the engine refuses to be config-complete without the first, and
+Accounts OIDC is the only authentication method on this lane — there is no
+password-hash variable to fall back on. No secret value appears in this
+directory.
+
+`vars_json` carries the three plain values the Worker reads:
+
+- `YURUCOMMU_RUNTIME_LANE` — the binding shape the Host projects (see below).
+- `DELIVERY_QUEUE_NAME` / `DELIVERY_DLQ_NAME` — the engine routes a queue batch
+  by comparing `batch.queue` against these, and its built-in fallbacks are the
+  _Yurucommu_ queue names. A Yurumeet install that left them unset would accept
+  every delivery message and drain none of them.
+
+`APP_URL` is deliberately absent. The endpoint URL is not fed back into the
+`WorkerVersion`; the engine establishes the public origin from the first
+request and pins it in KV.
+
+### The runtime lane
+
+`runtime_lane` names the binding shape the destination Host projects, not the
+tool that published the Worker — the same configuration lands on either kind of
+Host, so it cannot be inferred from this being a Takoform module. It defaults to
+`cloudflare` (raw `D1Database`, KV namespace, R2 bucket, Queues), which is what
+both a plain `wrangler deploy` and the production Takoserver backend project.
+A wrapper host sets `portable` and the Worker sees `edge.sql`, `edge.kv`,
+`edge.objects`, `edge.queue` instead. The Worker refuses to start when the
+declaration disagrees with the bindings that actually arrive.
+
+It is a module variable and deliberately not an install input: the installer
+cannot be asked which binding shape their Host projects.
 
 ## Schema authority
 
@@ -79,6 +136,12 @@ before a single line of the Worker runs. The core reaches its DNS builtin
 through `await import("node:dns/promises")` on the path that needs it, which
 stays allowed.
 
+Those bytes are what the module deploys: `takoform_worker_bundle` reads
+`.generated/yurumeet-worker.js` as module content. Provider 4.0.0 has no
+fetch-the-artifact bundle shape, and the module no longer pins a GitHub release
+URL — the identity of an install is the repository revision, not a published
+asset.
+
 The SQL files are tracked module inputs, so OpenTofu never depends on a host
 copying build output before it can construct the migration set.
 `.generated/yurumeet-worker.js` is intentionally untracked source-build output.
@@ -113,29 +176,27 @@ bun scripts/validate-takoform-v1.ts
 Both values are required together: a half-configured environment fails rather
 than quietly falling back to the registry.
 
+`tofu validate` proves the configuration against the Provider's schema. It does
+not prove a Host implements these Forms — there is no fake Host to plan
+against, so nothing short of a real install exercises create, rollback, and
+destroy.
+
 ## What this module still owes
 
-The graph itself has not been rewritten yet. `main.tf` pins
-`registry.opentofu.org/tako0614/takoform = 0.2.0`, whose entire resource
-vocabulary was **withdrawn** by Takoform spec decision 0042 — the provider is
-still downloadable, so `tofu validate` passes, but no current host implements
-those resources. Until that rewrite lands:
-
-- the module still fetches the Worker from a pinned release URL, so the
-  prepared `.generated/yurumeet-worker.js` is not yet the bytes it deploys;
-- nothing in the module reads `migrations/sql/`, so an install still comes up
-  against an empty database;
-- `bun run check:opentofu` is defined but not chained into `bun run check`,
-  because gating on a dead vocabulary only locks it in place.
-
-Do not make this module selectable in the public Store until that rewrite
-lands and the selected host proves:
+The graph is current and validates against the pinned Provider, but it has
+never been applied against a live Host. Do not make it selectable in the public
+Store until a selected host proves:
 
 1. Worker runtime config and secret injection.
 2. Queue producer and consumer registration, including the DLQ consumer.
 3. Hourly scheduled invocation of the Worker.
 4. Migrations, a stable public URL, accounts OIDC, push configuration,
    destroy, and rollback.
+
+`bun run check:opentofu` is still not chained into `bun run check`. The reason
+it was held back — that gating on a withdrawn vocabulary would only lock it in
+place — is gone; chaining it, and adding the matching CI step, is the remaining
+gate work.
 
 ## Focused checks
 

@@ -1,27 +1,35 @@
 output "worker_name" {
-  description = "Portable EdgeWorker resource name."
-  value       = var.project_name
+  description = "Portable ModuleWorker name."
+  value       = takoform_module_worker.worker.name
 }
 
 output "launch_url" {
-  description = "Canonical public URL allocated by the selected Takoform host."
-  value       = try(takoform_http_service.worker.outputs["url"], null)
+  description = "Ordinary public URL allocated by WorkerEndpoint."
+  value       = takoform_worker_endpoint.worker.url
 }
 
 output "api_url" {
   description = "Primary Yurumeet social API endpoint."
-  value       = try("${trimsuffix(takoform_http_service.worker.outputs["url"], "/")}/api", null)
+  value       = "${trimsuffix(takoform_worker_endpoint.worker.url, "/")}/api"
 }
 
 output "takoform_resource_ids" {
-  description = "Canonical portable Resource identities created for this Yurumeet instance."
+  description = "Portable Resource identities created for this Yurumeet instance."
   value = {
-    worker       = takoform_http_service.worker.id
-    database     = takoform_relational_database.database.id
-    media        = takoform_object_bucket.media.id
-    kv           = takoform_key_value_store.kv.id
-    delivery     = takoform_queue.delivery.id
-    delivery_dlq = takoform_queue.delivery_dlq.id
-    retention    = takoform_schedule.retention.id
+    worker                = takoform_module_worker.worker.uid
+    worker_bundle         = takoform_worker_bundle.worker.uid
+    worker_version        = takoform_worker_version.worker.uid
+    worker_deployment     = takoform_worker_deployment.worker.uid
+    worker_endpoint       = takoform_worker_endpoint.worker.uid
+    database              = takoform_sqlite_database.database.uid
+    migration_set         = takoform_sqlite_migration_set.schema.uid
+    migration_application = takoform_sqlite_migration_application.schema.uid
+    kv                    = takoform_edge_kv_namespace.kv.uid
+    media                 = takoform_edge_object_bucket.media.uid
+    delivery              = takoform_at_least_once_queue.delivery.uid
+    delivery_dlq          = takoform_at_least_once_queue.delivery_dlq.uid
+    delivery_consumer     = takoform_queue_consumer.delivery.uid
+    delivery_dlq_consumer = takoform_queue_consumer.delivery_dlq.uid
+    retention             = takoform_worker_cron_trigger.retention.uid
   }
 }
