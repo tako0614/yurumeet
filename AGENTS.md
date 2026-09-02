@@ -14,7 +14,7 @@
 
 - Owns: Talk-first Yurumeet UI and yurume client identity / yurumeet.com site and full-stack Worker artifact / Direct Cloudflare module and portable Takoform Capsule
 - Does not own: Shared yurucommu ActivityPub, API, and database engine / Yurucommu feed-first UI or site / Takosumi install lifecycle, targets, credentials, or rollback
-- Hazards: wrangler.jsonc is parsed as strict JSON. / Managed install requires create, rollback, and destroy conformance evidence. / A published release tag is never replaced; repair by publishing a higher version.
+- Hazards: wrangler.jsonc is parsed as strict JSON. / Managed install requires create, rollback, and destroy conformance evidence. / A published release tag is never replaced; repair by publishing a higher version. / The live D1 _cf_migrations ledger is stale; never run wrangler d1 migrations apply against it.
 
 ## Required workflow
 
