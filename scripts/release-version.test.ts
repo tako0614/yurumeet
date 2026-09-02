@@ -16,23 +16,17 @@ const releaseLock = JSON.parse(releaseLockSource) as ReleaseLock;
 const currentRelease = releaseLock.releases[expectedReleaseTag];
 
 describe("release version", () => {
-  test("keeps the OpenTofu artifact default aligned", () => {
-    for (const source of [moduleSource, takoformModuleSource]) {
-      const releaseVariable = source.match(
-        /variable\s+"worker_release_tag"\s*\{([\s\S]*?)\n\}/,
-      )?.[1];
+  test("keeps the direct Cloudflare module's release default aligned", () => {
+    const releaseVariable = moduleSource.match(
+      /variable\s+"worker_release_tag"\s*\{([\s\S]*?)\n\}/,
+    )?.[1];
 
-      expect(releaseVariable).toBeDefined();
-      expect(releaseVariable).toContain(
-        `default     = "${expectedReleaseTag}"`,
-      );
-      if (source === takoformModuleSource) {
-        expect(source).toContain(
-          `/releases/download/${expectedReleaseTag}/worker.js`,
-        );
-        expect(source).toMatch(/default\s+=\s+"sha256:[a-f0-9]{64}"/);
-      }
-    }
+    expect(releaseVariable).toBeDefined();
+    expect(releaseVariable).toContain(`default     = "${expectedReleaseTag}"`);
+    // The digest is not repeated in HCL: the root module reads the lock.
+    expect(moduleSource).toContain(
+      'release_lock                   = jsondecode(file("${path.module}/release.lock.json"))',
+    );
   });
 
   test("covers the current deploy defaults with an append-only release pin", () => {
@@ -51,9 +45,25 @@ describe("release version", () => {
       `https://github.com/tako0614/yurumeet/releases/download/${expectedReleaseTag}/takosumi-artifact.json`,
     );
     expect(currentRelease.manifest.sha256).toMatch(/^sha256:[a-f0-9]{64}$/);
-    expect(takoformModuleSource).toContain(currentRelease.artifact.url);
+  });
+
+  // The portable module used to pin the same GitHub asset by URL and digest,
+  // which made a Takoform install's identity depend on a published release
+  // rather than on the revision being installed. Provider 4.0.0 has no
+  // fetch-the-artifact bundle shape, so the bytes are module content prepared
+  // from this worktree — and no release pin may creep back in.
+  test("keeps the portable module's bytes out of the release lock entirely", () => {
+    for (const variable of [
+      "worker_release_tag",
+      "worker_bundle_url",
+      "worker_bundle_sha256",
+    ]) {
+      expect(takoformModuleSource).not.toContain(`variable "${variable}"`);
+    }
+    expect(takoformModuleSource).not.toContain("releases/download");
+    expect(takoformModuleSource).not.toContain("release.lock.json");
     expect(takoformModuleSource).toContain(
-      `default     = "${currentRelease.artifact.sha256}"`,
+      'worker_bundle_path  = "${path.module}/.generated/yurumeet-worker.js"',
     );
   });
 
