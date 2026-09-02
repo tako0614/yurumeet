@@ -70,7 +70,7 @@ CSRF_ALLOWED_ORIGINS=https://talk.your-yurucommu.example
 - `src/assets/takosui/` — Yurumeet アプリ用
 - `site/assets/takosui/` — product website の mock 用
 
-Yurumeet のブランドロゴは `public/yurumeet-logo.png` を配信用の正本とし、
+Yurumeet のブランドロゴは `public/yurumeet-logo.png` を配信用の正本 (正とする情報) とし、
 アプリbundle用の `src/assets/yurumeet-logo.png` と product website用の
 `site/assets/yurumeet-logo.png` を同一内容に保ちます。`bun run check` は3つの
 PNGが一致することも検証します。
@@ -97,23 +97,38 @@ self-host は現在利用でき、Takosumi 管理付き導入は実環境の作�
 direct Cloudflare path を定義しますが、credential、承認、migration、rollback は
 利用者側の runbook と authority で管理してください。
 
-distribution artifact を公開するときは、この repository の entrypoint を使います
-(まだ存在しないので、作るのが次の作業です)。共通 rule は sibling `takos-control` の
-`engineering.policy.json` → `deploy` が正本です。
+Worker compatibility date / flags の正本も `wrangler.jsonc` です。root の
+`main.tf` がこのファイルを `jsondecode` するため、JSONC 拡張のコメントや trailing
+comma は追加せず、strict JSON として維持します。D1 の migration 記録は core と同じ
+`yurucommu_migrations` を共有し、retention は毎時走ります。`deploy/takoform/` は
+compatibility を宣言しません。どの runtime で動かすかは host の決定であり、portable
+module が宣言するのは Worker が export する handler だけです。
+
+### 公式に publish する 3 つの surface
+
+この repository が公式に publish するものは 3 つで、入口は deploy entrypoint 1 つ
+です。共通 rule は sibling `takos-control` の `engineering.policy.json` → `deploy`
+が正本です。
 
 ```sh
-bun run deploy
+bun run deploy -- yurumeet-worker
+bun run deploy -- yurumeet-worker-release [--dry-run|--execute]
+bun run deploy -- yurumeet-site --environment=integration|production
 ```
 
-`prepare` は read-only です。adapter が未登録なら fail closed のままにし、
-raw Worker deploy や migration へ fallback しません。
+`bun run deploy -- --contract` は副作用なしで、各 surface が何を publish し、
+どの義務をどう果たすかを JSON で答えます。
 
-Worker compatibility date / flags の正本も `wrangler.jsonc` です。root module が
-このファイルを `jsondecode` するため、JSONC 拡張のコメントや trailing comma は追加せず、
-strict JSON として維持します。D1 migration ledger は core と同じ `yurucommu_migrations`、
-retention schedule は毎時です。`deploy/takoform/` は compatibility を宣言しません。
-どの runtime で動かすかは host の決定であり、portable module が宣言するのは
-Worker が export する handler だけです。
+`yurumeet-worker-release` だけが、利用者が pin する identity を作ります。tag は
+`package.json` の version から 1 つだけ導き、既存の tag や Release があれば作成前に
+安全側に停止します。`package.json`・root module の tag 既定値・追記のみの
+`release.lock.json`・`.well-known/takosumi.json`・`deploy/takoform/` の source build
+が同じ release を指していないときも、publish を始める前に止めます。この整合は
+`bun run check` でも毎回検査します。
+
+どの surface も、raw な Worker deploy や migration へ fallback しません。永続 store
+(D1 DB / KV / R2 MEDIA) にも触れません。site の公開手順は
+[`site/DEPLOY.md`](site/DEPLOY.md) にあります。
 
 ### Takosumi 管理付き導入（公開検証前）
 
@@ -139,21 +154,17 @@ runtime binding として渡します。manifest が持つのは slot の名前�
 この経路では Takosumi が Plan・Apply・StateVersion・Output・Audit を管理します。
 root `main.tf` は direct Cloudflare module であり、管理付き導入の CTA から選びません。
 
-両 module が公開する runtime URL は、通常の OpenTofu Output である `launch_url` と `api_url`
-です。`takosumi_release` / `app_deployment` / `service_exports` / `service_bindings`
-のような予約 Output を runtime 宣言や lifecycle authority として使いません。
-
-`outputs.tf` が公開するruntime URLは、通常のOpenTofu Outputである `launch_url` と `api_url` です。
-そのほかのOutputはCloudflare providerが作成したresourceの運用値です。Takosumi上のlauncher Interfaceは
-service-side InstallConfigが `launch_url` を明示mappingし、D1 migrationも同じInstallConfigのlifecycle actionが
-実行します。`takosumi_release` / `app_deployment` / `service_exports` / `service_bindings` のような
-予約Outputをmoduleのruntime宣言やlifecycle authorityとして使いません。
+両 module が公開する runtime URL は、通常の OpenTofu Output である `launch_url` と
+`api_url` です。root module の残りの Output は、Cloudflare provider が作成した
+resource の運用値です。Takosumi 側では service-side InstallConfig が `launch_url` を
+launcher Interface へ明示的に mapping し、D1 migration も同じ InstallConfig の
+lifecycle action が実行します。`takosumi_release` / `app_deployment` /
+`service_exports` / `service_bindings` のような予約 Output を、runtime 宣言や
+lifecycle authority として使いません。
 
 Yurumeet は中央でホストされるアプリではなく、自分で動かすソフトウェアです。
 `https://yurumeet.com` は `site` にある製品紹介・ランディングサイトにすぎず、
 インストールされた実行環境ではありません。
-
-ランディングサイトの deploy 手順は [`site/DEPLOY.md`](site/DEPLOY.md) にあります。
 
 ## ブラウザ通知
 
@@ -162,7 +173,7 @@ Yurumeet は中央でホストされるアプリではなく、自分で動か�
 
 OpenTofu で Worker を作る場合は、次の 3 変数を設定します。
 
-- `notification_push_gateway_url` — stateless push gateway の公開 HTTPS notify endpoint
+- `notification_push_gateway_url` — 状態を持たない push gateway の公開 HTTPS notify endpoint
 - `notification_push_gateway_token` — Worker だけが gateway 呼び出しに使う secret bearer
 - `notification_push_web_push_public_key` — gateway の公開 VAPID key（秘密値ではありません）
 

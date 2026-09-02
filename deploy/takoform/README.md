@@ -193,10 +193,11 @@ Store until a selected host proves:
 4. Migrations, a stable public URL, accounts OIDC, push configuration,
    destroy, and rollback.
 
-`bun run check:opentofu` is still not chained into `bun run check`. The reason
-it was held back — that gating on a withdrawn vocabulary would only lock it in
-place — is gone; chaining it, and adding the matching CI step, is the remaining
-gate work.
+`bun run check` now runs `bun run check:opentofu`, and CI installs OpenTofu to
+run it, so the module is formatted, initialized, validated, rebuilt, prepared,
+and validated against the pinned Provider on every commit. That closes the gap
+that let a module pinning a withdrawn vocabulary stay green — but it proves the
+configuration, not a Host.
 
 ## Focused checks
 

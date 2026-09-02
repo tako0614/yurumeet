@@ -101,26 +101,39 @@ official production target operated by us. `wrangler.jsonc` and the root
 OpenTofu module define the direct Cloudflare path, while credentials, approval,
 migrations, and recovery remain under that operator's runbook and authority.
 
-Distribution publication uses this repository's own entrypoint, which does not
-exist yet; the shared rules live in the sibling `takos-control` repository
-(`engineering.policy.json` → `deploy`):
+`wrangler.jsonc` is also the single source for the Worker compatibility date
+and flags. The root `main.tf` decodes that file, so keep it as strict JSON
+without JSONC comments or trailing commas. The D1 migration record remains
+`yurucommu_migrations`, shared with the core runners, and retention runs hourly.
+`deploy/takoform/` declares no compatibility at all: which runtime serves the
+Worker is the host's decision, and the portable module states only which
+handlers the Worker exports.
+
+### The three surfaces this repository publishes
+
+Three things are published officially, through one deploy entrypoint. The shared
+rules live in the sibling `takos-control` repository (`engineering.policy.json` →
+`deploy`):
 
 ```sh
-bun run deploy
+bun run deploy -- yurumeet-worker
+bun run deploy -- yurumeet-worker-release [--dry-run|--execute]
+bun run deploy -- yurumeet-site --environment=integration|production
 ```
 
-These commands publish the official distribution; they do not deploy into an
-end user's environment. `prepare` is read-only. If the adapter is unavailable,
-release remains fail-closed and does not fall back to a raw Worker deployment
-or migration.
+`bun run deploy -- --contract` answers, without side effects, what each surface
+publishes and how it discharges every obligation it owes.
 
-`wrangler.jsonc` is also the single source for the Worker compatibility date
-and flags. The root module decodes that file, so keep it as strict JSON without
-JSONC comments or trailing commas. The D1 migration ledger remains
-`yurucommu_migrations`, shared with the core runners, and the retention schedule
-runs hourly. `deploy/takoform/` declares no compatibility at all: which runtime
-serves the Worker is the host's decision, and the portable module states only
-which handlers the Worker exports.
+Only `yurumeet-worker-release` mints an identity consumers pin. It derives one
+tag from `package.json`, and refuses to start when that tag or its Release
+already exists, or when `package.json`, the root module's tag default, the
+append-only `release.lock.json`, `.well-known/takosumi.json`, and
+`deploy/takoform/`'s source build do not name the same release. `bun run check`
+asks that same question of every commit.
+
+None of the three falls back to a raw Worker deployment or a migration, and none
+touches a durable store (D1 DB / KV / R2 MEDIA). Publishing the site is
+documented in [`site/DEPLOY.md`](site/DEPLOY.md).
 
 ### Managed install through Takosumi (not yet public)
 
@@ -151,22 +164,15 @@ subject, and redirect URI as runtime bindings. The manifest carries slot names,
 never values.
 
 Both modules expose `launch_url` and `api_url` as ordinary OpenTofu runtime URL
-outputs. Neither uses reserved `takosumi_release`, `app_deployment`,
-`service_exports`, or `service_bindings` outputs as runtime declarations or
-lifecycle authority.
-
-`outputs.tf` exposes `launch_url` and `api_url` as ordinary OpenTofu runtime URL
-outputs. Its remaining outputs are provider-native operational values for the
-Cloudflare resources it creates. Takosumi's service-side InstallConfig maps
-`launch_url` into the launcher Interface and owns the D1 migration lifecycle
-action. The module does not use reserved `takosumi_release`, `app_deployment`,
-`service_exports`, or `service_bindings` outputs as runtime declarations or
-lifecycle authority.
+outputs. The root module's remaining outputs are provider-native operational
+values for the Cloudflare resources it creates. Takosumi's service-side
+InstallConfig maps `launch_url` into the launcher Interface and owns the D1
+migration lifecycle action. Neither module uses reserved `takosumi_release`,
+`app_deployment`, `service_exports`, or `service_bindings` outputs as runtime
+declarations or lifecycle authority.
 
 Yurumeet is software, not a centrally hosted app. `https://yurumeet.com` is only
 the product/landing site in `site`; it is not the installed runtime.
-
-The landing site has its own deploy notes in `site/DEPLOY.md`.
 
 ## Browser notifications
 
