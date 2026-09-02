@@ -1,38 +1,56 @@
-# Publishing the Yurumeet website
+# Yurumeet の website を公開する
 
-`site/` is the static landing site for Yurumeet. The runtime UI source lives in
-`src/` and is bundled with the Yurumeet app build.
+`site/` は Yurumeet の紹介ページです。アプリ本体の UI source は `src/` にあり、
+Yurumeet の Worker build に同梱されます。site には build 手順がありません。
 
-There is no site build step. The official ecosystem target currently has no
-runnable `yurumeet-site` adapter, so official publication remains fail-closed
-until a fixed adapter with authoritative readback is registered.
+公開は、この repository の deploy entrypoint が持つ `yurumeet-site` surface から
+行います。
 
 ```sh
-# from the sibling takos-control repository, once the adapter exists
-bun run deploy
+bun run deploy -- yurumeet-site --environment=integration
+bun run deploy -- yurumeet-site --environment=production
 ```
 
-`prepare` is read-only. Do not substitute a raw Pages upload when the adapter is
-missing. A self-hoster may publish a copy to infrastructure they own, under
-their own credentials, approval, and recovery policy; that action is not an
-official ecosystem release.
+`integration` は今の作業ツリーをそのまま受け取ります (main 以外でも、未コミットでも
+かまいません)。`production` は clean な main が、fetch し直した `origin/main` と
+同じ commit であることを求めます。どちらの環境でも `bun run check:site` を 1 回だけ
+実行し、`site/index.html` の SHA-256 を記録します。
 
-The official Pages target uses the custom domains `yurumeet.com` and
-`www.yurumeet.com`:
+upload のあとに、公開されたバイト列を読み直します。deployment ごとの immutable な
+URL は常に、`production` ではさらに `https://yurumeet.com` も GET して、upload した
+home page と同じバイト列が返ることを求めます。失敗したときは Wrangler に到達する
+前 (`PRE_UPLOAD_FAILURE`) か、upload が始まったあと (`POST_UPLOAD_INDETERMINATE`)
+かを必ず表示します。自動で retry も rollback もしません。
+
+生の `wrangler pages deploy` に置き換えないでください。どのバイト列が出たのかを
+記録せず、upload の失敗と readback の失敗を区別できないため、deploy が負う義務を
+何も果たせません。共通の義務は sibling の `takos-control` にある
+`engineering.policy.json` → `deploy` が正本 (正とする情報) です。
+
+利用者が自分の infrastructure に複製を置くことはできます。ただしそれは利用者自身の
+credential・承認・復旧方針のもとで行う deployment であり、公式の release では
+ありません。
+
+## 公開先
+
+Pages project は `yurumeet-website`、custom domain は `yurumeet.com` と
+`www.yurumeet.com` です。
 
 ```text
 CNAME  yurumeet.com (@) -> yurumeet-website.pages.dev
 CNAME  www.yurumeet.com -> yurumeet-website.pages.dev
 ```
 
-Domain and DNS changes are operator-owned provisioning actions, not release
-steps.
+domain と DNS の変更は operator が所有する作成作業であり、release 手順では
+ありません。
 
-Keep this site product-facing only. The app UI source is under `src/`, and
-runtime API wiring belongs to same-origin Worker packaging, discovery metadata,
-and OpenTofu outputs.
+## この site に置かないもの
 
-Do not publish a central app subdomain runtime from this site. Yurumeet is
-software that runs from a user's Takosumi install, Cloudflare deployment, or
-self-host runtime. A self-hoster builds the Yurumeet Worker with `bun run
-build:takos-worker` and serves the UI/API set from their chosen origin.
+この site は製品紹介だけを扱います。アプリの UI source は `src/`、runtime API の
+配線は同一 origin の Worker packaging・discovery metadata・OpenTofu Output が
+持ちます。
+
+中央でホストするアプリの subdomain runtime をここから配信しません。Yurumeet は
+利用者の Takosumi install・Cloudflare deployment・self-host runtime で動く
+ソフトウェアです。self-host する場合は `bun run build:takos-worker` で Worker を
+build し、選んだ origin から UI と API を配信します。

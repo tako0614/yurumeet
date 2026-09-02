@@ -1,6 +1,7 @@
 {
   "kind": "takos.release-artifact-lock@v1",
   "app": "yurumeet",
+  "//identity": "A release is identified by its tag, never by its artifact digest. v0.1.1 and v0.1.2 share one worker.js digest because the commits between them changed only documentation and module metadata, so the Worker built byte for byte the same; the entries are both correct. What separates two releases that ship identical bytes is the manifest, which carries the source commit and the tag. scripts/release-identity.test.ts requires every entry to have its own commit and its own manifest digest, so a genuine copy-paste — the same commit pinned under two tags — fails the gate.",
   "releases": {
     "v0.1.1": {
       "artifact": {
