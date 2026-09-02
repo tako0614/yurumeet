@@ -6,8 +6,8 @@
       "name": "@takosjp/yurumeet",
       "dependencies": {
         "@solidjs/router": "^0.15.0",
-        "@takosjp/yurucommu-api": "^3.1.0",
-        "@takosjp/yurucommu-core": "^3.1.0",
+        "@takosjp/yurucommu-api": "^4.1.5",
+        "@takosjp/yurucommu-core": "^4.1.5",
         "html5-qrcode": "^2.3.8",
         "qrcode-generator": "^2.0.4",
         "solid-js": "^1.9.0",
@@ -331,9 +331,11 @@
 
     "@speed-highlight/core": ["@speed-highlight/core@1.2.17", "", {}, "sha512-Z92FwKpCtfaW1V0jTU/fh3QzYEZN8wDwrzRIBoADCJfn4mJCNcJN/XegifX7BDrQ8/h9Xh/JnbyMchL0FqXrkg=="],
 
-    "@takosjp/yurucommu-api": ["@takosjp/yurucommu-api@3.2.0", "", {}, "sha512-NN9ghO4M6M/X970yqNNtz6jzEvpteizqoQWpN1ysMRS/dyY+zOh4i5gNmSljHPooSAxXmplHlCdu3iop7fuosw=="],
+    "@takosjp/takosumi-contract": ["@takosjp/takosumi-contract@1.0.0", "", {}, "sha512-WfXEi14+mKSoZJxYYcb9CcYQ9A0MyQquG2nFRyT8nO3v+nxHtkA3LfXdTRcgBd2+T0lVsG2TM1o3V9XcbRYZOg=="],
 
-    "@takosjp/yurucommu-core": ["@takosjp/yurucommu-core@3.2.0", "", { "dependencies": { "@aws-sdk/client-s3": "^3.971.0", "@libsql/client": "^0.17.0", "better-sqlite3": "^12.4.1", "drizzle-orm": "^0.45.1", "fdir": "^6.5.0", "hono": "^4.12.9", "picomatch": "^4.0.4", "tinyglobby": "^0.2.16" } }, "sha512-Rzv31Tt+ZJG+jy31Sx7iGIo+GH778XfFXP4akt/c8U4Lo5zA+nr6iPNJ+dACjoX61ZxV7GWDot7rzrenWVJ3+w=="],
+    "@takosjp/yurucommu-api": ["@takosjp/yurucommu-api@4.1.5", "", {}, "sha512-qRgmbqxSyWbehjSXQnClwxkezNVLT1aJfFQj+KoS/Fiu/r7o261cYPw027PBaIKqps/QQOwx3C6cTqObFEtLyw=="],
+
+    "@takosjp/yurucommu-core": ["@takosjp/yurucommu-core@4.1.5", "", { "dependencies": { "@aws-sdk/client-s3": "^3.971.0", "@libsql/client": "^0.17.0", "@takosjp/takosumi-contract": "^1.0.0", "better-sqlite3": "^12.4.1", "drizzle-orm": "^0.45.1", "fdir": "^6.5.0", "hono": "^4.12.9", "picomatch": "^4.0.4", "tinyglobby": "^0.2.16" } }, "sha512-7pt8Y3aigVAVrb68ThH/pKcc1hyp6GqDyKTHyPPYFjGPpCHK0uRUChmAfuugH5AZBzSmChsLAyf3yiB7j6kxpg=="],
 
     "@types/babel__core": ["@types/babel__core@7.20.5", "", { "dependencies": { "@babel/parser": "^7.20.7", "@babel/types": "^7.20.7", "@types/babel__generator": "*", "@types/babel__template": "*", "@types/babel__traverse": "*" } }, "sha512-qoQprZvz5wQFJwMDqeseRXWv3rqMvhgpbXFfVyWhbx9X47POIA6i/+dXefEmZKoAgOaTdaIgNSMqMIU61yRyzA=="],
 
