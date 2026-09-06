@@ -4,7 +4,9 @@ import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-export const MINIMUM_PRODUCT_RELEASE = "4.1.6";
+// Earlier releases can throw while accessing caches.default before the
+// unavailable-cache fallback, making public actor retrieval fail on that runtime.
+export const MINIMUM_PRODUCT_RELEASE = "4.1.7";
 
 const PACKAGE_NAMES = ["@takosjp/yurucommu-core", "@takosjp/yurucommu-api"];
 const REQUIRED_API_EXPORTS = [
