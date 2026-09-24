@@ -7,7 +7,7 @@
  * an option either: the generated Worker entry embeds dist/** inline and a
  * Japanese subset would dominate the script size budget. Fall back to the
  * platform's own Japanese face instead (same shape as the ecosystem type
- * stack in docs/reference/design-language.md).
+ * stack in takos-control/docs/reference/design-language.md).
  */
 * {
   box-sizing: border-box;
