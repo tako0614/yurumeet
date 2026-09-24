@@ -228,16 +228,6 @@
         box-shadow: 0 12px 26px -12px rgba(255, 59, 59, 0.7);
       }
 
-      .btn.disabled,
-      .btn.disabled:hover {
-        border-color: var(--line-2);
-        background: #ececf2;
-        color: var(--dim);
-        box-shadow: none;
-        cursor: not-allowed;
-        transform: none;
-      }
-
       .btn.sm {
         min-height: 38px;
         padding: 0 16px;
@@ -292,7 +282,7 @@
         font-size: 0.85rem;
       }
 
-      /* ---------- browser mock ---------- */
+      /* ---------- product screenshot ---------- */
       .stage {
         position: relative;
         margin: clamp(3rem, 7vw, 5rem) auto 0;
@@ -314,55 +304,13 @@
         z-index: -1;
       }
 
-      .browser {
-        overflow: hidden;
-        border: 1px solid var(--line-2);
-        border-radius: var(--r);
-        background: var(--surface);
-        box-shadow: var(--shadow);
-      }
-
-      .bar {
-        display: flex;
-        align-items: center;
-        gap: 7px;
-        height: 40px;
-        padding: 0 14px;
-        border-bottom: 1px solid var(--line);
-        background: #f2f2f7;
-      }
-
-      .bar i {
-        width: 11px;
-        height: 11px;
-        border-radius: 50%;
-        background: #d4d4de;
-      }
-
-      .bar i:nth-child(1) {
-        background: #ff6159;
-      }
-      .bar i:nth-child(2) {
-        background: #ffbd2e;
-      }
-      .bar i:nth-child(3) {
-        background: #29c740;
-      }
-
-      .bar .url {
-        margin: 0 auto;
-        padding: 4px 16px;
-        border-radius: 999px;
-        background: #e7e7ef;
-        color: #8a8a96;
-        font-family: var(--mono);
-        font-size: 0.72rem;
-      }
-
       .shot {
         display: block;
         width: 100%;
         height: auto;
+        border: 1px solid var(--line-2);
+        border-radius: var(--r);
+        box-shadow: var(--shadow);
       }
 
       /* ---------- sections ---------- */
@@ -495,21 +443,14 @@
       .mobile-copy {
         max-width: 40ch;
       }
-      .phone {
+      .mobile-shot {
+        display: block;
         width: 278px;
         max-width: 100%;
         margin: 0 auto;
-        padding: 10px;
-        border-radius: 44px;
-        background: var(--sidebar);
-        border: 1px solid var(--line-2);
-        box-shadow: var(--shadow);
-      }
-      .phone img {
-        display: block;
-        width: 100%;
         height: auto;
-        border-radius: 34px;
+        border-radius: var(--r);
+        box-shadow: var(--shadow);
       }
 
       /* install */
@@ -745,11 +686,10 @@
             まで、ぜんぶひとつの画面にまとまっています。
           </p>
           <div class="cta">
-            <span
-              class="btn primary disabled"
-              aria-disabled="true"
-              title="固定リリースを使った実環境の導入・破棄証跡を確認後に有効化します"
-              >Takosumi 導入は検証中</span
+            <a
+              class="btn primary"
+              href="https://deploy.workers.cloudflare.com/?url=https://github.com/tako0614/yurumeet"
+              >Cloudflare に直接デプロイ</a
             >
             <a class="btn" href="#features">できることを見る</a>
           </div>
@@ -761,21 +701,15 @@
 
       <!-- product mock -->
       <div class="stage">
-        <div class="browser">
-          <div class="bar">
-            <i></i><i></i><i></i>
-            <span class="url">talk.your-server.example</span>
-          </div>
-          <img
-            class="shot"
-            src="./assets/shots/yurumeet-talk.webp"
-            width="2560"
-            height="1600"
-            alt="yurumeet のトーク画面。ダークなサイドバー、トークルーム一覧、Akari との DM に赤い送信メッセージが並ぶ。"
-            loading="lazy"
-            decoding="async"
-          />
-        </div>
+        <img
+          class="shot"
+          src="./assets/shots/yurumeet-talk.webp"
+          width="2560"
+          height="1600"
+          alt="yurumeet のトーク画面。ダークなサイドバー、トークルーム一覧、Akari との DM に赤い送信メッセージが並ぶ。"
+          loading="lazy"
+          decoding="async"
+        />
       </div>
 
       <!-- features -->
@@ -785,8 +719,8 @@
             <span class="eyebrow">ひとつの画面に</span>
             <h2>トークも、タイムラインも、Story も。</h2>
             <p>
-              メッセンジャーに欲しいものは、ぜんぶそろっています。yurumeet
-              はそれを、トークを主役にした一枚の画面にまとめます。
+              DM、コミュニティチャット、タイムライン、Story、通知、検索、プロフィールを、
+              トークを主役にした一枚の画面にまとめます。
             </p>
           </div>
           <div class="features">
@@ -874,16 +808,15 @@
               もグループもタイムラインも Story も、片手で扱えます。
             </p>
           </div>
-          <div class="phone">
-            <img
-              src="./assets/shots/yurumeet-mobile.webp"
-              width="780"
-              height="1688"
-              alt="yurumeet のスマホ画面。トークルーム一覧と下部タブ（ホーム・トーク・タイムライン・通知）。"
-              loading="lazy"
-              decoding="async"
-            />
-          </div>
+          <img
+            class="mobile-shot"
+            src="./assets/shots/yurumeet-mobile.webp"
+            width="780"
+            height="1688"
+            alt="yurumeet のスマホ画面。トークルーム一覧と下部タブ（ホーム・トーク・タイムライン・通知）。"
+            loading="lazy"
+            decoding="async"
+          />
         </div>
       </section>
 
@@ -915,9 +848,8 @@
               <div class="fact">
                 <b>open source</b>
                 <span
-                  >AGPL-3.0 のオープンソースです。現在は Cloudflare
-                  へのセルフホストを利用でき、Takosumi
-                  の管理付き導入は公開前の検証中です。</span
+                  >AGPL-3.0
+                  のオープンソースです。コードを確認して、必要なら自分で変えられます。</span
                 >
               </div>
             </div>
@@ -932,28 +864,25 @@
             <span class="eyebrow">Self-host</span>
             <h2>好きな場所に、置いて動かす。</h2>
             <p>
-              yurumeet は中央でホストされるアプリではありません。現在利用できる
-              Cloudflare セルフホストと、公開前の検証を進めている Takosumi
-              管理付き導入があります。
+              yurumeet は中央でホストされるアプリではありません。Cloudflare
+              に自分でデプロイして、トークを始められます。
             </p>
           </div>
-          <!-- honesty note: keep it right next to the CTA target, before the
-               steps, so visitors see the current install status first -->
+          <!-- Keep the current install status next to the actionable path. -->
           <p class="note">
-            <strong
-              >Takosumi の公開導入リンクは、まだ有効化していません。</strong
-            >
+            <strong>現在は Cloudflare へのセルフホストを利用できます。</strong>
+            <strong>Takosumi 導入は検証中です。</strong>
             固定リリースからの作成、認証、キュー、定期実行、migration、公開
-            URL、rollback、destroy を実環境で確認してから有効化します。現在は
-            Cloudflare へのセルフホストを利用できます。<br />
+            URL、rollback、destroy を確認できるまで、Takosumi
+            の公開導線は有効化しません。<br />
             <strong>yurumeet.com はこの紹介サイトです。</strong>
             実際に動く yurumeet
             は、あなたが選んだ場所にデプロイした実行環境のほうです。このページ自体はアプリではありません。
           </p>
           <div class="install-grid">
             <div class="code">
-              <div class="code-bar">TAKOSUMI · PLANNED MANAGED SOURCE</div>
-              <pre><span class="c"># public verification pending</span>
+              <div class="code-bar">INSTALL PATHS</div>
+              <pre><span class="c"># managed source</span>
 ref=&lt;verified-release-tag&gt;
 path=deploy/takoform
 
@@ -966,21 +895,17 @@ bun run check
               <div class="step">
                 <span class="n">1</span>
                 <div>
-                  <h3>Takosumi の証跡を確認</h3>
-                  <p>
-                    <code>deploy/takoform</code> を含む固定リリースで、作成から
-                    destroy まで成功した証跡がそろうまで公開導線を閉じています。
-                  </p>
+                  <h3>Cloudflare へ直接デプロイ</h3>
+                  <p>下のリンクから、自分の環境へデプロイします。</p>
                 </div>
               </div>
               <div class="step">
                 <span class="n">2</span>
                 <div>
-                  <h3>Cloudflare へ直接</h3>
+                  <h3>自分の環境を管理</h3>
                   <p>
                     root OpenTofu module を使い、credential、承認、migration、
-                    recovery を自分の operator authority で管理します。公式
-                    distribution の公開とは別の経路です。
+                    recovery を自分の operator authority で管理します。
                   </p>
                 </div>
               </div>
@@ -1000,14 +925,8 @@ bun run check
             class="cta"
             style="justify-content: flex-start; margin-top: 30px"
           >
-            <span
-              class="btn primary disabled"
-              aria-disabled="true"
-              title="固定リリースを使った実環境の導入・破棄証跡を確認後に有効化します"
-              >Takosumi 導入は検証中</span
-            >
             <a
-              class="btn"
+              class="btn primary"
               href="https://deploy.workers.cloudflare.com/?url=https://github.com/tako0614/yurumeet"
               >Cloudflare に直接デプロイ</a
             >
