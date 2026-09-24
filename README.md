@@ -97,7 +97,7 @@ self-host は現在利用でき、Takosumi 管理付き導入は実環境の作�
 direct Cloudflare path を定義しますが、credential、承認、migration、rollback は
 利用者側の runbook と authority で管理してください。
 
-Worker compatibility date / flags の正本 (正とする情報) も `wrangler.jsonc` です。root の
+Worker compatibility date / flags の正本も `wrangler.jsonc` です。root の
 `main.tf` がこのファイルを `jsondecode` するため、JSONC 拡張のコメントや trailing
 comma は追加せず、strict JSON として維持します。D1 の migration 記録は core と同じ
 `yurucommu_migrations` を共有し、retention は毎時走ります。`deploy/takoform/` は
