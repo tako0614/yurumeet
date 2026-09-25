@@ -94,14 +94,19 @@ const CONTRACT = {
       covers: ["wrangler.jsonc"],
       requiresScripts: ["check", "build:takos-worker", "smoke:postdeploy"],
       requiresTools: ["git", "bun", "wrangler"],
-      requiresEnv: ["YURUMEET_WRANGLER_CONFIG"],
+      requiresEnv: [
+        "TAKOSUMI_CAPSULE_OUTPUTS_FILE",
+        "YURUMEET_E2E_PASSWORD",
+        "YURUMEET_E2E_SESSION_COOKIE",
+        "YURUMEET_WRANGLER_CONFIG",
+      ],
       // code だけを差し替えます。直前の version がそのまま戻し先として残るので
       // irreversible は立ちません。durable store の schema を変える作業は
       // この surface ではなく、別の deliberate な手順です。
       triggers: [],
       obligations: {
         provenance: `refuses a dirty worktree, runs \`${OWNER_GATE}\`, builds ${W.bundle} from that worktree with \`bun run build\`, and records the commit and the bundle sha256 It takes the operator's realized deploy config from YURUMEET_WRANGLER_CONFIG and refuses to publish a config that still holds a self-host template placeholder.`,
-        "post-conditions": `runs \`bun run smoke:postdeploy\`, which exercises real request paths against the deployed Worker rather than a health endpoint`,
+        "post-conditions": `runs \`bun run smoke:postdeploy\`, which exercises real request paths against the deployed Worker rather than a health endpoint; the smoke reads the public launch URL from the Capsule outputs file selected by TAKOSUMI_CAPSULE_OUTPUTS_FILE and authenticates with YURUMEET_E2E_SESSION_COOKIE for OIDC-only deployments or YURUMEET_E2E_PASSWORD where password auth is enabled`,
         reversal: `the current version id is read and printed before publishing; restore it with \`wrangler versions list --name ${W.worker}\` and \`wrangler versions deploy <previous-id>@100%\``,
         "failure-handling":
           "prints the provider's own stdout and stderr, names whether the failure was before or after publication, and on a failed post-condition exits non-zero naming the previous version instead of retrying",
