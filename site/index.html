@@ -341,53 +341,962 @@
         font-size: 1.05rem;
       }
 
-      /* features */
-      .features {
-        display: grid;
-        grid-template-columns: repeat(4, 1fr);
-        gap: 0;
-        margin-top: clamp(2.5rem, 6vw, 4rem);
+      /* ---------- tab sections (page skeleton = the app's NavRail) ---------- */
+      .tabsec {
         border-top: 1px solid var(--line);
+        padding: clamp(3.5rem, 8vw, 6rem) 0;
       }
 
-      .feature {
-        padding: 28px 26px 30px;
-        border-bottom: 1px solid var(--line);
+      .tabs > .tabsec:first-child {
+        border-top: none;
+      }
+
+      .tabsec-grid {
+        display: grid;
+        grid-template-columns: 0.82fr 1.18fr;
+        gap: clamp(2rem, 6vw, 4.5rem);
+        align-items: center;
+      }
+
+      .tabsec.flip .tabsec-copy {
+        order: 2;
+      }
+
+      .tabsec-ic {
+        display: grid;
+        place-items: center;
+        width: 44px;
+        height: 44px;
+        border-radius: 12px;
+        background: var(--sidebar);
+        color: #fff;
+      }
+
+      .tabsec-ic svg {
+        width: 21px;
+        height: 21px;
+        fill: currentColor;
+      }
+
+      .tabsec-copy h2 {
+        margin-top: 16px;
+      }
+
+      .tabsec-lede {
+        margin-top: 14px;
+        color: var(--ink-2);
+        font-size: 1.05rem;
+      }
+
+      .tabsec-points {
+        list-style: none;
+        display: grid;
+        gap: 12px;
+        margin-top: 22px;
+      }
+
+      .tabsec-points li {
+        position: relative;
+        padding-left: 22px;
+        color: var(--dim);
+        font-size: 0.94rem;
+        line-height: 1.7;
+      }
+
+      .tabsec-points li::before {
+        content: "";
+        position: absolute;
+        left: 0;
+        top: 0.6em;
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: var(--accent);
+        opacity: 0.85;
+      }
+
+      .tabsec-points b {
+        color: var(--ink-2);
+      }
+
+      /* ---------- faithful app renders ---------- */
+      .app {
+        display: flex;
+        overflow: hidden;
+        border: 1px solid var(--line-2);
+        border-radius: var(--r);
+        background: var(--surface);
+        box-shadow: var(--shadow);
+        font-size: 0.82rem;
+        line-height: 1.6;
+      }
+
+      .app-rail {
+        flex: 0 0 auto;
+        width: 46px;
+        padding: 12px 0;
+        background: var(--sidebar);
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 4px;
+      }
+
+      .app-rail .me {
+        display: grid;
+        place-items: center;
+        width: 26px;
+        height: 26px;
+        margin-bottom: 10px;
+        border-radius: 50%;
+        background: #f0912c;
+        color: #fff;
+        font-size: 0.66rem;
+        font-weight: 700;
+      }
+
+      .app-ric {
+        position: relative;
+        display: grid;
+        place-items: center;
+        width: 34px;
+        height: 34px;
+        border-radius: 10px;
+        color: #8a8a95;
+      }
+
+      .app-ric.is-active {
+        background: rgba(255, 255, 255, 0.14);
+        color: #fff;
+      }
+
+      .app-ric svg {
+        width: 18px;
+        height: 18px;
+        fill: currentColor;
+      }
+
+      .app-ric .rb {
+        position: absolute;
+        top: 0;
+        right: 0;
+        display: grid;
+        place-items: center;
+        min-width: 15px;
+        height: 15px;
+        padding: 0 4px;
+        border-radius: 8px;
+        background: var(--accent);
+        color: #fff;
+        font-size: 0.56rem;
+        font-weight: 700;
+      }
+
+      .app-main {
+        flex: 1;
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        padding: 16px 18px;
+      }
+
+      .app-main.flush {
+        flex-direction: row;
+        gap: 0;
+        padding: 0;
+      }
+
+      .av {
+        flex: 0 0 auto;
+        display: grid;
+        place-items: center;
+        border-radius: 50%;
+        color: #fff;
+        font-weight: 700;
+      }
+
+      .ui-search {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 12px;
+        border-radius: 10px;
+        background: #f0f0f6;
+        color: var(--faint);
+        font-size: 0.78rem;
+      }
+
+      .ui-search svg {
+        width: 14px;
+        height: 14px;
+        fill: none;
+        stroke: currentColor;
+        stroke-width: 2;
+      }
+
+      /* home: ひとこと note tiles */
+      .ui-notes {
+        display: flex;
+        gap: 20px;
+        padding: 2px 4px 0;
+      }
+
+      .ui-note {
+        display: grid;
+        justify-items: center;
+        gap: 4px;
+      }
+
+      .ui-note-bubble {
+        position: relative;
+        max-width: 108px;
+        padding: 6px 10px;
+        border: 1px solid var(--line-2);
+        border-radius: 12px;
+        background: #fff;
+        color: var(--ink-2);
+        font-size: 0.6rem;
+        line-height: 1.45;
+        text-align: center;
+      }
+
+      .ui-note-bubble::after {
+        content: "";
+        position: absolute;
+        bottom: -5px;
+        left: 50%;
+        width: 8px;
+        height: 8px;
+        border-right: 1px solid var(--line-2);
+        border-bottom: 1px solid var(--line-2);
+        background: #fff;
+        transform: translateX(-50%) rotate(45deg);
+      }
+
+      .ui-note-bubble.is-add {
+        border-style: dashed;
+        color: var(--faint);
+      }
+
+      .ui-note .who-av {
+        position: relative;
+      }
+
+      .ui-note .av {
+        width: 32px;
+        height: 32px;
+        font-size: 0.68rem;
+      }
+
+      .ui-note .add {
+        position: absolute;
+        right: -3px;
+        bottom: -3px;
+        display: grid;
+        place-items: center;
+        width: 14px;
+        height: 14px;
+        border: 2px solid #fff;
+        border-radius: 50%;
+        background: var(--accent);
+      }
+
+      .ui-note .add svg {
+        width: 8px;
+        height: 8px;
+        fill: none;
+        stroke: #fff;
+        stroke-width: 3;
+      }
+
+      .ui-note > small {
+        color: var(--dim);
+        font-size: 0.56rem;
+      }
+
+      .ui-stories {
+        display: flex;
+        gap: 14px;
+        padding: 2px 2px 4px;
+      }
+
+      .ui-story {
+        display: grid;
+        justify-items: center;
+        gap: 4px;
+        font-size: 0.6rem;
+        color: var(--dim);
+      }
+
+      .ui-story .ring {
+        position: relative;
+        display: grid;
+        place-items: center;
+        width: 42px;
+        height: 42px;
+        border: 2px solid var(--line-2);
+        border-radius: 50%;
+      }
+
+      .ui-story .ring.is-new {
+        border-color: var(--accent);
+      }
+
+      .ui-story .ring .av {
+        width: 34px;
+        height: 34px;
+        font-size: 0.72rem;
+      }
+
+      .ui-story .add {
+        position: absolute;
+        right: -2px;
+        bottom: -2px;
+        display: grid;
+        place-items: center;
+        width: 15px;
+        height: 15px;
+        border: 2px solid #fff;
+        border-radius: 50%;
+        background: var(--accent);
+      }
+
+      .ui-story .add svg {
+        width: 8px;
+        height: 8px;
+        fill: none;
+        stroke: #fff;
+        stroke-width: 3;
+      }
+
+      .ui-sec {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-top: 4px;
+        font-size: 0.82rem;
+      }
+
+      .ui-sec b {
+        font-weight: 800;
+      }
+
+      .ui-sec > span {
+        color: var(--faint);
+        font-size: 0.7rem;
+      }
+
+      .ui-sec .ic-btn {
+        display: grid;
+        place-items: center;
+        width: 24px;
+        height: 24px;
+        margin-left: auto;
+        border: 1px solid var(--line-2);
+        border-radius: 7px;
+        color: var(--dim);
+      }
+
+      .ui-sec .ic-btn svg {
+        width: 13px;
+        height: 13px;
+        fill: none;
+        stroke: currentColor;
+        stroke-width: 1.7;
+      }
+
+      .ui-rows {
+        list-style: none;
+        display: flex;
+        flex-direction: column;
+      }
+
+      .ui-row {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 6px 8px;
+        border-radius: 10px;
+      }
+
+      .ui-row.is-active {
+        background: #f2f2f8;
+      }
+
+      .ui-row .av {
+        width: 34px;
+        height: 34px;
+        font-size: 0.74rem;
+      }
+
+      .ui-row-main {
+        flex: 1;
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+      }
+
+      .ui-row-main b {
+        font-size: 0.8rem;
+        font-weight: 700;
+      }
+
+      .ui-row-main small {
+        overflow: hidden;
+        color: var(--dim);
+        font-size: 0.7rem;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .ui-row time {
+        align-self: flex-start;
+        margin-top: 3px;
+        color: var(--faint);
+        font-size: 0.6rem;
+      }
+
+      .ui-badge {
+        display: grid;
+        place-items: center;
+        min-width: 18px;
+        height: 18px;
+        padding: 0 5px;
+        border-radius: 9px;
+        background: var(--accent);
+        color: #fff;
+        font-size: 0.62rem;
+        font-style: normal;
+        font-weight: 700;
+      }
+
+      /* talk: room list + chat */
+      .ui-rooms {
+        flex: 0 0 42%;
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        padding: 14px 10px;
         border-right: 1px solid var(--line);
       }
 
-      .feature:nth-child(4n) {
-        border-right: none;
+      .ui-rooms-head {
+        display: flex;
+        align-items: center;
+        padding: 0 6px;
       }
 
-      .feature .fi {
-        display: grid;
-        place-items: center;
-        width: 40px;
-        height: 40px;
-        border-radius: 11px;
-        background: #fff;
-        border: 1px solid var(--line-2);
-        color: var(--accent);
-        margin-bottom: 16px;
-      }
-
-      .feature .fi svg {
-        width: 21px;
-        height: 21px;
-      }
-
-      .feature h3 {
-        font-size: 1.06rem;
-        font-weight: 800;
+      .ui-rooms-head b {
+        font-size: 1.02rem;
+        font-weight: 900;
         letter-spacing: -0.01em;
       }
 
-      .feature p {
-        margin-top: 7px;
+      .ui-rooms-head svg {
+        width: 15px;
+        height: 15px;
+        margin-left: auto;
+        fill: var(--dim);
+      }
+
+      .ui-chips {
+        display: flex;
+        gap: 6px;
+        padding: 0 6px;
+      }
+
+      .ui-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        padding: 3px 10px;
+        border: 1px solid var(--line-2);
+        border-radius: 999px;
+        background: #fff;
+        color: var(--ink-2);
+        font-size: 0.64rem;
+        font-weight: 500;
+      }
+
+      .ui-chip em {
+        display: grid;
+        place-items: center;
+        min-width: 14px;
+        height: 14px;
+        padding: 0 3px;
+        border-radius: 7px;
+        background: var(--accent);
+        color: #fff;
+        font-size: 0.56rem;
+        font-style: normal;
+        font-weight: 700;
+      }
+
+      .ui-chat {
+        flex: 1;
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+        background: #fbfbff;
+      }
+
+      .ui-chat-head {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 10px 14px;
+        border-bottom: 1px solid var(--line);
+        background: #fff;
+      }
+
+      .ui-chat-head .av {
+        width: 30px;
+        height: 30px;
+        font-size: 0.66rem;
+      }
+
+      .ui-chat-head b {
+        display: block;
+        font-size: 0.8rem;
+        line-height: 1.3;
+      }
+
+      .ui-chat-head small {
+        display: block;
         color: var(--dim);
-        font-size: 0.92rem;
-        line-height: 1.75;
+        font-size: 0.62rem;
+        line-height: 1.3;
+      }
+
+      .ui-chat-body {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        padding: 12px 14px;
+      }
+
+      .ui-day {
+        color: var(--faint);
+        font-size: 0.58rem;
+        text-align: center;
+      }
+
+      .ui-msg {
+        display: flex;
+        align-items: flex-end;
+        gap: 6px;
+      }
+
+      .ui-msg .av {
+        width: 26px;
+        height: 26px;
+        font-size: 0.58rem;
+      }
+
+      .ui-msg .who {
+        margin: 0 0 2px 2px;
+        color: var(--dim);
+        font-size: 0.58rem;
+      }
+
+      .ui-bubble {
+        max-width: 80%;
+        padding: 7px 11px;
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        background: #fff;
+        font-size: 0.74rem;
+        line-height: 1.55;
+      }
+
+      .ui-msg.in .ui-bubble {
+        border-bottom-left-radius: 4px;
+      }
+
+      .ui-msg.out {
+        justify-content: flex-end;
+      }
+
+      .ui-msg.out .ui-bubble {
+        border-color: var(--accent);
+        border-bottom-right-radius: 4px;
+        background: var(--accent);
+        color: #fff;
+      }
+
+      .ui-msg time {
+        color: var(--faint);
+        font-size: 0.54rem;
+      }
+
+      .ui-composer {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin: 0 12px 12px;
+        padding: 8px 12px;
+        border: 1px solid var(--line-2);
+        border-radius: 999px;
+        background: #fff;
+        color: var(--faint);
+        font-size: 0.7rem;
+      }
+
+      .ui-composer svg {
+        width: 14px;
+        height: 14px;
+        margin-left: auto;
+        fill: var(--faint);
+      }
+
+      /* timeline */
+      .ui-compose {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 9px 12px;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+      }
+
+      .ui-compose .av {
+        width: 30px;
+        height: 30px;
+        font-size: 0.66rem;
+      }
+
+      .ui-compose .ph {
+        flex: 1;
+        color: var(--faint);
+        font-size: 0.76rem;
+      }
+
+      .ui-post-btn {
+        padding: 4px 14px;
+        border-radius: 999px;
+        background: var(--accent);
+        color: #fff;
+        font-size: 0.68rem;
+        font-weight: 700;
+      }
+
+      .ui-post {
+        display: flex;
+        gap: 10px;
+        padding: 10px 4px 2px;
+        border-top: 1px solid var(--line);
+      }
+
+      .ui-post .av {
+        width: 32px;
+        height: 32px;
+        font-size: 0.7rem;
+      }
+
+      .ui-post-main {
+        flex: 1;
+        min-width: 0;
+      }
+
+      .ui-post-head {
+        display: flex;
+        align-items: baseline;
+        gap: 6px;
+      }
+
+      .ui-post-head b {
+        font-size: 0.78rem;
+      }
+
+      .ui-post-head small {
+        color: var(--faint);
+        font-size: 0.62rem;
+      }
+
+      .ui-post p {
+        margin-top: 2px;
+        font-size: 0.76rem;
+        line-height: 1.6;
+      }
+
+      .ui-actions {
+        display: flex;
+        gap: 18px;
+        margin-top: 6px;
+        color: var(--faint);
+      }
+
+      .ui-actions span {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        font-size: 0.6rem;
+      }
+
+      .ui-actions svg {
+        width: 13px;
+        height: 13px;
+        fill: none;
+        stroke: currentColor;
+        stroke-width: 1.7;
+      }
+
+      .ui-actions .on {
+        color: var(--accent);
+      }
+
+      .ui-actions .on svg {
+        fill: var(--accent);
+        stroke: var(--accent);
+      }
+
+      /* notifications */
+      .ui-notif-head {
+        display: flex;
+        align-items: baseline;
+      }
+
+      .ui-notif-head b {
+        font-size: 1.02rem;
+        font-weight: 900;
+        letter-spacing: -0.01em;
+      }
+
+      .ui-notif-head span {
+        margin-left: auto;
+        color: var(--dim);
+        font-size: 0.64rem;
+      }
+
+      .ui-filters {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+      }
+
+      .ui-filters span {
+        padding: 3px 10px;
+        border: 1px solid var(--line-2);
+        border-radius: 999px;
+        color: var(--dim);
+        font-size: 0.62rem;
+      }
+
+      .ui-filters .is-active {
+        border-color: var(--sidebar);
+        background: var(--sidebar);
+        color: #fff;
+      }
+
+      .ui-notif-row {
+        display: flex;
+        align-items: flex-start;
+        gap: 9px;
+        padding: 8px 4px;
+        border-top: 1px solid var(--line);
+      }
+
+      .ui-notif-row .who-av {
+        position: relative;
+        flex: 0 0 auto;
+      }
+
+      .ui-notif-row .who-av .av {
+        width: 30px;
+        height: 30px;
+        font-size: 0.66rem;
+      }
+
+      .ui-notif-row .nic {
+        position: absolute;
+        right: -4px;
+        bottom: -3px;
+        display: grid;
+        place-items: center;
+        width: 15px;
+        height: 15px;
+        border: 2px solid #fff;
+        border-radius: 50%;
+      }
+
+      .ui-notif-row .nic svg {
+        width: 8px;
+        height: 8px;
+        fill: none;
+        stroke: #fff;
+        stroke-width: 2.4;
+      }
+
+      .nic.like {
+        background: var(--accent);
+      }
+
+      .nic.follow {
+        background: #4a9e5c;
+      }
+
+      .nic.mention {
+        background: #5b8def;
+      }
+
+      .ui-notif-main {
+        flex: 1;
+        min-width: 0;
+        font-size: 0.72rem;
+        line-height: 1.55;
+      }
+
+      .ui-notif-main small {
+        display: block;
+        margin-top: 1px;
+        color: var(--faint);
+        font-size: 0.58rem;
+      }
+
+      .ui-req {
+        display: flex;
+        gap: 6px;
+        margin-top: 6px;
+      }
+
+      .ui-req b {
+        padding: 3px 12px;
+        border: 1px solid var(--line-2);
+        border-radius: 999px;
+        color: var(--ink-2);
+        font-size: 0.62rem;
+        font-weight: 700;
+      }
+
+      .ui-req .acc {
+        border-color: var(--accent);
+        background: var(--accent);
+        color: #fff;
+      }
+
+      .ui-dot {
+        flex: 0 0 auto;
+        width: 8px;
+        height: 8px;
+        margin-top: 8px;
+        border-radius: 50%;
+        background: var(--accent);
+      }
+
+      /* QR ritual */
+      .qr-grid {
+        display: grid;
+        grid-template-columns: 1fr 0.9fr;
+        gap: clamp(2rem, 6vw, 4.5rem);
+        align-items: center;
+      }
+
+      .qr-modal {
+        width: min(340px, 100%);
+        margin: 0 auto;
+        overflow: hidden;
+        border: 1px solid var(--line-2);
+        border-radius: 18px;
+        background: var(--surface);
+        box-shadow: var(--shadow);
+      }
+
+      .qr-head {
+        display: flex;
+        align-items: center;
+        padding: 14px 18px 0;
+      }
+
+      .qr-head b {
+        font-size: 0.95rem;
+        font-weight: 800;
+      }
+
+      .qr-head svg {
+        width: 15px;
+        height: 15px;
+        margin-left: auto;
+        fill: none;
+        stroke: var(--dim);
+        stroke-width: 2;
+      }
+
+      .qr-tabs {
+        display: flex;
+        margin: 12px 18px 0;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .qr-tabs span {
+        flex: 1;
+        padding: 8px 0;
+        border-bottom: 2px solid transparent;
+        color: var(--dim);
+        font-size: 0.76rem;
+        text-align: center;
+      }
+
+      .qr-tabs .is-active {
+        border-bottom-color: var(--accent);
+        color: var(--ink);
+        font-weight: 700;
+      }
+
+      .qr-body {
+        display: grid;
+        justify-items: center;
+        padding: 18px 18px 20px;
+      }
+
+      .qr-body .av {
+        width: 52px;
+        height: 52px;
+        font-size: 1.05rem;
+      }
+
+      .qr-body > b {
+        margin-top: 8px;
+        font-size: 0.9rem;
+      }
+
+      .qr-body > small {
+        color: var(--dim);
+        font-family: var(--mono);
+        font-size: 0.68rem;
+      }
+
+      .qr-code {
+        margin-top: 12px;
+        padding: 10px;
+        border: 1px solid var(--line-2);
+        border-radius: 12px;
+        background: #fff;
+      }
+
+      .qr-code svg {
+        display: block;
+        width: 132px;
+        height: 132px;
+      }
+
+      .qr-share {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        margin-top: 12px;
+        color: var(--dim);
+        font-size: 0.68rem;
+      }
+
+      .qr-share svg {
+        width: 12px;
+        height: 12px;
+        fill: none;
+        stroke: currentColor;
+        stroke-width: 1.8;
       }
 
       /* family band */
@@ -620,27 +1529,13 @@
         }
         .band-grid,
         .install-grid,
-        .mobile-grid {
+        .mobile-grid,
+        .tabsec-grid,
+        .qr-grid {
           grid-template-columns: 1fr;
         }
-        .features {
-          grid-template-columns: repeat(2, 1fr);
-        }
-        .feature:nth-child(4n) {
-          border-right: 1px solid var(--line);
-        }
-        .feature:nth-child(2n) {
-          border-right: none;
-        }
-      }
-
-      @media (max-width: 560px) {
-        .features {
-          grid-template-columns: 1fr;
-        }
-        .feature,
-        .feature:nth-child(4n) {
-          border-right: none;
+        .tabsec.flip .tabsec-copy {
+          order: 0;
         }
       }
 
@@ -712,87 +1607,763 @@
         />
       </div>
 
-      <!-- features -->
-      <section id="features">
-        <div class="wrap">
-          <div class="section-head">
-            <span class="eyebrow">ひとつの画面に</span>
-            <h2>トークも、タイムラインも、Story も。</h2>
-            <p>
-              DM、コミュニティチャット、タイムライン、Story、通知、検索、プロフィールを、
-              トークを主役にした一枚の画面にまとめます。
-            </p>
-          </div>
-          <div class="features">
-            <article class="feature">
-              <div class="fi">
-                <svg
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="1.7"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                >
-                  <path d="M3 10.5 12 3l9 7.5V21H3z" />
-                  <path d="M9 21v-6h6v6" />
-                </svg>
+      <!-- tabs: the page skeleton is the app's own NavRail -->
+      <div class="tabs" id="features">
+        <!-- home -->
+        <section class="tabsec">
+          <div class="wrap">
+            <div class="section-head">
+              <span class="eyebrow">ひとつの画面に</span>
+              <h2>タブは、4つだけ。</h2>
+              <p>
+                ホーム、トーク、タイムライン、通知。画面のはじに並ぶレールが、
+                そのままこのアプリの目次です。未読はタブのバッジで届きます。
+              </p>
+            </div>
+            <div
+              class="tabsec-grid"
+              style="margin-top: clamp(2.5rem, 6vw, 4rem)"
+            >
+              <div class="tabsec-copy">
+                <span class="tabsec-ic">
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M3 10.182V22h18V10.182L12 2z" />
+                    <rect width="6" height="8" x="9" y="14" />
+                  </svg>
+                </span>
+                <h2>ホーム</h2>
+                <p class="tabsec-lede">
+                  アプリを開いて、最初に戻る場所。友だちとグループの入口です。
+                </p>
+                <ul class="tabsec-points">
+                  <li>
+                    <b>友だちとグループ</b
+                    >がひとつのリストに並びます。新しいトークは、ここから始めます。
+                  </li>
+                  <li><b>ノート</b>に「いまの一言」を残せます。</li>
+                  <li><b>QRコード</b>で、その場で友だちを追加できます。</li>
+                </ul>
               </div>
-              <h3>ホーム</h3>
-              <p>友だち・グループ・Story を、ひとつの入口にまとめます。</p>
-            </article>
-            <article class="feature">
-              <div class="fi">
-                <svg
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="1.7"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                >
+              <div class="app" aria-hidden="true">
+                <div class="app-rail">
+                  <span class="me">ゆ</span>
+                  <span class="app-ric is-active">
+                    <svg viewBox="0 0 24 24">
+                      <path d="M3 10.182V22h18V10.182L12 2z" />
+                      <rect width="6" height="8" x="9" y="14" />
+                    </svg>
+                  </span>
+                  <span class="app-ric">
+                    <svg viewBox="0 0 24 24">
+                      <path
+                        d="M8.824 18.588 4 21l.653-4.573C3.006 15.001 2 13.095 2 11 2 6.582 6.477 3 12 3s10 3.582 10 8-4.477 8-10 8c-1.11 0-2.178-.145-3.176-.412Z"
+                      />
+                    </svg>
+                    <em class="rb">7</em>
+                  </span>
+                  <span class="app-ric">
+                    <svg viewBox="0 0 24 24">
+                      <circle cx="12" cy="12" r="9" />
+                      <circle cx="12" cy="12" r="3" />
+                    </svg>
+                  </span>
+                  <span class="app-ric">
+                    <svg viewBox="0 0 24 24">
+                      <path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" />
+                      <path d="M13.73 21a2 2 0 0 1-3.46 0" />
+                    </svg>
+                    <em class="rb">1</em>
+                  </span>
+                </div>
+                <div class="app-main">
+                  <div class="ui-search">
+                    <svg viewBox="0 0 24 24">
+                      <circle cx="11" cy="11" r="7" />
+                      <path d="m16 16 5 5" />
+                    </svg>
+                    友だち・グループを検索
+                  </div>
+                  <div class="ui-notes">
+                    <div class="ui-note">
+                      <span class="ui-note-bubble is-add">ノートを書く</span>
+                      <span class="who-av">
+                        <span class="av" style="background: #f0912c">ゆ</span>
+                        <span class="add">
+                          <svg viewBox="0 0 24 24">
+                            <path d="M12 5v14M5 12h14" />
+                          </svg>
+                        </span>
+                      </span>
+                      <small>あなた</small>
+                    </div>
+                    <div class="ui-note">
+                      <span class="ui-note-bubble">映画みた</span>
+                      <span class="who-av">
+                        <span class="av" style="background: #5b8def">あ</span>
+                      </span>
+                      <small>あかり</small>
+                    </div>
+                    <div class="ui-note">
+                      <span class="ui-note-bubble">カレーつくった</span>
+                      <span class="who-av">
+                        <span class="av" style="background: #b45bd4">け</span>
+                      </span>
+                      <small>けんと</small>
+                    </div>
+                  </div>
+                  <div class="ui-sec">
+                    <b>友だち</b>
+                    <span>3</span>
+                    <span class="ic-btn">
+                      <svg viewBox="0 0 24 24">
+                        <rect x="4" y="4" width="6" height="6" rx="1" />
+                        <rect x="14" y="4" width="6" height="6" rx="1" />
+                        <rect x="4" y="14" width="6" height="6" rx="1" />
+                        <path
+                          d="M14 14h3v3h-3zM20 14v2M14 20h2M18 18h2v2h-2z"
+                        />
+                      </svg>
+                    </span>
+                  </div>
+                  <ul class="ui-rows">
+                    <li class="ui-row">
+                      <span class="av" style="background: #5b8def">あ</span>
+                      <span class="ui-row-main">
+                        <b>あかり</b>
+                        <small>写真ありがとう!</small>
+                      </span>
+                      <time>12:03</time>
+                      <em class="ui-badge">2</em>
+                    </li>
+                    <li class="ui-row">
+                      <span class="av" style="background: #b45bd4">け</span>
+                      <span class="ui-row-main">
+                        <b>けんと</b>
+                        <small>@kento</small>
+                      </span>
+                      <time>昨日</time>
+                    </li>
+                    <li class="ui-row">
+                      <span class="av" style="background: #e05d7a">み</span>
+                      <span class="ui-row-main">
+                        <b>みお</b>
+                        <small>@mio@friends.example.com</small>
+                      </span>
+                    </li>
+                  </ul>
+                  <div class="ui-sec">
+                    <b>グループ</b>
+                    <span>2</span>
+                    <span class="ic-btn">
+                      <svg viewBox="0 0 24 24">
+                        <path d="M12 5v14M5 12h14" />
+                      </svg>
+                    </span>
+                  </div>
+                  <ul class="ui-rows">
+                    <li class="ui-row">
+                      <span class="av" style="background: #4a9e5c">雑</span>
+                      <span class="ui-row-main">
+                        <b>雑談ルーム</b>
+                        <small>8人のメンバー</small>
+                      </span>
+                      <time>11:20</time>
+                      <em class="ui-badge">5</em>
+                    </li>
+                    <li class="ui-row">
+                      <span class="av" style="background: #8a6de0">サ</span>
+                      <span class="ui-row-main">
+                        <b>週末サッカー部</b>
+                        <small>12人のメンバー</small>
+                      </span>
+                    </li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- talk -->
+        <section class="tabsec flip">
+          <div class="wrap tabsec-grid">
+            <div class="tabsec-copy">
+              <span class="tabsec-ic">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
                   <path
-                    d="M8.8 18.6 4 21l.65-4.57A8 8 0 1 1 12 19c-1.11 0-2.18-.15-3.2-.4Z"
+                    d="M8.824 18.588 4 21l.653-4.573C3.006 15.001 2 13.095 2 11 2 6.582 6.477 3 12 3s10 3.582 10 8-4.477 8-10 8c-1.11 0-2.178-.145-3.176-.412Z"
                   />
                 </svg>
+              </span>
+              <h2>トーク</h2>
+              <p class="tabsec-lede">
+                DM もグループも、吹き出しで読んで吹き出しで返す。
+                このアプリの中心です。
+              </p>
+              <ul class="tabsec-points">
+                <li>
+                  <b>DM とコミュニティチャット</b
+                  >が、同じルームリストに並びます。
+                </li>
+                <li><b>未読バッジ</b>は、タブとルームの行に出ます。</li>
+                <li>
+                  <b>リクエストとアーカイブ</b
+                  >で、受け取る会話を自分で選べます。
+                </li>
+              </ul>
+            </div>
+            <div class="app" aria-hidden="true">
+              <div class="app-rail">
+                <span class="me">ゆ</span>
+                <span class="app-ric">
+                  <svg viewBox="0 0 24 24">
+                    <path d="M3 10.182V22h18V10.182L12 2z" />
+                    <rect width="6" height="8" x="9" y="14" />
+                  </svg>
+                </span>
+                <span class="app-ric is-active">
+                  <svg viewBox="0 0 24 24">
+                    <path
+                      d="M8.824 18.588 4 21l.653-4.573C3.006 15.001 2 13.095 2 11 2 6.582 6.477 3 12 3s10 3.582 10 8-4.477 8-10 8c-1.11 0-2.178-.145-3.176-.412Z"
+                    />
+                  </svg>
+                  <em class="rb">2</em>
+                </span>
+                <span class="app-ric">
+                  <svg viewBox="0 0 24 24">
+                    <circle cx="12" cy="12" r="9" />
+                    <circle cx="12" cy="12" r="3" />
+                  </svg>
+                </span>
+                <span class="app-ric">
+                  <svg viewBox="0 0 24 24">
+                    <path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" />
+                    <path d="M13.73 21a2 2 0 0 1-3.46 0" />
+                  </svg>
+                  <em class="rb">1</em>
+                </span>
               </div>
-              <h3>トーク</h3>
-              <p>DM とコミュニティチャットを、吹き出し主体の画面で使えます。</p>
-            </article>
-            <article class="feature">
-              <div class="fi">
-                <svg
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="1.7"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                >
+              <div class="app-main flush">
+                <div class="ui-rooms">
+                  <div class="ui-rooms-head">
+                    <b>トーク</b>
+                    <svg viewBox="0 0 24 24">
+                      <path
+                        d="M4 20l1.2-4.2L16.6 4.4a2 2 0 0 1 2.9 0l.1.1a2 2 0 0 1 0 2.9L8.2 18.8 4 20Z"
+                      />
+                    </svg>
+                  </div>
+                  <div class="ui-chips">
+                    <span class="ui-chip">リクエスト<em>1</em></span>
+                    <span class="ui-chip">アーカイブ</span>
+                  </div>
+                  <ul class="ui-rows">
+                    <li class="ui-row">
+                      <span class="av" style="background: #5b8def">あ</span>
+                      <span class="ui-row-main">
+                        <b>あかり</b>
+                        <small>写真ありがとう!</small>
+                      </span>
+                      <time>12:03</time>
+                      <em class="ui-badge">2</em>
+                    </li>
+                    <li class="ui-row is-active">
+                      <span class="av" style="background: #4a9e5c">雑</span>
+                      <span class="ui-row-main">
+                        <b>雑談ルーム</b>
+                        <small>みお: 来週どうする?</small>
+                      </span>
+                      <time>11:20</time>
+                    </li>
+                    <li class="ui-row">
+                      <span class="av" style="background: #e05d7a">み</span>
+                      <span class="ui-row-main">
+                        <b>みお</b>
+                        <small>@mio@friends.example.com</small>
+                      </span>
+                      <time>昨日</time>
+                    </li>
+                  </ul>
+                </div>
+                <div class="ui-chat">
+                  <div class="ui-chat-head">
+                    <span class="av" style="background: #4a9e5c">雑</span>
+                    <div>
+                      <b>雑談ルーム</b>
+                      <small>8人のメンバー</small>
+                    </div>
+                  </div>
+                  <div class="ui-chat-body">
+                    <div class="ui-day">今日</div>
+                    <div class="ui-msg in">
+                      <span class="av" style="background: #b45bd4">け</span>
+                      <div>
+                        <div class="who">けんと</div>
+                        <div class="ui-bubble">来週の飲み会、場所どうする?</div>
+                      </div>
+                      <time>11:18</time>
+                    </div>
+                    <div class="ui-msg in">
+                      <span class="av" style="background: #e05d7a">み</span>
+                      <div>
+                        <div class="who">みお</div>
+                        <div class="ui-bubble">
+                          駅前のところ、まだ空いてたよ
+                        </div>
+                      </div>
+                      <time>11:20</time>
+                    </div>
+                    <div class="ui-msg out">
+                      <time>11:24</time>
+                      <div class="ui-bubble">
+                        じゃあそこで。19時で予約しとく
+                      </div>
+                    </div>
+                  </div>
+                  <div class="ui-composer">
+                    メッセージを入力
+                    <svg viewBox="0 0 24 24">
+                      <path
+                        d="M3.4 20.4 20.85 12.92c.81-.35.81-1.49 0-1.84L3.4 3.6a.993.993 0 0 0-1.39.91L2 9.12c0 .5.37.93.87.99L17 12 2.87 13.88c-.5.07-.87.5-.87 1l.01 4.61c0 .71.73 1.2 1.39.91Z"
+                      />
+                    </svg>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- timeline -->
+        <section class="tabsec">
+          <div class="wrap tabsec-grid">
+            <div class="tabsec-copy">
+              <span class="tabsec-ic">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
                   <circle cx="12" cy="12" r="9" />
                   <circle cx="12" cy="12" r="3" />
                 </svg>
+              </span>
+              <h2>タイムライン</h2>
+              <p class="tabsec-lede">
+                投稿と Story の、公開の場。トークの隣にあります。
+              </p>
+              <ul class="tabsec-points">
+                <li>
+                  フォローしている人の<b>投稿</b>が流れます。いいね、返信、リポスト、ブックマーク。
+                </li>
+                <li>上のリングから<b>Story</b>を開けます。</li>
+                <li>「いまどうしてる?」から、そのまま<b>投稿</b>できます。</li>
+              </ul>
+            </div>
+            <div class="app" aria-hidden="true">
+              <div class="app-rail">
+                <span class="me">ゆ</span>
+                <span class="app-ric">
+                  <svg viewBox="0 0 24 24">
+                    <path d="M3 10.182V22h18V10.182L12 2z" />
+                    <rect width="6" height="8" x="9" y="14" />
+                  </svg>
+                </span>
+                <span class="app-ric">
+                  <svg viewBox="0 0 24 24">
+                    <path
+                      d="M8.824 18.588 4 21l.653-4.573C3.006 15.001 2 13.095 2 11 2 6.582 6.477 3 12 3s10 3.582 10 8-4.477 8-10 8c-1.11 0-2.178-.145-3.176-.412Z"
+                    />
+                  </svg>
+                  <em class="rb">2</em>
+                </span>
+                <span class="app-ric is-active">
+                  <svg viewBox="0 0 24 24">
+                    <circle cx="12" cy="12" r="9" />
+                    <circle cx="12" cy="12" r="3" />
+                  </svg>
+                </span>
+                <span class="app-ric">
+                  <svg viewBox="0 0 24 24">
+                    <path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" />
+                    <path d="M13.73 21a2 2 0 0 1-3.46 0" />
+                  </svg>
+                  <em class="rb">1</em>
+                </span>
               </div>
-              <h3>タイムライン</h3>
-              <p>投稿の読み書きも、同じ画面の流れの中でできます。</p>
-            </article>
-            <article class="feature">
-              <div class="fi">
-                <svg
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="1.7"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                >
-                  <circle cx="12" cy="12" r="8.5" stroke-dasharray="3 2.4" />
-                  <circle cx="12" cy="12" r="3.5" />
+              <div class="app-main">
+                <div class="ui-stories">
+                  <div class="ui-story">
+                    <span class="ring">
+                      <span class="av" style="background: #f0912c">ゆ</span>
+                      <span class="add">
+                        <svg viewBox="0 0 24 24">
+                          <path d="M12 5v14M5 12h14" />
+                        </svg>
+                      </span>
+                    </span>
+                    <small>ストーリー</small>
+                  </div>
+                  <div class="ui-story">
+                    <span class="ring is-new">
+                      <span class="av" style="background: #5b8def">あ</span>
+                    </span>
+                    <small>あかり</small>
+                  </div>
+                  <div class="ui-story">
+                    <span class="ring is-new">
+                      <span class="av" style="background: #e05d7a">み</span>
+                    </span>
+                    <small>みお</small>
+                  </div>
+                  <div class="ui-story">
+                    <span class="ring">
+                      <span class="av" style="background: #b45bd4">け</span>
+                    </span>
+                    <small>けんと</small>
+                  </div>
+                </div>
+                <div class="ui-compose">
+                  <span class="av" style="background: #f0912c">ゆ</span>
+                  <span class="ph">いまどうしてる?</span>
+                  <span class="ui-post-btn">投稿</span>
+                </div>
+                <div class="ui-post">
+                  <span class="av" style="background: #5b8def">あ</span>
+                  <div class="ui-post-main">
+                    <div class="ui-post-head">
+                      <b>あかり</b>
+                      <small>@akari · 2時間前</small>
+                    </div>
+                    <p>写真、やっと現像できた。たい焼き屋の灯りが好き。</p>
+                    <div class="ui-actions">
+                      <span class="on">
+                        <svg viewBox="0 0 24 24">
+                          <path
+                            d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78L12 21.23l8.84-8.84a5.5 5.5 0 0 0 0-7.78Z"
+                          />
+                        </svg>
+                        12
+                      </span>
+                      <span>
+                        <svg viewBox="0 0 24 24">
+                          <path
+                            d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4Z"
+                          />
+                        </svg>
+                        3
+                      </span>
+                      <span>
+                        <svg viewBox="0 0 24 24">
+                          <path d="m17 2 4 4-4 4" />
+                          <path d="M3 11v-1a4 4 0 0 1 4-4h14" />
+                          <path d="m7 22-4-4 4-4" />
+                          <path d="M21 13v1a4 4 0 0 1-4 4H3" />
+                        </svg>
+                      </span>
+                      <span>
+                        <svg viewBox="0 0 24 24">
+                          <path
+                            d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"
+                          />
+                        </svg>
+                      </span>
+                    </div>
+                  </div>
+                </div>
+                <div class="ui-post">
+                  <span class="av" style="background: #e05d7a">み</span>
+                  <div class="ui-post-main">
+                    <div class="ui-post-head">
+                      <b>みお</b>
+                      <small>@mio@friends.example.com · 5時間前</small>
+                    </div>
+                    <p>自分のサーバーに引っ越してきた。トークが速い。</p>
+                    <div class="ui-actions">
+                      <span>
+                        <svg viewBox="0 0 24 24">
+                          <path
+                            d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78L12 21.23l8.84-8.84a5.5 5.5 0 0 0 0-7.78Z"
+                          />
+                        </svg>
+                        4
+                      </span>
+                      <span>
+                        <svg viewBox="0 0 24 24">
+                          <path
+                            d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4Z"
+                          />
+                        </svg>
+                        1
+                      </span>
+                      <span>
+                        <svg viewBox="0 0 24 24">
+                          <path d="m17 2 4 4-4 4" />
+                          <path d="M3 11v-1a4 4 0 0 1 4-4h14" />
+                          <path d="m7 22-4-4 4-4" />
+                          <path d="M21 13v1a4 4 0 0 1-4 4H3" />
+                        </svg>
+                        2
+                      </span>
+                      <span>
+                        <svg viewBox="0 0 24 24">
+                          <path
+                            d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"
+                          />
+                        </svg>
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- notifications -->
+        <section class="tabsec flip">
+          <div class="wrap tabsec-grid">
+            <div class="tabsec-copy">
+              <span class="tabsec-ic">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" />
+                  <path d="M13.73 21a2 2 0 0 1-3.46 0" />
+                </svg>
+              </span>
+              <h2>通知</h2>
+              <p class="tabsec-lede">できごとは、ここに届きます。</p>
+              <ul class="tabsec-points">
+                <li>
+                  フォロー、いいね、返信、メンション、リポストを<b>種類で絞り込み</b>ます。
+                </li>
+                <li>
+                  <b>フォローリクエスト</b>は、この場で承認・拒否できます。
+                </li>
+                <li>
+                  読み終わったら<b>まとめてアーカイブ</b>。未読はタブのバッジで分かります。
+                </li>
+              </ul>
+            </div>
+            <div class="app" aria-hidden="true">
+              <div class="app-rail">
+                <span class="me">ゆ</span>
+                <span class="app-ric">
+                  <svg viewBox="0 0 24 24">
+                    <path d="M3 10.182V22h18V10.182L12 2z" />
+                    <rect width="6" height="8" x="9" y="14" />
+                  </svg>
+                </span>
+                <span class="app-ric">
+                  <svg viewBox="0 0 24 24">
+                    <path
+                      d="M8.824 18.588 4 21l.653-4.573C3.006 15.001 2 13.095 2 11 2 6.582 6.477 3 12 3s10 3.582 10 8-4.477 8-10 8c-1.11 0-2.178-.145-3.176-.412Z"
+                    />
+                  </svg>
+                  <em class="rb">2</em>
+                </span>
+                <span class="app-ric">
+                  <svg viewBox="0 0 24 24">
+                    <circle cx="12" cy="12" r="9" />
+                    <circle cx="12" cy="12" r="3" />
+                  </svg>
+                </span>
+                <span class="app-ric is-active">
+                  <svg viewBox="0 0 24 24">
+                    <path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" />
+                    <path d="M13.73 21a2 2 0 0 1-3.46 0" />
+                  </svg>
+                </span>
+              </div>
+              <div class="app-main">
+                <div class="ui-notif-head">
+                  <b>通知</b>
+                  <span>すべてアーカイブ</span>
+                </div>
+                <div class="ui-filters">
+                  <span class="is-active">すべて</span>
+                  <span>返信</span>
+                  <span>メンション</span>
+                  <span>フォロー</span>
+                  <span>いいね</span>
+                  <span>リポスト</span>
+                </div>
+                <div class="ui-notif-row">
+                  <span class="who-av">
+                    <span class="av" style="background: #5b8def">あ</span>
+                    <span class="nic like">
+                      <svg viewBox="0 0 24 24">
+                        <path
+                          d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78L12 21.23l8.84-8.84a5.5 5.5 0 0 0 0-7.78Z"
+                        />
+                      </svg>
+                    </span>
+                  </span>
+                  <div class="ui-notif-main">
+                    <b>あかり</b>さんがいいねしました
+                    <small>12:40</small>
+                  </div>
+                  <span class="ui-dot"></span>
+                </div>
+                <div class="ui-notif-row">
+                  <span class="who-av">
+                    <span class="av" style="background: #8a6de0">そ</span>
+                    <span class="nic follow">
+                      <svg viewBox="0 0 24 24">
+                        <circle cx="10" cy="8" r="3.4" />
+                        <path d="M4 20c.6-3.4 3-5 6-5s5.4 1.6 6 5" />
+                        <path d="M18 8v6M15 11h6" />
+                      </svg>
+                    </span>
+                  </span>
+                  <div class="ui-notif-main">
+                    <b>そら</b>さんがフォローをリクエストしました
+                    <small>11:02</small>
+                    <div class="ui-req">
+                      <b class="acc">承認</b>
+                      <b>拒否</b>
+                    </div>
+                  </div>
+                </div>
+                <div class="ui-notif-row">
+                  <span class="who-av">
+                    <span class="av" style="background: #b45bd4">け</span>
+                    <span class="nic mention">
+                      <svg viewBox="0 0 24 24">
+                        <circle cx="12" cy="12" r="3.2" />
+                        <path
+                          d="M15.2 12v1.6a2.4 2.4 0 0 0 4.8 0V12a8 8 0 1 0-3.2 6.4"
+                        />
+                      </svg>
+                    </span>
+                  </span>
+                  <div class="ui-notif-main">
+                    <b>けんと</b>さんがメンションしました
+                    <small>昨日</small>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+      </div>
+
+      <!-- qr: the friend-add ritual -->
+      <section id="qr">
+        <div class="wrap qr-grid">
+          <div class="section-head">
+            <span class="eyebrow">友だち追加</span>
+            <h2>QR で、つながる。</h2>
+            <p>
+              自分のコードを見せるか、相手のをスキャンするか。 QR の中身は
+              yurucommu と同じ形式なので、アプリが違っても、
+              サーバーが違っても、このコードひとつで友だちを追加できます。
+            </p>
+          </div>
+          <div class="qr-modal" aria-hidden="true">
+            <div class="qr-head">
+              <b>友だち追加</b>
+              <svg viewBox="0 0 24 24">
+                <path d="M6 6l12 12M18 6 6 18" />
+              </svg>
+            </div>
+            <div class="qr-tabs">
+              <span class="is-active">マイQRコード</span>
+              <span>スキャン</span>
+            </div>
+            <div class="qr-body">
+              <span class="av" style="background: #f0912c">ゆ</span>
+              <b>ゆう</b>
+              <small>@yu@talk.example.com</small>
+              <div class="qr-code">
+                <svg viewBox="0 0 132 132">
+                  <rect width="132" height="132" fill="#fff" />
+                  <g fill="#14141a">
+                    <rect x="3" y="3" width="42" height="42" />
+                    <rect x="9" y="9" width="30" height="30" fill="#fff" />
+                    <rect x="15" y="15" width="18" height="18" />
+                    <rect x="87" y="3" width="42" height="42" />
+                    <rect x="93" y="9" width="30" height="30" fill="#fff" />
+                    <rect x="99" y="15" width="18" height="18" />
+                    <rect x="3" y="87" width="42" height="42" />
+                    <rect x="9" y="93" width="30" height="30" fill="#fff" />
+                    <rect x="15" y="99" width="18" height="18" />
+                    <rect x="51" y="45" width="6" height="6" />
+                    <rect x="63" y="45" width="6" height="6" />
+                    <rect x="75" y="45" width="6" height="6" />
+                    <rect x="45" y="51" width="6" height="6" />
+                    <rect x="45" y="63" width="6" height="6" />
+                    <rect x="45" y="75" width="6" height="6" />
+                    <rect x="51" y="9" width="6" height="6" />
+                    <rect x="63" y="9" width="6" height="6" />
+                    <rect x="75" y="15" width="6" height="6" />
+                    <rect x="57" y="21" width="6" height="6" />
+                    <rect x="69" y="21" width="6" height="6" />
+                    <rect x="51" y="27" width="6" height="6" />
+                    <rect x="81" y="27" width="6" height="6" />
+                    <rect x="63" y="33" width="6" height="6" />
+                    <rect x="75" y="33" width="6" height="6" />
+                    <rect x="57" y="39" width="6" height="6" />
+                    <rect x="69" y="45" width="6" height="6" />
+                    <rect x="81" y="45" width="6" height="6" />
+                    <rect x="9" y="51" width="6" height="6" />
+                    <rect x="21" y="51" width="6" height="6" />
+                    <rect x="33" y="57" width="6" height="6" />
+                    <rect x="15" y="63" width="6" height="6" />
+                    <rect x="27" y="63" width="6" height="6" />
+                    <rect x="39" y="57" width="6" height="6" />
+                    <rect x="51" y="57" width="6" height="6" />
+                    <rect x="63" y="57" width="6" height="6" />
+                    <rect x="75" y="57" width="6" height="6" />
+                    <rect x="87" y="57" width="6" height="6" />
+                    <rect x="99" y="51" width="6" height="6" />
+                    <rect x="111" y="57" width="6" height="6" />
+                    <rect x="123" y="51" width="6" height="6" />
+                    <rect x="93" y="63" width="6" height="6" />
+                    <rect x="105" y="63" width="6" height="6" />
+                    <rect x="117" y="63" width="6" height="6" />
+                    <rect x="51" y="69" width="6" height="6" />
+                    <rect x="69" y="69" width="6" height="6" />
+                    <rect x="81" y="69" width="6" height="6" />
+                    <rect x="93" y="75" width="6" height="6" />
+                    <rect x="111" y="75" width="6" height="6" />
+                    <rect x="123" y="75" width="6" height="6" />
+                    <rect x="57" y="75" width="6" height="6" />
+                    <rect x="75" y="81" width="6" height="6" />
+                    <rect x="99" y="81" width="6" height="6" />
+                    <rect x="117" y="81" width="6" height="6" />
+                    <rect x="51" y="93" width="6" height="6" />
+                    <rect x="69" y="93" width="6" height="6" />
+                    <rect x="93" y="93" width="6" height="6" />
+                    <rect x="105" y="93" width="6" height="6" />
+                    <rect x="117" y="99" width="6" height="6" />
+                    <rect x="57" y="99" width="6" height="6" />
+                    <rect x="75" y="99" width="6" height="6" />
+                    <rect x="87" y="99" width="6" height="6" />
+                    <rect x="99" y="105" width="6" height="6" />
+                    <rect x="51" y="111" width="6" height="6" />
+                    <rect x="63" y="111" width="6" height="6" />
+                    <rect x="81" y="111" width="6" height="6" />
+                    <rect x="93" y="111" width="6" height="6" />
+                    <rect x="111" y="111" width="6" height="6" />
+                    <rect x="123" y="117" width="6" height="6" />
+                    <rect x="57" y="117" width="6" height="6" />
+                    <rect x="69" y="123" width="6" height="6" />
+                    <rect x="87" y="117" width="6" height="6" />
+                    <rect x="99" y="123" width="6" height="6" />
+                    <rect x="105" y="117" width="6" height="6" />
+                    <rect x="51" y="123" width="6" height="6" />
+                    <rect x="75" y="123" width="6" height="6" />
+                    <rect x="111" y="123" width="6" height="6" />
+                  </g>
                 </svg>
               </div>
-              <h3>Story</h3>
-              <p>開いて、リアクションして、そのまま共有できます。</p>
-            </article>
+              <small>このコードをスキャンすると友だち追加できます</small>
+              <span class="qr-share">
+                <svg viewBox="0 0 24 24">
+                  <circle cx="6" cy="12" r="2.4" />
+                  <circle cx="17" cy="6" r="2.4" />
+                  <circle cx="17" cy="18" r="2.4" />
+                  <path d="m8.2 10.9 6.6-3.8M8.2 13.1l6.6 3.8" />
+                </svg>
+                リンクを共有
+              </span>
+            </div>
           </div>
         </div>
       </section>
