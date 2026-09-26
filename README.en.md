@@ -195,3 +195,9 @@ matching VAPID private key only at the gateway; it is never stored in the
 Yurumeet database, browser, or OpenTofu outputs. For local UI development
 against an older server only, `VITE_YURUME_NOTIFICATION_PUSH_GATEWAY_URL` and
 `VITE_YURUME_WEB_PUSH_PUBLIC_KEY` provide a build-time fallback.
+
+## Developer notes
+
+Load the typed shared API through `@takosjp/yurucommu-api` and the server
+engine through `@takosjp/yurucommu-core/server`. Do not import from the
+unpublished `yurucommu-core` source path.
