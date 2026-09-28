@@ -193,72 +193,66 @@
         color: var(--ink);
       }
 
-      /* Text links — the only action style on this page. */
-      .link-go {
+      /* One real action style: a button. Everything else is a plain link. */
+      .btn {
+        display: inline-block;
+        background: var(--accent);
+        color: #fff;
         font-weight: 700;
         font-size: 0.92rem;
-        color: var(--ink);
+        padding: 0.55em 1.15em;
+        border-radius: 6px;
+        transition: filter 0.15s;
       }
 
-      .link-go:hover {
-        color: var(--accent);
+      .btn:hover {
+        filter: brightness(1.1);
+        color: #fff;
       }
 
-      /* ---------- hero ---------- */
-      .hero {
+      /* ---------- page head ---------- */
+      .head {
         padding: clamp(3.5rem, 9vw, 7rem) 0 0;
       }
 
-      .hero h1 {
-        margin: 20px 0 0;
-        max-width: 16ch;
-        font-size: clamp(1.9rem, 4vw, 2.5rem);
-        line-height: 1.15;
+      .head h1 {
+        margin: 0;
+        font-size: clamp(2rem, 4vw, 2.5rem);
+        line-height: 1.1;
         letter-spacing: -0.02em;
         font-weight: 800;
       }
 
-      .hero h1 .soft {
-        color: var(--dim);
-      }
-
-      .lede {
-        margin: 26px 0 0;
-        max-width: 46ch;
-        color: var(--ink-2);
-        font-size: clamp(1rem, 2.2vw, 1.16rem);
+      .head .desc {
+        margin: 22px 0 0;
+        max-width: 52ch;
+        font-size: 1.05rem;
         line-height: 1.9;
       }
 
-      .cta {
+      .head .facts {
+        margin: 16px 0 0;
+        font-family: var(--mono);
+        font-size: 0.78rem;
+        color: var(--dim);
+        letter-spacing: 0.02em;
+      }
+
+      .head-act {
         display: flex;
         flex-wrap: wrap;
-        gap: 1.5rem;
+        gap: 1.25rem 2rem;
         margin-top: 2rem;
-        align-items: baseline;
+        align-items: center;
+        font-size: 0.95rem;
       }
 
-      .hero-note {
-        margin-top: 18px;
-        /* --dim (not --faint): this disclaimer must stay AA-readable */
+      .head-act a:not(.btn) {
         color: var(--dim);
-        font-size: 0.85rem;
       }
 
-      /* ---------- product screenshot ---------- */
-      .stage {
-        position: relative;
-        margin: clamp(3rem, 7vw, 5rem) auto 0;
-        max-width: 980px;
-        padding: 0 clamp(1.25rem, 5vw, 3rem);
-      }
-
-      .shot {
-        display: block;
-        width: 100%;
-        height: auto;
-        border: 1px solid var(--line-2);
-        border-radius: 6px;
+      .head-act a:not(.btn):hover {
+        color: var(--ink);
       }
 
       /* ---------- sections ---------- */
@@ -266,255 +260,114 @@
         padding: clamp(3rem, 7vw, 4.5rem) 0;
       }
 
-      .section-head {
-        max-width: 40ch;
+      .sec {
+        border-top: 1px solid var(--line);
       }
 
       h2 {
+        margin: 0;
+        font-size: clamp(1.35rem, 2.6vw, 1.6rem);
+        line-height: 1.2;
+        letter-spacing: -0.02em;
+        font-weight: 800;
+      }
+
+      .intro {
         margin: 14px 0 0;
-        font-size: clamp(1.4rem, 2.6vw, 1.7rem);
-        line-height: 1.12;
-        letter-spacing: -0.03em;
-        font-weight: 900;
-      }
-
-      .section-head p {
-        margin-top: 18px;
         color: var(--ink-2);
+        font-size: 1rem;
+        max-width: 52ch;
+      }
+
+      /* ---------- steps: heading, one sentence, the real UI ---------- */
+      .step {
+        margin-top: clamp(2.5rem, 5vw, 3.5rem);
+      }
+
+      .step h3 {
+        margin: 0;
         font-size: 1.05rem;
+        font-weight: 800;
       }
 
-      /* ---------- tab sections (page skeleton = the app's NavRail) ---------- */
-      .tabsec {
-        border-top: 1px solid var(--line);
-        padding: clamp(2.5rem, 6vw, 4rem) 0;
-      }
-
-      .tabs > .tabsec:first-child {
-        border-top: none;
-      }
-
-      .tabsec-grid {
-        display: grid;
-        grid-template-columns: 0.82fr 1.18fr;
-        gap: clamp(2rem, 6vw, 4.5rem);
-        align-items: start;
-      }
-
-      .tabsec-copy h2 {
-        margin-top: 16px;
-      }
-
-      .tabsec-lede {
-        margin-top: 14px;
-        color: var(--ink-2);
-        font-size: 1.05rem;
-      }
-
-      .tabsec-points {
-        list-style: none;
-        display: grid;
-        gap: 12px;
-        margin-top: 22px;
-      }
-
-      .tabsec-points li {
-        position: relative;
-        padding-left: 22px;
+      .step p {
+        margin: 8px 0 0;
         color: var(--dim);
-        font-size: 0.94rem;
-        line-height: 1.7;
+        font-size: 0.95rem;
+        max-width: 52ch;
       }
 
-      .tabsec-points li::before {
-        content: "";
-        position: absolute;
-        left: 0;
-        top: 0.6em;
-        width: 8px;
-        height: 8px;
-        border-radius: 50%;
-        background: var(--dim);
-      }
-
-      .tabsec-points b {
-        color: var(--ink-2);
-      }
-
-      /* QR ritual */
-      .qr-grid {
-        display: grid;
-        grid-template-columns: 1fr 0.9fr;
-        gap: clamp(2rem, 6vw, 4.5rem);
-        align-items: center;
-      }
-
-      /* family band */
-      .band {
-        border-top: 1px solid var(--line);
-        border-bottom: 1px solid var(--line);
-      }
-
-      .band-grid {
-        display: grid;
-        grid-template-columns: 1.1fr 0.9fr;
-        gap: clamp(2rem, 6vw, 5rem);
-        align-items: center;
-      }
-
-      .facts {
-        display: grid;
-        gap: 14px;
-      }
-
-      .fact {
-        display: grid;
-        grid-template-columns: auto 1fr;
-        gap: 14px;
-        align-items: baseline;
-        padding: 14px 0;
-        border-bottom: 1px solid var(--line);
-      }
-
-      .fact:last-child {
-        border-bottom: none;
-      }
-
-      .fact b {
-        font-family: var(--mono);
-        font-size: 0.82rem;
-        color: var(--ink);
-        white-space: nowrap;
-      }
-
-      .fact span {
-        color: var(--ink-2);
-        font-size: 0.94rem;
-        line-height: 1.6;
-      }
-
-      /* mobile */
-      .mobile-grid {
-        display: grid;
-        grid-template-columns: 1fr auto;
-        gap: clamp(2rem, 6vw, 5rem);
-        align-items: center;
-      }
-
-      .mobile-copy {
-        max-width: 40ch;
-      }
-
-      .mobile-shot {
+      /* Real screenshots — full width, plain border, no caption. */
+      .shot {
         display: block;
-        width: 278px;
-        max-width: 100%;
-        margin: 0 auto;
+        width: 100%;
         height: auto;
         border: 1px solid var(--line-2);
-        border-radius: 8px;
+        border-radius: 6px;
+        margin-top: 1.25rem;
       }
 
-      /* install */
-      .install-grid {
-        display: grid;
-        grid-template-columns: 0.95fr 1.05fr;
-        gap: clamp(2rem, 6vw, 4.5rem);
-        align-items: center;
-        margin-top: clamp(2rem, 5vw, 3rem);
+      .shot-narrow {
+        max-width: 300px;
+      }
+
+      /* ---------- plain fact list ---------- */
+      .fact-list {
+        margin: 1.25rem 0 0;
+        padding-left: 1.4em;
+      }
+
+      .fact-list li {
+        margin: 0.6rem 0;
+        color: var(--ink-2);
+      }
+
+      .fact-list li::marker {
+        color: var(--faint);
+      }
+
+      /* ---------- install ---------- */
+      .install-item {
+        margin-top: 2.5rem;
+      }
+
+      .install-item h3 {
+        margin: 0;
+        font-size: 1.05rem;
+        font-weight: 800;
+      }
+
+      .install-item p {
+        margin: 8px 0 12px;
+        color: var(--dim);
+        font-size: 0.95rem;
+        max-width: 52ch;
+      }
+
+      .install-item .link {
+        font-size: 0.92rem;
+        font-weight: 600;
       }
 
       .code {
         border-radius: 6px;
         border: 1px solid var(--line-2);
         background: var(--surface);
-        overflow: hidden;
-      }
-
-      .code-bar {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        padding: 10px 16px;
-        border-bottom: 1px solid var(--line);
-        background: #f6f6fb;
-        /* --dim (not --faint): small label needs ≥4.5:1 on #f6f6fb */
-        color: var(--dim);
-        font-family: var(--mono);
-        font-size: 0.72rem;
-        letter-spacing: 0.08em;
+        margin: 12px 0;
       }
 
       .code pre {
         margin: 0;
-        padding: 20px;
+        padding: 18px 20px;
         overflow-x: auto;
         font-family: var(--mono);
         font-size: 0.84rem;
-        line-height: 2;
+        line-height: 1.9;
         color: var(--ink-2);
       }
 
-      .code .k {
-        color: var(--accent-ink);
-      }
-
-      .code .s {
-        color: #2b8a3e;
-      }
-
       .code .c {
-        /* --dim (not --faint): comment text needs ≥4.5:1 on white */
-        color: var(--dim);
-      }
-
-      .steps {
-        display: grid;
-        gap: 22px;
-        margin-top: 24px;
-      }
-
-      .step {
-        display: grid;
-        grid-template-columns: auto 1fr;
-        gap: 16px;
-      }
-
-      .step .n {
-        font-family: var(--mono);
-        font-size: 0.9rem;
-        color: var(--dim);
-        padding-top: 2px;
-      }
-
-      .step h3 {
-        font-size: 1rem;
-        font-weight: 800;
-      }
-
-      .step p {
-        margin-top: 3px;
-        color: var(--dim);
-        font-size: 0.9rem;
-      }
-
-      .step code {
-        font-family: var(--mono);
-        font-size: 0.82em;
-        background: #ececf3;
-        border-radius: 5px;
-        padding: 1px 6px;
-        color: var(--ink);
-      }
-
-      .note {
-        margin-top: 26px;
-        padding: 16px 20px;
-        border-radius: 12px;
-        border: 1px dashed var(--line-2);
-        color: var(--dim);
-        font-size: 0.88rem;
-        line-height: 1.7;
+        color: var(--faint);
       }
 
       /* footer */
@@ -565,18 +418,6 @@
         .nav-links .nav-opt {
           display: none;
         }
-
-        .band-grid,
-        .install-grid,
-        .mobile-grid,
-        .tabsec-grid,
-        .qr-grid {
-          grid-template-columns: 1fr;
-        }
-
-        .tabsec.flip .tabsec-copy {
-          order: 0;
-        }
       }
 
       @media (prefers-reduced-motion: reduce) {
@@ -611,7 +452,7 @@
           <a class="nav-link nav-opt" href="#features">特長</a>
           <a class="nav-link nav-opt" href="#own">セルフホスト</a>
           <a class="nav-link" href="#install">導入</a>
-          <a class="link-go" href="https://github.com/tako0614/yurumeet"
+          <a class="nav-link" href="https://github.com/tako0614/yurumeet"
             >GitHub</a
           >
         </nav>
@@ -619,318 +460,183 @@
     </header>
 
     <main id="top">
-      <!-- hero -->
-      <section class="hero" style="padding-bottom: 0">
+      <!-- page head -->
+      <section class="head">
         <div class="wrap">
-          <h1>Self-hosted, talk-first messenger.</h1>
-          <p class="lede">
-            yurumeet は、LINE
-            のようにトーク中心で使えるメッセージングアプリです。
-            中央のサービスに預けず、自分のサーバーに置いて、自分たちだけのトークにできます。
-            DM・グループ・タイムライン・Story
-            まで、ぜんぶひとつの画面にまとまっています。
+          <h1>yurumeet</h1>
+          <p class="desc">
+            LINE のようにトーク中心で使える self-hosted messaging
+            app。中央のサービスに預けず、自分のサーバーに置いて動かす。
+            DM・グループ・タイムライン・Story がひとつの画面にまとまる。
           </p>
-          <div class="cta">
+          <p class="facts">
+            AGPL-3.0-only · github.com/tako0614/yurumeet · ActivityPub
+            (yurucommu 互換 API) · Cloudflare Workers
+          </p>
+          <div class="head-act">
             <a
-              class="link-go"
+              class="btn"
               href="https://deploy.workers.cloudflare.com/?url=https://github.com/tako0614/yurumeet"
-              >Cloudflare に直接デプロイ →</a
+              >Cloudflare にデプロイ</a
             >
-            <a class="link-go" href="#features">できることを見る →</a>
-            <a class="link-go" href="https://github.com/tako0614/yurumeet"
-              >GitHub →</a
-            >
+            <a href="#install">導入手順</a>
+            <a href="https://github.com/tako0614/yurumeet">GitHub</a>
           </div>
-          <p class="hero-note">
-            どこかにホストされたサービスではありません。自分で動かすソフトウェアです。
-          </p>
+          <img
+            class="shot"
+            src="./assets/shots/yurumeet-talk.webp"
+            width="1600"
+            height="1000"
+            alt="yurumeet のトーク画面。ルーム一覧と、Kissa Builders のコミュニティスレッド。"
+            decoding="async"
+          />
         </div>
       </section>
 
-      <!-- product screenshot -->
-      <div class="stage">
-        <img
-          class="shot"
-          src="./assets/shots/yurumeet-talk.webp"
-          width="1600"
-          height="1000"
-          alt="yurumeet のトーク画面。ルーム一覧と、Kissa Builders のコミュニティスレッド。"
-          decoding="async"
-        />
-      </div>
-
-      <!-- tabs: the page skeleton is the app's own NavRail -->
-      <div class="tabs" id="features">
-        <!-- home -->
-        <section class="tabsec">
-          <div class="wrap">
-            <div class="section-head">
-              <h2>画面は4つのタブ</h2>
-              <p>
-                ホーム、トーク、タイムライン、通知。画面のはじに並ぶレールが、
-                そのままこのアプリの目次です。未読はタブのバッジで届きます。
-              </p>
-            </div>
-            <div
-              class="tabsec-grid"
-              style="margin-top: clamp(2.5rem, 6vw, 4rem)"
-            >
-              <div class="tabsec-copy">
-                <h2>ホーム</h2>
-                <p class="tabsec-lede">
-                  アプリを開いて、最初に戻る場所。友だちとグループの入口です。
-                </p>
-                <ul class="tabsec-points">
-                  <li>
-                    <b>友だちとグループ</b
-                    >がひとつのリストに並びます。新しいトークは、ここから始めます。
-                  </li>
-                  <li><b>ノート</b>に「いまの一言」を残せます。</li>
-                  <li><b>QRコード</b>で、その場で友だちを追加できます。</li>
-                </ul>
-              </div>
-              <img
-                class="shot tab-shot"
-                src="./assets/shots/tab-home.webp"
-                alt="yurumeet のホーム画面の実画面。ノート、友だち、グループ、見つけるの一覧が並ぶ。"
-                decoding="async"
-              />
-            </div>
-          </div>
-        </section>
-
-        <!-- talk -->
-        <section class="tabsec flip">
-          <div class="wrap tabsec-grid">
-            <div class="tabsec-copy">
-              <h2>トーク</h2>
-              <p class="tabsec-lede">
-                DM もグループも、吹き出しで読んで吹き出しで返す。
-                このアプリの中心です。
-              </p>
-              <ul class="tabsec-points">
-                <li>
-                  <b>DM とコミュニティチャット</b
-                  >が、同じルームリストに並びます。
-                </li>
-                <li><b>未読バッジ</b>は、タブとルームの行に出ます。</li>
-                <li>
-                  <b>リクエストとアーカイブ</b
-                  >で、受け取る会話を自分で選べます。
-                </li>
-              </ul>
-            </div>
+      <!-- screens: the app's own tabs, real captures -->
+      <section class="sec" id="features">
+        <div class="wrap">
+          <h2>画面</h2>
+          <p class="intro">
+            ホーム・トーク・タイムライン・通知。画面のはじに並ぶレールが
+            そのまま目次で、未読はタブのバッジで届く。
+          </p>
+          <div class="step">
+            <h3>ホーム</h3>
+            <p>
+              友だちとグループがひとつのリストに並ぶ。ノートに「いまの一言」を残せて、QRコードでその場で友だちを追加できる。
+            </p>
             <img
-              class="shot tab-shot"
+              class="shot"
+              src="./assets/shots/tab-home.webp"
+              alt="yurumeet のホーム画面の実画面。ノート、友だち、グループ、見つけるの一覧が並ぶ。"
+              decoding="async"
+            />
+          </div>
+          <div class="step">
+            <h3>トーク</h3>
+            <p>
+              DM
+              もコミュニティチャットも同じルームリストに並ぶ中心画面。リクエストとアーカイブで、受け取る会話を自分で選べる。
+            </p>
+            <img
+              class="shot"
               src="./assets/shots/yurumeet-talk.webp"
               alt="yurumeet のトーク画面の実画面。ルーム一覧とコミュニティスレッドのメッセージ。"
               decoding="async"
             />
           </div>
-        </section>
-
-        <!-- timeline -->
-        <section class="tabsec">
-          <div class="wrap tabsec-grid">
-            <div class="tabsec-copy">
-              <h2>タイムライン</h2>
-              <p class="tabsec-lede">
-                投稿と Story の、公開の場。トークの隣にあります。
-              </p>
-              <ul class="tabsec-points">
-                <li>
-                  フォローしている人の<b>投稿</b>が流れます。いいね、返信、リポスト、ブックマーク。
-                </li>
-                <li>上のリングから<b>Story</b>を開けます。</li>
-                <li>「いまどうしてる?」から、そのまま<b>投稿</b>できます。</li>
-              </ul>
-            </div>
+          <div class="step">
+            <h3>タイムライン</h3>
+            <p>
+              フォローしている人の投稿と Story
+              の公開の場。「いまどうしてる?」からそのまま投稿できる。
+            </p>
             <img
-              class="shot tab-shot"
+              class="shot"
               src="./assets/shots/tab-timeline.webp"
               alt="yurumeet のタイムラインの実画面。ストーリーと投稿のフィード。"
               decoding="async"
             />
           </div>
-        </section>
-
-        <!-- notifications -->
-        <section class="tabsec flip">
-          <div class="wrap tabsec-grid">
-            <div class="tabsec-copy">
-              <h2>通知</h2>
-              <p class="tabsec-lede">できごとは、ここに届きます。</p>
-              <ul class="tabsec-points">
-                <li>
-                  フォロー、いいね、返信、メンション、リポストを<b>種類で絞り込み</b>ます。
-                </li>
-                <li>
-                  <b>フォローリクエスト</b>は、この場で承認・拒否できます。
-                </li>
-                <li>
-                  読み終わったら<b>まとめてアーカイブ</b>。未読はタブのバッジで分かります。
-                </li>
-              </ul>
-            </div>
+          <div class="step">
+            <h3>通知</h3>
+            <p>
+              フォロー・いいね・返信・メンション・リポストを種類で絞り込める。フォローリクエストはその場で承認・拒否できる。
+            </p>
             <img
-              class="shot tab-shot"
+              class="shot"
               src="./assets/shots/tab-notifications.webp"
               alt="yurumeet の通知画面の実画面。フォローリクエストといいね・返信の一覧。"
               decoding="async"
             />
           </div>
-        </section>
-      </div>
-
-      <!-- qr: the friend-add ritual -->
-      <section id="qr">
-        <div class="wrap qr-grid">
-          <div class="section-head">
-            <h2>QRコードで友だちを追加</h2>
+          <div class="step">
+            <h3>QRコードで友だちを追加</h3>
             <p>
-              自分のコードを見せるか、相手のをスキャンするか。 QR の中身は
-              yurucommu と同じ形式なので、アプリが違っても、
-              サーバーが違っても、このコードひとつで友だちを追加できます。
+              自分のコードを見せるか、相手のをスキャンするか。yurucommu
+              と同じ形式なので、アプリやサーバーが違っても追加できる。
             </p>
+            <img
+              class="shot"
+              src="./assets/shots/qr-modal.webp"
+              alt="yurumeet の友だち追加モーダルの実画面。マイQRコードタブに QR コードとリンク共有ボタン。"
+              decoding="async"
+            />
           </div>
-          <img
-            class="shot qr-shot"
-            src="./assets/shots/qr-modal.webp"
-            alt="yurumeet の友だち追加モーダルの実画面。マイQRコードタブに QR コードとリンク共有ボタン。"
-            decoding="async"
-          />
+          <div class="step">
+            <h3>モバイル</h3>
+            <p>
+              同じサーバーに接続して、トーク・タイムライン・Story
+              を片手で扱える。
+            </p>
+            <img
+              class="shot shot-narrow"
+              src="./assets/shots/yurumeet-mobile.webp"
+              width="390"
+              height="844"
+              alt="yurumeet のスマホ画面。トークルーム一覧と下部タブ（ホーム・トーク・タイムライン・通知）。"
+              decoding="async"
+            />
+          </div>
         </div>
       </section>
 
-      <!-- mobile -->
-      <section id="mobile">
-        <div class="wrap mobile-grid">
-          <div class="mobile-copy">
-            <h2>スマホでも、同じサーバーに接続</h2>
-            <p>
-              スマホでも、同じトークをそのまま使えます。ホーム画面から開けば、DM
-              もグループもタイムラインも Story も、片手で扱えます。
-            </p>
-          </div>
-          <img
-            class="mobile-shot"
-            src="./assets/shots/yurumeet-mobile.webp"
-            width="390"
-            height="844"
-            alt="yurumeet のスマホ画面。トークルーム一覧と下部タブ（ホーム・トーク・タイムライン・通知）。"
-            decoding="async"
-          />
+      <!-- what it is -->
+      <section class="sec" id="own">
+        <div class="wrap">
+          <h2>自分のサーバーで動かす</h2>
+          <ul class="fact-list">
+            <li>アカウントもトークのデータも、自分のサーバーに残る</li>
+            <li>
+              ActivityPub で動き、yurucommu 互換のアカウント / API
+              を使う。ほかのサーバーともつながる
+            </li>
+            <li>
+              AGPL-3.0 のオープンソース。コードを確認して必要なら変えられる
+            </li>
+            <li><code>yurume</code> は client id / 短縮名</li>
+          </ul>
         </div>
       </section>
-
-      <!-- self-host values -->
-      <div class="band" id="own">
-        <section>
-          <div class="wrap band-grid">
-            <div class="section-head" style="max-width: none">
-              <h2>自分のサーバーで動かす</h2>
-              <p>
-                yurumeet
-                は、中央のサービスに預けるアプリではありません。自分のインフラに置けば、アカウントもトークも自分の手元に残ります。中身はぜんぶオープンなので、確認して、必要なら自分で変えられます。
-              </p>
-            </div>
-            <div class="facts">
-              <div class="fact">
-                <b>self-host</b>
-                <span
-                  >中央に預けず、自分のサーバーで動かします。アカウントもデータも自分の手元に残ります。</span
-                >
-              </div>
-              <div class="fact">
-                <b>ActivityPub</b>
-                <span
-                  >標準プロトコルで動きます。閉じずに、ほかのサーバーともつながります。</span
-                >
-              </div>
-              <div class="fact">
-                <b>open source</b>
-                <span
-                  >AGPL-3.0
-                  のオープンソースです。コードを確認して、必要なら自分で変えられます。</span
-                >
-              </div>
-            </div>
-          </div>
-        </section>
-      </div>
 
       <!-- install -->
-      <section id="install">
+      <section class="sec" id="install">
         <div class="wrap">
-          <div class="section-head">
-            <h2>自分でデプロイして始める</h2>
-            <p>
-              yurumeet は中央でホストされるアプリではありません。Cloudflare
-              に自分でデプロイして、トークを始められます。
-            </p>
-          </div>
-          <!-- Keep the current install status next to the actionable path. -->
-          <p class="note">
-            <strong>現在は Cloudflare へのセルフホストを利用できます。</strong>
-            <strong>Takosumi 導入は検証中です。</strong>
-            固定リリースからの作成、認証、キュー、定期実行、migration、公開
-            URL、rollback、destroy を確認できるまで、Takosumi
-            の公開導線は有効化しません。<br />
-            <strong>yurumeet.com はこの紹介サイトです。</strong>
-            実際に動く yurumeet
-            は、あなたが選んだ場所にデプロイした実行環境のほうです。このページ自体はアプリではありません。
+          <h2>導入</h2>
+          <p class="intro">
+            中央でホストされるアプリではない。Cloudflare
+            に自分でデプロイして使う。
           </p>
-          <div class="install-grid">
+          <p class="intro">
+            現在利用できるのは Cloudflare へのセルフホスト。Takosumi
+            導入は検証中で、固定リリースからの作成・認証・キュー・定期実行・migration・公開
+            URL・rollback・destroy
+            を確認できるまで公開導線は有効化しない。このサイトは紹介ページで、実際に動く
+            yurumeet は自分でデプロイした実行環境のほう。
+          </p>
+          <div class="install-item">
+            <h3>Cloudflare に直接デプロイ</h3>
+            <p>下のリンクから、自分の環境へデプロイする。</p>
+            <a
+              class="btn"
+              href="https://deploy.workers.cloudflare.com/?url=https://github.com/tako0614/yurumeet"
+              >Cloudflare にデプロイ</a
+            >
+          </div>
+          <div class="install-item">
+            <h3>自分の環境を管理</h3>
+            <p>
+              root OpenTofu module を使い、credential・承認・migration・recovery
+              を自分の operator authority で管理する。
+            </p>
             <div class="code">
-              <div class="code-bar">install</div>
-              <pre><span class="c"># managed source</span>
-ref=&lt;verified-release-tag&gt;
-path=deploy/takoform
-
-<span class="c"># available self-host path</span>
-bun install
-bun run check
+              <pre>$ git clone https://github.com/tako0614/yurumeet.git
+$ cd yurumeet
+$ bun install
+$ bun run check
 <span class="c"># then follow your operator-owned self-host runbook</span></pre>
             </div>
-            <div class="steps">
-              <div class="step">
-                <span class="n">1</span>
-                <div>
-                  <h3>Cloudflare へ直接デプロイ</h3>
-                  <p>下のリンクから、自分の環境へデプロイします。</p>
-                </div>
-              </div>
-              <div class="step">
-                <span class="n">2</span>
-                <div>
-                  <h3>自分の環境を管理</h3>
-                  <p>
-                    root OpenTofu module を使い、credential、承認、migration、
-                    recovery を自分の operator authority で管理します。
-                  </p>
-                </div>
-              </div>
-              <div class="step">
-                <span class="n">3</span>
-                <div>
-                  <h3>トークする</h3>
-                  <p>
-                    自分のサーバーのアカウントでログインして、トーク中心の UI
-                    を開きます。
-                  </p>
-                </div>
-              </div>
-            </div>
-          </div>
-          <div
-            class="cta"
-            style="justify-content: flex-start; margin-top: 30px"
-          >
-            <a
-              class="link-go"
-              href="https://deploy.workers.cloudflare.com/?url=https://github.com/tako0614/yurumeet"
-              >Cloudflare に直接デプロイ →</a
-            >
           </div>
         </div>
       </section>
