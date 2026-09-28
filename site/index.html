@@ -145,15 +145,6 @@
         padding: 0 clamp(1.25rem, 5vw, 3rem);
       }
 
-      .eyebrow {
-        font-family: var(--mono);
-        font-size: 0.72rem;
-        font-weight: 500;
-        letter-spacing: 0.2em;
-        text-transform: uppercase;
-        color: var(--accent-ink);
-      }
-
       /* ---------- nav ---------- */
       .nav {
         position: sticky;
@@ -266,10 +257,10 @@
       .hero h1 {
         margin: 20px 0 0;
         max-width: 16ch;
-        font-size: clamp(2.6rem, 7vw, 4.6rem);
-        line-height: 1.06;
-        letter-spacing: -0.035em;
-        font-weight: 900;
+        font-size: clamp(1.9rem, 4vw, 2.5rem);
+        line-height: 1.15;
+        letter-spacing: -0.02em;
+        font-weight: 800;
       }
 
       .hero h1 .soft {
@@ -317,7 +308,7 @@
 
       /* ---------- sections ---------- */
       section {
-        padding: clamp(4rem, 11vw, 8rem) 0;
+        padding: clamp(3rem, 7vw, 4.5rem) 0;
       }
 
       .section-head {
@@ -326,7 +317,7 @@
 
       h2 {
         margin: 14px 0 0;
-        font-size: clamp(1.9rem, 4.5vw, 3rem);
+        font-size: clamp(1.4rem, 2.6vw, 1.7rem);
         line-height: 1.12;
         letter-spacing: -0.03em;
         font-weight: 900;
@@ -341,7 +332,7 @@
       /* ---------- tab sections (page skeleton = the app's NavRail) ---------- */
       .tabsec {
         border-top: 1px solid var(--line);
-        padding: clamp(3.5rem, 8vw, 6rem) 0;
+        padding: clamp(2.5rem, 6vw, 4rem) 0;
       }
 
       .tabs > .tabsec:first-child {
@@ -408,8 +399,7 @@
         width: 8px;
         height: 8px;
         border-radius: 50%;
-        background: var(--accent);
-        opacity: 0.85;
+        background: var(--dim);
       }
 
       .tabsec-points b {
@@ -457,7 +447,7 @@
       .fact b {
         font-family: var(--mono);
         font-size: 0.82rem;
-        color: var(--accent-ink);
+        color: var(--ink);
         white-space: nowrap;
       }
 
@@ -598,11 +588,6 @@
         line-height: 1.7;
       }
 
-      /* closing */
-      .closing h2 {
-        max-width: 18ch;
-      }
-
       /* footer */
       footer {
         border-top: 1px solid var(--line);
@@ -708,11 +693,7 @@
       <!-- hero -->
       <section class="hero" style="padding-bottom: 0">
         <div class="wrap">
-          <span class="eyebrow">Self-hosted · talk-first messenger</span>
-          <h1>
-            トークは、<br />
-            <span class="soft">自分のサーバーに。</span>
-          </h1>
+          <h1>Self-hosted, talk-first messenger.</h1>
           <p class="lede">
             yurumeet は、LINE
             のようにトーク中心で使えるメッセージングアプリです。
@@ -734,15 +715,14 @@
         </div>
       </section>
 
-      <!-- product mock -->
+      <!-- product screenshot -->
       <div class="stage">
         <img
           class="shot"
           src="./assets/shots/yurumeet-talk.webp"
-          width="2560"
-          height="1600"
-          alt="yurumeet のトーク画面。ダークなサイドバー、トークルーム一覧、Akari との DM に赤い送信メッセージが並ぶ。"
-          loading="lazy"
+          width="1600"
+          height="1000"
+          alt="yurumeet のトーク画面。ルーム一覧と、Kissa Builders のコミュニティスレッド。"
           decoding="async"
         />
       </div>
@@ -753,8 +733,7 @@
         <section class="tabsec">
           <div class="wrap">
             <div class="section-head">
-              <span class="eyebrow">ひとつの画面に</span>
-              <h2>タブは、4つだけ。</h2>
+              <h2>画面は4つのタブ</h2>
               <p>
                 ホーム、トーク、タイムライン、通知。画面のはじに並ぶレールが、
                 そのままこのアプリの目次です。未読はタブのバッジで届きます。
@@ -784,13 +763,12 @@
                   <li><b>QRコード</b>で、その場で友だちを追加できます。</li>
                 </ul>
               </div>
-              <img
-                class="shot tab-shot"
-                src="./assets/shots/tab-home.webp"
-                alt="yurumeet のホーム画面の実画面。ノート、友だち、グループ、見つけるの一覧が並ぶ。"
-                loading="lazy"
-                decoding="async"
-              />
+          <img
+            class="shot tab-shot"
+            src="./assets/shots/tab-home.webp"
+            alt="yurumeet のホーム画面の実画面。ノート、友だち、グループ、見つけるの一覧が並ぶ。"
+            decoding="async"
+          />
             </div>
           </div>
         </section>
@@ -826,8 +804,7 @@
             <img
               class="shot tab-shot"
               src="./assets/shots/yurumeet-talk.webp"
-              alt="yurumeet のトーク画面の実画面。ルーム一覧と雑談ルームのメッセージ。"
-              loading="lazy"
+              alt="yurumeet のトーク画面の実画面。ルーム一覧とコミュニティスレッドのメッセージ。"
               decoding="async"
             />
           </div>
@@ -859,7 +836,6 @@
               class="shot tab-shot"
               src="./assets/shots/tab-timeline.webp"
               alt="yurumeet のタイムラインの実画面。ストーリーと投稿のフィード。"
-              loading="lazy"
               decoding="async"
             />
           </div>
@@ -893,7 +869,6 @@
               class="shot tab-shot"
               src="./assets/shots/tab-notifications.webp"
               alt="yurumeet の通知画面の実画面。フォローリクエストといいね・返信の一覧。"
-              loading="lazy"
               decoding="async"
             />
           </div>
@@ -904,8 +879,7 @@
       <section id="qr">
         <div class="wrap qr-grid">
           <div class="section-head">
-            <span class="eyebrow">友だち追加</span>
-            <h2>QR で、つながる。</h2>
+            <h2>QRコードで友だちを追加</h2>
             <p>
               自分のコードを見せるか、相手のをスキャンするか。 QR の中身は
               yurucommu と同じ形式なので、アプリが違っても、
@@ -916,7 +890,6 @@
             class="shot qr-shot"
             src="./assets/shots/qr-modal.webp"
             alt="yurumeet の友だち追加モーダルの実画面。マイQRコードタブに QR コードとリンク共有ボタン。"
-            loading="lazy"
             decoding="async"
           />
         </div>
@@ -926,8 +899,7 @@
       <section id="mobile">
         <div class="wrap mobile-grid">
           <div class="mobile-copy">
-            <span class="eyebrow">On the go</span>
-            <h2>ポケットの中に、<br />自分のサーバー。</h2>
+            <h2>スマホでも、同じサーバーに接続</h2>
             <p>
               スマホでも、同じトークをそのまま使えます。ホーム画面から開けば、DM
               もグループもタイムラインも Story も、片手で扱えます。
@@ -936,10 +908,9 @@
           <img
             class="mobile-shot"
             src="./assets/shots/yurumeet-mobile.webp"
-            width="780"
-            height="1688"
+            width="390"
+            height="844"
             alt="yurumeet のスマホ画面。トークルーム一覧と下部タブ（ホーム・トーク・タイムライン・通知）。"
-            loading="lazy"
             decoding="async"
           />
         </div>
@@ -950,8 +921,7 @@
         <section>
           <div class="wrap band-grid">
             <div class="section-head" style="max-width: none">
-              <span class="eyebrow">自分のものにする</span>
-              <h2>預けない。<br />自分のサーバーで動かす。</h2>
+              <h2>自分のサーバーで動かす</h2>
               <p>
                 yurumeet
                 は、中央のサービスに預けるアプリではありません。自分のインフラに置けば、アカウントもトークも自分の手元に残ります。中身はぜんぶオープンなので、確認して、必要なら自分で変えられます。
@@ -986,8 +956,7 @@
       <section id="install">
         <div class="wrap">
           <div class="section-head">
-            <span class="eyebrow">Self-host</span>
-            <h2>好きな場所に、置いて動かす。</h2>
+            <h2>自分でデプロイして始める</h2>
             <p>
               yurumeet は中央でホストされるアプリではありません。Cloudflare
               に自分でデプロイして、トークを始められます。
@@ -1006,7 +975,7 @@
           </p>
           <div class="install-grid">
             <div class="code">
-              <div class="code-bar">INSTALL PATHS</div>
+              <div class="code-bar">install</div>
               <pre><span class="c"># managed source</span>
 ref=&lt;verified-release-tag&gt;
 path=deploy/takoform
@@ -1059,19 +1028,6 @@ bun run check
         </div>
       </section>
 
-      <!-- closing -->
-      <section class="closing" style="padding-top: 0">
-        <div class="wrap">
-          <span class="eyebrow">Ready when you are</span>
-          <h2>自分たちのトークを、<br />自分のサーバーで。</h2>
-          <div class="cta">
-            <a class="btn primary" href="#install">導入する</a>
-            <a class="btn" href="https://github.com/tako0614/yurumeet"
-              >ソースを見る</a
-            >
-          </div>
-        </div>
-      </section>
     </main>
 
     <aside

@@ -106,6 +106,7 @@ type JsonValue =
 
 const origin =
   process.env.YURUCOMMU_MOCK_ORIGIN ?? "https://mock.yurucommu.test";
+const originHost = new URL(origin).host;
 const mockImageUrl =
   process.env.YURUCOMMU_MOCK_IMAGE_URL ??
   "https://images.unsplash.com/photo-1517245386807-bb43f82c33c4?auto=format&fit=crop&w=1200&q=80";
@@ -120,7 +121,7 @@ function actor(
 ): Actor {
   return {
     ap_id: `${origin}/ap/users/${preferredUsername}`,
-    username: `${preferredUsername}@mock.yurucommu.test`,
+    username: `${preferredUsername}@${originHost}`,
     preferred_username: preferredUsername,
     name,
     summary,
@@ -147,21 +148,21 @@ function postAuthor(actorData: Actor): PostAuthor {
   };
 }
 
-const me = actor("you", "You", "UI development mock account.", {
+const me = actor("you", "You", "週末はだいたい喫茶店。", {
   follower_count: 240,
   following_count: 178,
   post_count: 42,
   is_following: true,
 });
-const akari = actor("akari", "Akari", "Talks about small community tools.", {
+const akari = actor("akari", "Akari", "小さな集まりを企画しています。", {
   is_followed_by: true,
   is_following: true,
 });
-const ren = actor("ren", "Ren", "Design and product notes.", {
+const ren = actor("ren", "Ren", "写真と設計メモ。", {
   is_followed_by: true,
   is_following: true,
 });
-const mio = actor("mio", "Mio", "Federated social UI experiments.", {
+const mio = actor("mio", "Mio", "活動報告をゆるく。", {
   is_followed_by: false,
   is_following: false,
 });
@@ -176,7 +177,7 @@ const communities: CommunityDetail[] = [
     name: "kissa-builders",
     display_name: "Kissa Builders",
     preferred_username: "kissa-builders",
-    summary: "A small room for product, UI, and community ideas.",
+    summary: "喫茶スペースづくりの相談と記録。",
     icon_url: "https://api.dicebear.com/9.x/shapes/svg?seed=kissa-builders",
     visibility: "public",
     join_policy: "open",
@@ -194,7 +195,7 @@ const communities: CommunityDetail[] = [
     name: "night-ship",
     display_name: "Night Ship",
     preferred_username: "night-ship",
-    summary: "Loose evening updates and story checks.",
+    summary: "夜型メンバーのゆるい近況スレ。",
     icon_url: "https://api.dicebear.com/9.x/shapes/svg?seed=night-ship",
     visibility: "private",
     join_policy: "approval",
@@ -212,7 +213,7 @@ const communities: CommunityDetail[] = [
     name: "dawn-readers",
     display_name: "Dawn Readers",
     preferred_username: "dawn-readers",
-    summary: "Morning reading club — open to anyone.",
+    summary: "朝の読書会。だれでも参加できます。",
     icon_url: "https://api.dicebear.com/9.x/shapes/svg?seed=dawn-readers",
     visibility: "public",
     join_policy: "open",
@@ -230,7 +231,7 @@ const communities: CommunityDetail[] = [
     name: "studio-hush",
     display_name: "Studio Hush",
     preferred_username: "studio-hush",
-    summary: "Invite-only design critiques.",
+    summary: "招待制のデザイン批評ルーム。",
     icon_url: "https://api.dicebear.com/9.x/shapes/svg?seed=studio-hush",
     visibility: "private",
     join_policy: "invite",
@@ -251,7 +252,7 @@ let posts: Post[] = [
     type: "Note",
     author: postAuthor(akari),
     content:
-      "Mock server is online. Timeline, stories, DMs, and communities are all local data.",
+      "週末の喫茶ポップアップ、場所は柳小路のギャラリーで決まりました。あとは時間帯だけ。",
     summary: null,
     attachments: [],
     in_reply_to: null,
@@ -271,14 +272,14 @@ let posts: Post[] = [
     type: "Note",
     author: postAuthor(ren),
     content:
-      "Yurumeet should feel like a talk-first client on the same yurucommu server.",
+      "会場の写真を共有しておきます。窓側の壁面、ここにメニューを貼りましょう。",
     summary: null,
     attachments: [
       {
         url: mockImageUrl,
         r2_key: "mock/ui-reference.jpg",
         content_type: "image/jpeg",
-        name: "Mock UI reference",
+        name: "会場の写真",
       },
     ],
     in_reply_to: null,
@@ -318,7 +319,7 @@ let posts: Post[] = [
     type: "Note",
     author: postAuthor(akari),
     content:
-      "Read the write-up at https://yurucommu.example/notes thanks @ren #yurumeet #talkfirst",
+      "先週の記録をまとめました → https://kissa-builders.example/notes @ren ありがとう #kissa",
     summary: null,
     attachments: [],
     in_reply_to: null,
@@ -337,7 +338,7 @@ let posts: Post[] = [
     ap_id: `${origin}/ap/notes/post-5`,
     type: "Note",
     author: postAuthor(ren),
-    content: "Short screen capture of the talk pane sliding in on mobile.",
+    content: "きのうのライブの切り抜き、30秒だけ。",
     summary: null,
     attachments: [
       {
@@ -363,7 +364,16 @@ let posts: Post[] = [
     ap_id: `${origin}/ap/notes/post-fill-${i + 1}`,
     type: "Note" as const,
     author: postAuthor(i % 2 === 0 ? akari : ren),
-    content: `Older mock post #${i + 1} — kept around so the timeline has enough history to paginate.`,
+    content: [
+      "焙煎所の新しい豆、浅煎りが思ったより良かった。",
+      "日曜の設営、9時集合で問題なさそうです。",
+      "看板の文字、最終稿を夜に上げます。",
+      "柳小路のギャラリー、天井が高くて気持ちいい。",
+      "机の配置、中央の長テーブルに寄せる案でいきます。",
+      "コーヒーチケットの在庫、あと40枚。",
+      "週末は雨みたい。傘立てを用意しておこう。",
+      "次回の読書会は駅前の図書室が使えるらしい。",
+    ][i],
     summary: null,
     attachments: [],
     in_reply_to: null,
@@ -412,13 +422,13 @@ const repliesByParent: Record<string, Post[]> = {
     seedReply(
       `${origin}/ap/notes/post-1`,
       ren,
-      "Nice, the mock feels real.",
+      "窓側は午後の光がきれいですね。",
       25,
     ),
     seedReply(
       `${origin}/ap/notes/post-1`,
       mio,
-      "Replies render in a thread.",
+      "土曜の昼からが動きやすいかも。",
       20,
     ),
     seedReply(`${origin}/ap/notes/post-1`, akari, "And they paginate too.", 15),
@@ -445,7 +455,7 @@ let dmRequests = [
   {
     id: "request-1",
     sender: postAuthor(mio),
-    content: "Can I send you a mock UI note?",
+    content: "はじめまして。喫茶ポップアップの件で連絡しました。",
     created_at: "2026-07-05T02:30:00.000Z",
   },
 ];
@@ -456,13 +466,13 @@ let userMessages: Record<string, Message[]> = {
     {
       id: "dm-1",
       sender: postAuthor(akari),
-      content: "Mock auth is the same as yurucommu.",
+      content: "写真、さっき送っておいたよ〜 見た？",
       created_at: "2026-07-05T05:00:00.000Z",
     },
     {
       id: "dm-2",
       sender: postAuthor(me),
-      content: "Good. I want to debug the client UI without a backend.",
+      content: "見た！めっちゃいいね、ありがとう",
       created_at: "2026-07-05T05:02:00.000Z",
     },
   ],
@@ -470,7 +480,7 @@ let userMessages: Record<string, Message[]> = {
     {
       id: "dm-3",
       sender: postAuthor(ren),
-      content: "The talk tab is using the same DM endpoints.",
+      content: "夜の写真データ、あとでこっちにも送ります。",
       created_at: "2026-07-05T04:30:00.000Z",
     },
   ],
@@ -481,13 +491,13 @@ let communityMessages: Record<string, Message[]> = {
     {
       id: "cm-1",
       sender: postAuthor(ren),
-      content: "The mock community chat is ready for UI work.",
+      content: "週末のメニュー、これで行きましょう",
       created_at: "2026-07-05T05:40:00.000Z",
     },
     {
       id: "cm-2",
       sender: postAuthor(akari),
-      content: "Stories and timeline data are mocked too.",
+      content: "会場の写真、あとでまとめて追加します",
       created_at: "2026-07-05T05:42:00.000Z",
     },
   ],
@@ -495,7 +505,7 @@ let communityMessages: Record<string, Message[]> = {
     {
       id: "cm-3",
       sender: postAuthor(mio),
-      content: "Private room data keeps the sidebars populated.",
+      content: "今夜21時から通話しよう🌙",
       created_at: "2026-07-05T04:35:00.000Z",
     },
   ],
@@ -504,7 +514,7 @@ let communityMessages: Record<string, Message[]> = {
 let notes: ActorNote[] = [
   {
     actor: postAuthor(me),
-    content: "UIを詰めてる",
+    content: "ポップアップの準備中",
     created_at: new Date(Date.now() - 18 * 60 * 1000).toISOString(),
     updated_at: new Date(Date.now() - 18 * 60 * 1000).toISOString(),
     expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
@@ -520,7 +530,7 @@ let notes: ActorNote[] = [
   },
   {
     actor: postAuthor(ren),
-    content: "talk-first案ある",
+    content: "夜勤あけ",
     created_at: new Date(Date.now() - 78 * 60 * 1000).toISOString(),
     updated_at: new Date(Date.now() - 78 * 60 * 1000).toISOString(),
     expires_at: new Date(Date.now() + 22 * 60 * 60 * 1000).toISOString(),
@@ -639,7 +649,7 @@ function communityContact(
   return {
     type: "community",
     ap_id: community.ap_id,
-    username: `${community.name}@mock.yurucommu.test`,
+    username: `${community.name}@${originHost}`,
     preferred_username: community.preferred_username,
     name: community.display_name,
     icon_url: community.icon_url,
@@ -708,7 +718,7 @@ let ownStories: StoryEntry[] = [
     ap_id: `${origin}/ap/stories/story-me-1`,
     author: postAuthor(me),
     attachment: storyImage("mock/story-me-1.jpg"),
-    caption: "My first mock story.",
+    caption: "準備の進捗。",
     displayDuration: "PT6S",
     overlays: [],
     published: "2026-07-05T05:45:00.000Z",
@@ -722,7 +732,7 @@ let ownStories: StoryEntry[] = [
     ap_id: `${origin}/ap/stories/story-me-2`,
     author: postAuthor(me),
     attachment: storyImage("mock/story-me-2.jpg"),
-    caption: "Second one so the progress bar has segments.",
+    caption: "壁面の掲示、こんな感じ。",
     displayDuration: "PT6S",
     overlays: [],
     published: "2026-07-05T05:50:00.000Z",
@@ -743,7 +753,7 @@ const otherStoryGroups = () => [
         ap_id: `${origin}/ap/stories/story-1`,
         author: postAuthor(akari),
         attachment: storyImage("mock/story-1.jpg"),
-        caption: "Mock story for UI layout checks.",
+        caption: "会場の下見に来た。",
         displayDuration: "PT6S",
         overlays: [],
         published: "2026-07-05T05:05:00.000Z",
@@ -763,7 +773,7 @@ const otherStoryGroups = () => [
         ap_id: `${origin}/ap/stories/story-2`,
         author: postAuthor(ren),
         attachment: storyImage("mock/story-2.jpg"),
-        caption: "Talk-first client, same server.",
+        caption: "夜の店内、いい雰囲気。",
         displayDuration: "PT6S",
         overlays: [],
         published: "2026-07-05T04:15:00.000Z",
