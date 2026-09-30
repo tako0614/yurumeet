@@ -10,6 +10,7 @@ import { PRODUCT_WIRE_IDENTITY } from "../src/product-identity.ts";
 
 const repo = new URL("../", import.meta.url).pathname;
 const temporaryDirectories: string[] = [];
+const fixtureOrigin = "https://release-smoke.yurumeet.invalid";
 const smokeHtml =
   '<!doctype html><html><head><title>Yurumeet</title></head><body><div id="root"></div></body></html>';
 
@@ -88,6 +89,23 @@ async function writeHttpHealthyArtifact(directory: string) {
   return artifactPath;
 }
 
+async function expectSmokeToRejectFakeWrite(handler: string, expected: string) {
+  const fetchAnchor = "    const bindings = wrapYurumeetWorkerBindings(env);";
+  const source = entrySource();
+  expect(source).toContain(fetchAnchor);
+  const artifactSource = source.replace(
+    fetchAnchor,
+    `${handler}${fetchAnchor}`,
+  );
+  const directory = await mkdtemp(join(tmpdir(), "yurumeet-smoke-test-"));
+  temporaryDirectories.push(directory);
+  const artifactPath = await generatedArtifact(directory, artifactSource);
+  const result = await smoke(artifactPath);
+  expect(result.exitCode).not.toBe(0);
+  expect(result.stdout.toString()).toBe("");
+  expect(result.stderr.toString()).toContain(expected);
+}
+
 describe("release Worker smoke", () => {
   test("boots the generated entry and verifies native queue and scheduled effects", async () => {
     const directory = await mkdtemp(join(tmpdir(), "yurumeet-smoke-test-"));
@@ -109,10 +127,53 @@ describe("release Worker smoke", () => {
         "dlq-exhaustion",
         "scheduled-story-retention",
         "scheduled-story-retention-idempotence",
+        "authenticated-dm",
+        "dm-isolation",
+        "media-upload",
+        "media-readback",
+        "private-media-read-refusal",
+        "invalid-media-refusal",
+        "unauthenticated-api-refusal",
       ],
       migrationCount: expect.any(Number),
       status: "PASSED",
     });
+  }, 30_000);
+
+  test("rejects a fake successful DM response without persistence", async () => {
+    await expectSmokeToRejectFakeWrite(
+      `    const journeyUrl = new URL(request.url);
+    if (request.method === "POST" && journeyUrl.pathname.startsWith("/api/dm/user/")) {
+      return Response.json({
+        message: { id: "${fixtureOrigin}/ap/objects/fake-dm", content: "release smoke direct message", created_at: new Date().toISOString() },
+        conversation_id: "${fixtureOrigin}/ap/conversations/fake-dm",
+      }, { status: 201 });
+    }
+`,
+      "DM object was not persisted",
+    );
+  }, 30_000);
+
+  test("rejects a fake successful media response without persistence", async () => {
+    await expectSmokeToRejectFakeWrite(
+      `    const journeyUrl = new URL(request.url);
+    if (request.method === "POST" && journeyUrl.pathname === "/api/media/upload") {
+      return Response.json({ url: "/media/abcdef.png", r2_key: "uploads/abcdef.png", content_type: "image/png", id: "abcdef" });
+    }
+`,
+      "media upload was not persisted",
+    );
+  }, 60_000);
+
+  test("rejects a DM read by an unrelated session", async () => {
+    await expectSmokeToRejectFakeWrite(
+      `    if (request.method === "GET" && new URL(request.url).pathname.startsWith("/api/dm/user/") && request.headers.get("cookie") === "session=release-smoke-session-unrelated-ecf49f83") {
+      const headers = new Headers(request.headers);
+      headers.set("cookie", "session=release-smoke-session-recipient-a108328f");
+      request = new Request(request, { headers });
+    }\n`,
+      "DM isolation exposed a message to an unrelated actor",
+    );
   }, 30_000);
 
   test("rejects an HTTP-healthy artifact without background handlers", async () => {
