@@ -97,6 +97,14 @@ self-host は現在利用でき、Takosumi 管理付き導入は実環境の作�
 direct Cloudflare path を定義しますが、credential、承認、migration、rollback は
 利用者側の runbook と authority で管理してください。
 
+root OpenTofu module で Worker を公開するときは、機密入力
+`session_hash_salt` が必須です。値をそのまま `YURUCOMMU_SESSION_HASH_SALT`
+Secret に渡し、汎用 `env` の同名キーは拒否します。新規環境では安全な場所で
+`openssl rand -hex 32` などにより生成し、既存環境の更新では現在の値を保持して
+ください。salt を変えると session の照合が変わり、再ログインが必要になり得ます。
+Takosumi の direct install へ渡す sealed 入力経路は未検証で、通常の入力欄に秘密値を
+書いて代用しません。Wrangler を使う self-host でも同名の Worker Secret が必要です。
+
 Worker compatibility date / flags の正本も `wrangler.jsonc` です。root の
 `main.tf` がこのファイルを `jsondecode` するため、JSONC 拡張のコメントや trailing
 comma は追加せず、strict JSON として維持します。D1 の migration 記録は core と同じ

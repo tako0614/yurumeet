@@ -1,5 +1,14 @@
 # Yurumeet Takoform Capsule
 
+The WorkerVersion also requires `YURUCOMMU_SESSION_HASH_SALT` on its sensitive
+runtime connection. The v2.4 manifest declares a separate 32-byte hex generated
+secret binding; it never stores a secret value in repository metadata. This is
+the fresh-install source contract. Adding a generated-secret slot changes the
+Takosumi runtime profile: its current materializer may regenerate the existing
+ENCRYPTION_KEY too. Before updating an existing Capsule, establish secret custody
+and preserve its encryption key/session salt or use a reviewed migration and
+recovery plan. Source tests do not qualify that platform update or authorize Apply.
+
 This directory is the canonical managed-resource definition for Yurumeet. It
 uses current Takoform resources directly and does not point a Cloudflare
 provider at a Takosumi compatibility endpoint.
