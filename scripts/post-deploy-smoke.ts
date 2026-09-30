@@ -8,7 +8,8 @@ import {
 type JsonRecord = Record<string, unknown>;
 
 const outputsPath = requiredEnv("TAKOSUMI_CAPSULE_OUTPUTS_FILE");
-const password = optionalEnv("YURUMEET_E2E_PASSWORD");
+// Passwords are opaque JSON-body credentials, including whitespace and newlines.
+const password = process.env.YURUMEET_E2E_PASSWORD;
 const outputs = record(
   JSON.parse(await readFile(outputsPath, "utf8")),
   "Capsule outputs",
