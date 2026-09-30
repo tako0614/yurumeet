@@ -200,39 +200,30 @@ async function runRetention(runtimeEnv: RuntimeEnv): Promise<void> {
   await runYurucommuRetention(runtimeEnv as Env);
 }
 
-// Takes the ALREADY WRAPPED batch, not the raw event. Both lanes carry a queue
-// name — Cloudflare's \`MessageBatch.queue\` and the facade's
-// \`EdgeQueueBatch.queue\` — and \`wrapRuntimeMessageBatch\` copies it straight
-// through, so reading it here is one lane-independent read of exactly the value
-// \`handleYurucommuQueueBatch\` will compare its own configured names against.
+// Both declared consumers carry an identity: Cloudflare's
+// \`MessageBatch.queue\` or the portable facade's \`EdgeQueueBatch.queue\`.
+// Require both configured names and compare the wrapped event exactly before
+// core dispatch; otherwise the core treats an unknown queue as foreign and
+// acknowledges its messages.
 function withDeliveryConsumerIdentity(
   batch: IQueueBatch<DeliveryMessage>,
   env: RuntimeEnv,
 ): RuntimeEnv {
-  const configuredDelivery = env.DELIVERY_QUEUE_NAME?.trim() ?? "";
-  const configuredDlq = env.DELIVERY_DLQ_NAME?.trim() ?? "";
-  if ((configuredDelivery.length > 0) !== (configuredDlq.length > 0)) {
-    throw new Error("Direct queue identities must declare delivery and DLQ together");
-  }
-  if (configuredDelivery && configuredDlq) {
-    return env; // The direct adapter already declares both distinct queue identities.
-  }
-
-  const queueName = batch.queue.trim();
-  if (!queueName) {
+  if (!batch.queue.trim()) {
     throw new Error("Queue invocation has no native identity");
   }
-  // The Takoform graph attaches exactly one QueueConsumer to this Worker, and
-  // that relation targets the delivery queue. The Provider is free to replace
-  // the logical Resource name with a collision-safe native name, so the app
-  // uses the authenticated invocation identity there. The direct Cloudflare
-  // adapter returns above with its separately configured delivery and DLQ
-  // identities intact because it attaches consumers for both queues.
-  return {
-    ...env,
-    DELIVERY_QUEUE_NAME: queueName,
-    DELIVERY_DLQ_NAME: "__unbound_dlq__:" + queueName,
-  };
+  const configuredDelivery = env.DELIVERY_QUEUE_NAME;
+  const configuredDlq = env.DELIVERY_DLQ_NAME;
+  if (!configuredDelivery?.trim() || !configuredDlq?.trim()) {
+    throw new Error("Delivery and DLQ queue identities must both be declared");
+  }
+  if (configuredDelivery === configuredDlq) {
+    throw new Error("Delivery and DLQ queue identities must be distinct");
+  }
+  if (batch.queue !== configuredDelivery && batch.queue !== configuredDlq) {
+    throw new Error("Unrecognized queue identity: " + batch.queue);
+  }
+  return env;
 }
 
 export default {

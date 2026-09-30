@@ -6,7 +6,7 @@ import { basename, dirname, resolve } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { Miniflare } from "miniflare";
-import { unstable_readConfig } from "wrangler";
+import { unstable_readConfig, unstable_splitSqlQuery } from "wrangler";
 
 import {
   PRODUCT_CLIENT_KEY,
@@ -16,6 +16,214 @@ import {
 const MAX_RESPONSE_BYTES = 1024 * 1024;
 const APP_ORIGIN = "https://release-smoke.yurumeet.invalid";
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const DELIVERY_QUEUE = "yurumeet-delivery";
+const DELIVERY_DLQ = "yurumeet-delivery-dlq";
+
+async function qualifyBackgroundEvents(worker) {
+  const schemaBytes = readFileSync(
+    resolve(repo, "deploy/takoform/migrations/schema-bundle.json"),
+  );
+  const schema = JSON.parse(schemaBytes);
+  if (
+    schema.apiVersion !== "takosumi.resource-migrations/v1" ||
+    schema.engine !== "sqlite" ||
+    !Array.isArray(schema.entries) ||
+    schema.entries.length === 0
+  ) {
+    throw new Error("release smoke requires the product migration bundle");
+  }
+
+  const db = await worker.getD1Database("DB");
+  for (const entry of schema.entries) {
+    if (
+      typeof entry.sql !== "string" ||
+      entry.sha256 !== `sha256:${sha256(Buffer.from(entry.sql, "utf8"))}`
+    ) {
+      throw new Error(`migration digest mismatch: ${entry.name}`);
+    }
+    const statements = unstable_splitSqlQuery(entry.sql);
+    if (statements.length === 0) {
+      throw new Error(`schema migration ${entry.name} contains no SQL`);
+    }
+    // Apply each product migration atomically. D1 exec() does not support the
+    // bundle's comments and multi-statement SQL consistently.
+    await db.batch(statements.map((sql) => db.prepare(sql)));
+  }
+
+  const actorApId = `${APP_ORIGIN}/ap/users/release-smoke`;
+  await db
+    .prepare(
+      `INSERT INTO actors (
+      ap_id, preferred_username, inbox, outbox, followers_url, following_url,
+      public_key_pem, private_key_pem, post_count
+    ) VALUES (?, 'release-smoke', ?, ?, ?, ?, 'fixture', 'fixture', 2)`,
+    )
+    .bind(
+      actorApId,
+      `${actorApId}/inbox`,
+      `${actorApId}/outbox`,
+      `${actorApId}/followers`,
+      `${actorApId}/following`,
+    )
+    .run();
+
+  const native = await worker.getWorker();
+  for (const [label, queueName, expectedStatus, autoDlqAttempt, seedStatus] of [
+    ["main-queue-fanout", DELIVERY_QUEUE, "completed", 0, "pending"],
+    ["dlq-exhaustion", DELIVERY_DLQ, "failed", 3, "published"],
+  ]) {
+    const activityId = `${APP_ORIGIN}/ap/activities/${label}`;
+    const fanoutId = sha256(`fanout|followers|${activityId}|${actorApId}|`);
+    await db.batch([
+      db
+        .prepare(
+          "INSERT INTO activities (ap_id, type, actor_ap_id, raw_json) VALUES (?, 'Create', ?, '{}')",
+        )
+        .bind(activityId, actorApId),
+      db
+        .prepare(
+          `INSERT INTO delivery_fanouts (
+          id, activity_ap_id, kind, target_ap_id, status, publications
+        ) VALUES (?, ?, 'followers', ?, ?, 1)`,
+        )
+        .bind(fanoutId, activityId, actorApId, seedStatus),
+    ]);
+
+    const messageId = `release-smoke-${label}`;
+    const result = await native.queue(queueName, [
+      {
+        id: messageId,
+        timestamp: new Date(),
+        attempts: 1,
+        body: {
+          version: 1,
+          type: "fanout_followers",
+          activityId,
+          followeeApId: actorApId,
+          ...(autoDlqAttempt === 0 ? {} : { autoDlqAttempt }),
+          scheduledAt: new Date().toISOString(),
+        },
+      },
+    ]);
+    if (
+      result.outcome !== "ok" ||
+      result.retryBatch?.retry !== false ||
+      result.retryMessages.length !== 0 ||
+      !result.explicitAcks.includes(messageId)
+    ) {
+      throw new Error(
+        `${label} was not explicitly acknowledged without retry: ${JSON.stringify(result)}`,
+      );
+    }
+
+    const row = await db
+      .prepare(
+        "SELECT status, last_error, completed_at FROM delivery_fanouts WHERE id = ?",
+      )
+      .bind(fanoutId)
+      .first();
+    if (
+      row?.status !== expectedStatus ||
+      !row.completed_at ||
+      (label === "dlq-exhaustion" &&
+        (typeof row.last_error !== "string" || row.last_error.length === 0))
+    ) {
+      throw new Error(
+        `${label} did not persist its ${expectedStatus} fanout result: ${JSON.stringify(row)}`,
+      );
+    }
+  }
+
+  const media = await worker.getR2Bucket("MEDIA");
+  const stories = [
+    { name: "expired", endTime: "2000-01-01T00:00:00.000Z" },
+    { name: "active", endTime: "2999-01-01T00:00:00.000Z" },
+  ];
+  for (const story of stories) {
+    const key = `uploads/release-smoke-${story.name}.webp`;
+    await media.put(key, `release-smoke-${story.name}`);
+    await db.batch([
+      db
+        .prepare(
+          `INSERT INTO objects (
+          ap_id, type, attributed_to, attachments_json, end_time
+        ) VALUES (?, 'Story', ?, ?, ?)`,
+        )
+        .bind(
+          `${APP_ORIGIN}/ap/objects/${story.name}`,
+          actorApId,
+          JSON.stringify([{ r2_key: key }]),
+          story.endTime,
+        ),
+      db
+        .prepare(
+          `INSERT INTO media_uploads (
+          id, r2_key, uploader_ap_id, content_type, size
+        ) VALUES (?, ?, ?, 'image/webp', ?)`,
+        )
+        .bind(
+          `release-smoke-${story.name}`,
+          key,
+          actorApId,
+          `release-smoke-${story.name}`.length,
+        ),
+    ]);
+  }
+
+  // Repeat the actual native cron dispatch to prove cleanup is stable and the
+  // expired Story's post count is decremented exactly once.
+  for (let pass = 0; pass < 2; pass += 1) {
+    const result = await native.scheduled({
+      cron: "0 * * * *",
+      scheduledTime: new Date(),
+    });
+    if (result.outcome !== "ok") {
+      throw new Error(
+        `scheduled retention did not complete: ${JSON.stringify(result)}`,
+      );
+    }
+    for (const story of stories) {
+      const key = `uploads/release-smoke-${story.name}.webp`;
+      const storyId = `${APP_ORIGIN}/ap/objects/${story.name}`;
+      const expectedPresent = story.name === "active";
+      const object = await db
+        .prepare("SELECT ap_id FROM objects WHERE ap_id = ?")
+        .bind(storyId)
+        .first();
+      const upload = await db
+        .prepare("SELECT id FROM media_uploads WHERE id = ?")
+        .bind(`release-smoke-${story.name}`)
+        .first();
+      const blob = await media.get(key);
+      if (
+        Boolean(object) !== expectedPresent ||
+        Boolean(upload) !== expectedPresent ||
+        Boolean(blob) !== expectedPresent
+      ) {
+        throw new Error(
+          `scheduled retention left the wrong ${story.name} Story/media state`,
+        );
+      }
+      if (blob && (await blob.text()) !== `release-smoke-${story.name}`) {
+        throw new Error("scheduled retention changed the active media bytes");
+      }
+    }
+    const actor = await db
+      .prepare("SELECT post_count FROM actors WHERE ap_id = ?")
+      .bind(actorApId)
+      .first();
+    if (actor?.post_count !== 1) {
+      throw new Error(
+        `scheduled retention post_count is ${actor?.post_count}; expected 1`,
+      );
+    }
+  }
+
+  return {
+    schemaSha256: `sha256:${sha256(schemaBytes)}`,
+    migrationCount: schema.entries.length,
+  };
+}
 
 function sha256(bytes) {
   return createHash("sha256").update(bytes).digest("hex");
@@ -78,18 +286,27 @@ async function smokeNativeWorker(artifactPath, artifactDigest) {
     bindings: {
       APP_URL: APP_ORIGIN,
       AUTH_PASSWORD_HASH: "release-smoke-only",
-      DELIVERY_QUEUE_NAME: "yurumeet-delivery",
-      DELIVERY_DLQ_NAME: "yurumeet-delivery-dlq",
+      DELIVERY_QUEUE_NAME: DELIVERY_QUEUE,
+      DELIVERY_DLQ_NAME: DELIVERY_DLQ,
       ENCRYPTION_KEY: "00".repeat(32),
     },
     d1Databases: ["DB"],
     kvNamespaces: ["KV"],
     r2Buckets: ["MEDIA"],
     queueProducers: ["DELIVERY_QUEUE", "DELIVERY_DLQ"],
+    // Keep Workerd diagnostics and deliberate dead-letter logs off the pure
+    // JSON result stream.
+    handleRuntimeStdio(stdout, stderr) {
+      stdout.pipe(process.stderr, { end: false });
+      stderr.pipe(process.stderr, { end: false });
+    },
   });
 
   try {
     await worker.ready;
+    // HTTP middleware can enqueue durable outbox work. Prepare and exercise
+    // the product schema before any request reaches those background tasks.
+    const background = await qualifyBackgroundEvents(worker);
 
     const readyResponse = await worker.dispatchFetch(`${APP_ORIGIN}/readyz`, {
       headers: { accept: "application/json" },
@@ -156,7 +373,16 @@ async function smokeNativeWorker(artifactPath, artifactDigest) {
       compatibilityDate: sourceConfig.compatibility_date,
       compatibilityFlags: sourceConfig.compatibility_flags,
       substrate: "runtime-native-bindings",
-      checks: ["readyz", "discovery", "embedded-ui"],
+      ...background,
+      checks: [
+        "readyz",
+        "discovery",
+        "embedded-ui",
+        "main-queue-fanout",
+        "dlq-exhaustion",
+        "scheduled-story-retention",
+        "scheduled-story-retention-idempotence",
+      ],
       status: "PASSED",
     };
   } finally {

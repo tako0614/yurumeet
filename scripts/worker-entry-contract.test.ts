@@ -80,15 +80,17 @@ describe("generated worker entry", () => {
     expect(fetchHandler).toContain("await backendApp.fetch(");
   });
 
-  test("preserves direct delivery and DLQ identities and synthesizes only the single-consumer Host identity", () => {
+  test("requires both distinct direct queue names and exact invocation identity", () => {
     expect(entrySource).toContain("withDeliveryConsumerIdentity");
     expect(entrySource).toContain("Queue invocation has no native identity");
-    expect(entrySource).toContain("The Provider is free to replace");
-    expect(entrySource).toContain("env.DELIVERY_QUEUE_NAME?.trim()");
-    expect(entrySource).toContain("env.DELIVERY_DLQ_NAME?.trim()");
     expect(entrySource).toContain(
-      "return env; // The direct adapter already declares both distinct queue identities.",
+      "Delivery and DLQ queue identities must both be declared",
     );
+    expect(entrySource).toContain(
+      "Delivery and DLQ queue identities must be distinct",
+    );
+    expect(entrySource).toContain("Unrecognized queue identity: ");
+    expect(entrySource).not.toContain("The Provider is free to replace");
     expect(entrySource).toContain("await withRequiredBackgroundPublicOrigin(");
   });
 
@@ -320,49 +322,79 @@ describe("generated entry lane behavior", () => {
       DB: nativeD1(),
       KV: kv(),
       APP_URL: "https://yurumeet.example.test",
-      // Configured on both sides, so the entry keeps the direct identities and
-      // an unrecognised queue name settles instead of reaching the database.
+      // Direct installs must declare both names; portable Hosts project the
+      // same logical names with their lane's queue binding shape.
       DELIVERY_QUEUE_NAME: "configured-delivery",
       DELIVERY_DLQ_NAME: "configured-delivery-dlq",
       ...overrides,
     };
   }
 
-  function cloudflareBatch(settled: string[], queue = "some-other-queue") {
+  function cloudflareBatch(
+    settled: string[],
+    queue = "some-other-queue",
+    body: unknown = {},
+  ) {
     return {
       queue,
-      messages: [],
+      messages: [
+        {
+          id: "m1",
+          timestamp: new Date("2026-09-01T00:00:00.000Z"),
+          attempts: 1,
+          body,
+          ack: () => settled.push("ack:m1"),
+          retry: () => settled.push("retry:m1"),
+        },
+      ],
       ackAll: () => settled.push("ackAll"),
       retryAll: () => settled.push("retryAll"),
     };
   }
 
-  function facadeBatch(settled: string[], queue = "some-other-queue") {
+  function facadeBatch(
+    settled: string[],
+    queue = "some-other-queue",
+    body: unknown = {},
+  ) {
     return {
       batchId: "b1",
       queue,
-      messages: [],
+      messages: [
+        {
+          id: "m1",
+          timestampMillis: Date.parse("2026-09-01T00:00:00.000Z"),
+          attempts: 1,
+          body: { encoding: "base64", data: btoa(JSON.stringify(body)) },
+          acknowledge: () => settled.push("ack:m1"),
+          retry: () => settled.push("retry:m1"),
+        },
+      ],
       acknowledgeAll: () => settled.push("ackAll"),
       retryAll: () => settled.push("retryAll"),
     };
   }
 
-  test("an undeclared lane is the raw Cloudflare bindings", async () => {
+  test("a Cloudflare event with an undeclared queue is refused without settling", async () => {
     const { default: worker } = await loadEntry();
     const settled: string[] = [];
-    await worker.queue(cloudflareBatch(settled), env(), {});
-    expect(settled).toEqual(["ackAll"]);
+    await expect(
+      worker.queue(cloudflareBatch(settled), env(), {}),
+    ).rejects.toThrow(/Unrecognized queue identity/);
+    expect(settled).toEqual([]);
   });
 
-  test("portable takes the facade bindings and the facade batch", async () => {
+  test("a portable event with an undeclared queue is refused without settling", async () => {
     const { default: worker } = await loadEntry();
     const settled: string[] = [];
-    await worker.queue(
-      facadeBatch(settled),
-      env({ YURUCOMMU_RUNTIME_LANE: "portable", DB: edgeSql() }),
-      {},
-    );
-    expect(settled).toEqual(["ackAll"]);
+    await expect(
+      worker.queue(
+        facadeBatch(settled),
+        env({ YURUCOMMU_RUNTIME_LANE: "portable", DB: edgeSql() }),
+        {},
+      ),
+    ).rejects.toThrow(/Unrecognized queue identity/);
+    expect(settled).toEqual([]);
   });
 
   test("refuses a lane the build does not know rather than defaulting", async () => {
@@ -395,20 +427,157 @@ describe("generated entry lane behavior", () => {
   // The queue identity is read off the wrapped batch, so a host that invokes
   // the consumer without one fails closed on either lane rather than falling
   // back to a guessed delivery-queue name.
-  test("fails closed when a facade invocation carries no queue identity", async () => {
+  test("both lanes refuse missing, partial, equal, and mismatched queue names", async () => {
     const { default: worker } = await loadEntry();
-    await expect(
-      worker.queue(
-        facadeBatch([], " "),
-        {
-          DB: edgeSql(),
-          KV: kv(),
-          APP_URL: "https://yurumeet.example.test",
-          YURUCOMMU_RUNTIME_LANE: "portable",
+    const cases = [
+      {
+        label: "empty batch identity",
+        queue: " ",
+        overrides: {},
+        error: /Queue invocation has no native identity/,
+      },
+      {
+        label: "missing names",
+        queue: "configured-delivery",
+        overrides: {
+          DELIVERY_QUEUE_NAME: undefined,
+          DELIVERY_DLQ_NAME: undefined,
         },
-        {},
-      ),
-    ).rejects.toThrow("Queue invocation has no native identity");
+        error: /identities must both be declared/,
+      },
+      {
+        label: "missing DLQ name",
+        queue: "configured-delivery",
+        overrides: { DELIVERY_DLQ_NAME: undefined },
+        error: /identities must both be declared/,
+      },
+      {
+        label: "missing delivery name",
+        queue: "configured-delivery-dlq",
+        overrides: { DELIVERY_QUEUE_NAME: undefined },
+        error: /identities must both be declared/,
+      },
+      {
+        label: "equal names",
+        queue: "same-queue",
+        overrides: {
+          DELIVERY_QUEUE_NAME: "same-queue",
+          DELIVERY_DLQ_NAME: "same-queue",
+        },
+        error: /identities must be distinct/,
+      },
+      {
+        label: "mismatched event name",
+        queue: "unrecognized-queue",
+        overrides: {},
+        error: /Unrecognized queue identity/,
+      },
+    ];
+    for (const lane of ["cloudflare", "portable"] as const) {
+      for (const scenario of cases) {
+        const settled: string[] = [];
+        const batch =
+          lane === "cloudflare"
+            ? cloudflareBatch(settled, scenario.queue)
+            : facadeBatch(settled, scenario.queue);
+        const bindings =
+          lane === "cloudflare"
+            ? env(scenario.overrides)
+            : env({
+                ...scenario.overrides,
+                YURUCOMMU_RUNTIME_LANE: "portable",
+                DB: edgeSql(),
+              });
+        await expect(
+          worker.queue(batch, bindings, {}),
+          `${lane}: ${scenario.label}`,
+        ).rejects.toThrow(scenario.error);
+        expect(settled, `${lane}: ${scenario.label}`).toEqual([]);
+      }
+    }
+  });
+
+  async function captureQueueLogs(run: () => Promise<void>) {
+    const lines: string[] = [];
+    const originalWarn = console.warn;
+    const originalError = console.error;
+    const originalLog = console.log;
+    const capture = (...parts: unknown[]) => lines.push(parts.join(" "));
+    console.warn = capture;
+    console.error = capture;
+    console.log = capture;
+    try {
+      await run();
+    } finally {
+      console.warn = originalWarn;
+      console.error = originalError;
+      console.log = originalLog;
+    }
+    return lines.join("\n");
+  }
+
+  test("renamed native and portable queues reach the corresponding core handlers", async () => {
+    const { default: worker } = await loadEntry();
+    const cases = [
+      {
+        lane: "cloudflare" as const,
+        queue: "native-main-renamed",
+        bindingNames: {
+          DELIVERY_QUEUE_NAME: "native-main-renamed",
+          DELIVERY_DLQ_NAME: "native-dlq-renamed",
+        },
+        event: "delivery.queue.invalid_message",
+      },
+      {
+        lane: "cloudflare" as const,
+        queue: "native-dlq-renamed",
+        bindingNames: {
+          DELIVERY_QUEUE_NAME: "native-main-renamed",
+          DELIVERY_DLQ_NAME: "native-dlq-renamed",
+        },
+        event: "delivery.dlq.invalid_message",
+      },
+      {
+        lane: "portable" as const,
+        queue: "portable-main-renamed",
+        bindingNames: {
+          DELIVERY_QUEUE_NAME: "portable-main-renamed",
+          DELIVERY_DLQ_NAME: "portable-dlq-renamed",
+        },
+        event: "delivery.queue.invalid_message",
+      },
+      {
+        lane: "portable" as const,
+        queue: "portable-dlq-renamed",
+        bindingNames: {
+          DELIVERY_QUEUE_NAME: "portable-main-renamed",
+          DELIVERY_DLQ_NAME: "portable-dlq-renamed",
+        },
+        event: "delivery.dlq.invalid_message",
+      },
+    ];
+
+    for (const scenario of cases) {
+      const settled: string[] = [];
+      const batch =
+        scenario.lane === "cloudflare"
+          ? cloudflareBatch(settled, scenario.queue, { unrecognized: true })
+          : facadeBatch(settled, scenario.queue, { unrecognized: true });
+      const bindings =
+        scenario.lane === "cloudflare"
+          ? env(scenario.bindingNames)
+          : env({
+              ...scenario.bindingNames,
+              YURUCOMMU_RUNTIME_LANE: "portable",
+              DB: edgeSql(),
+            });
+      const logs = await captureQueueLogs(async () => {
+        await worker.queue(batch, bindings, {});
+      });
+      expect(settled, scenario.queue).toEqual(["ack:m1"]);
+      expect(logs, scenario.queue).toContain(scenario.event);
+      expect(logs, scenario.queue).not.toContain("queue.unknown");
+    }
   });
 });
 
@@ -662,21 +831,26 @@ describe("public origin per lane", () => {
   test("queue reads the origin a request already pinned", async () => {
     const { default: worker } = await loadEntry();
     const kv = edgeKv();
+    const bindings = {
+      DB: edgeSql(),
+      KV: kv,
+      DELIVERY_QUEUE_NAME: "configured-main",
+      DELIVERY_DLQ_NAME: "configured-dlq",
+      YURUCOMMU_RUNTIME_LANE: "portable",
+    };
     await worker.fetch(
       new Request("https://pinned.example.test/healthz"),
-      { DB: edgeSql(), KV: kv, YURUCOMMU_RUNTIME_LANE: "portable" },
+      bindings,
       {},
     );
     resetObservedPublicOrigin();
 
-    // An unrecognised queue name settles the batch instead of reaching the
-    // database, so reaching this point at all is the assertion: the origin
-    // resolved without an `APP_URL` and without a request.
-    await worker.queue(
-      facadeBatch("some-other-queue"),
-      { DB: edgeSql(), KV: kv, YURUCOMMU_RUNTIME_LANE: "portable" },
-      {},
-    );
+    // The background resolver reads the already-pinned origin before the
+    // queue identity guard rejects this foreign event, so the failure must be
+    // the identity error rather than PublicOriginError.
+    await expect(
+      worker.queue(facadeBatch("some-other-queue"), bindings, {}),
+    ).rejects.toThrow(/Unrecognized queue identity/);
     expect(kv.read(CANONICAL_ORIGIN_KV_KEY)).toBe(
       "https://pinned.example.test",
     );
