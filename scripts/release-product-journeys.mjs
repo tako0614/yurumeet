@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { qualifyPostAttachments } from "./release-post-journey.mjs";
 import {
   loginProductSession,
   logoutProductSession,
@@ -105,6 +106,7 @@ async function tableCounts(db) {
     "activities",
     "inbox",
     "media_uploads",
+    "delivery_fanouts",
   ]) {
     const result = await first(db, `SELECT COUNT(*) AS count FROM ${table}`);
     counts[table] = result?.count;
@@ -366,6 +368,15 @@ export async function qualifyProductJourneys(
     await requirePrivateDenialBody(denied, readJson, "private-media-refusal");
   }
 
+  const postChecks = await qualifyPostAttachments(worker, {
+    origin,
+    ownerApId: senderApId,
+    ownerSession: senderSession,
+    unrelatedSession,
+    png: PNG_BYTES,
+    readJson,
+  });
+
   const beforeUnauthenticated = await tableCounts(db);
   const mediaKeysBefore = await uploadKeys(media);
   const unauthenticatedDm = await worker.dispatchFetch(
@@ -431,6 +442,17 @@ export async function qualifyProductJourneys(
   });
   requireStatus(revokedDm, 401, "logout-revocation DM write");
   await readJson(revokedDm, "logout-revocation");
+  const revokedPost = await worker.dispatchFetch(origin + "/api/posts", {
+    method: "POST",
+    headers: {
+      ...sessionHeaders(origin, senderSession),
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({ content: "revoked-post-write", attachments: [] }),
+  });
+  if (revokedPost.status !== 401)
+    throw new Error("logout-revocation accepted a post write");
+  await readJson(revokedPost, "logout-revocation");
   const revokedForm = new FormData();
   revokedForm.set(
     "file",
@@ -473,6 +495,7 @@ export async function qualifyProductJourneys(
       "private-media-read-refusal",
       "invalid-media-refusal",
       "unauthenticated-api-refusal",
+      ...postChecks,
       "logout-revocation",
     ],
   };
