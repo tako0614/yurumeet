@@ -127,6 +127,9 @@ describe("release Worker smoke", () => {
         "dlq-exhaustion",
         "scheduled-story-retention",
         "scheduled-story-retention-idempotence",
+        "password-login",
+        "session-rotation",
+        "invalid-password-refusal",
         "authenticated-dm",
         "dm-isolation",
         "media-upload",
@@ -134,10 +137,30 @@ describe("release Worker smoke", () => {
         "private-media-read-refusal",
         "invalid-media-refusal",
         "unauthenticated-api-refusal",
+        "logout-revocation",
       ],
       migrationCount: expect.any(Number),
+      authentication: { passwordMethods: ["pbkdf2-sha256", "bootstrap"] },
       status: "PASSED",
     });
+  }, 30_000);
+
+  test("rejects private media denial with image bytes", async () => {
+    await expectSmokeToRejectFakeWrite(
+      `    if (request.method === "GET" && new URL(request.url).pathname.startsWith("/media/") && !request.headers.get("cookie")) {
+      return Response.json({ error: "Authentication required", bytes: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mMQCDjxHwADxAIopPp9tgAAAABJRU5ErkJggg==" }, { status: 403, headers: { "cache-control": "no-store" } });
+    }\n`,
+      "private-media-refusal included non-error content",
+    );
+  }, 30_000);
+
+  test("rejects revoked private media denial with image bytes", async () => {
+    await expectSmokeToRejectFakeWrite(
+      `    if (request.method === "GET" && new URL(request.url).pathname.startsWith("/media/") && request.headers.get("cookie") && (await env.DB.prepare("SELECT COUNT(*) AS count FROM sessions").first()).count === 2) {
+      return Response.json({ error: "Authentication required", bytes: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mMQCDjxHwADxAIopPp9tgAAAABJRU5ErkJggg==" }, { status: 403, headers: { "cache-control": "no-store" } });
+    }\n`,
+      "logout-revocation included non-error content",
+    );
   }, 30_000);
 
   test("rejects a fake successful DM response without persistence", async () => {
@@ -151,6 +174,42 @@ describe("release Worker smoke", () => {
     }
 `,
       "DM object was not persisted",
+    );
+  }, 30_000);
+
+  test("rejects login success without a session row", async () => {
+    await expectSmokeToRejectFakeWrite(
+      `    if (request.method === "POST" && new URL(request.url).pathname === "/api/auth/login" && (await request.clone().json()).password === "release-smoke-only") {
+      return Response.json({ success: true }, { headers: { "set-cookie": "session=fake-native-login-session; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=2592000" } });
+    }\n`,
+      "password-login did not persist",
+    );
+  }, 30_000);
+
+  test("rejects bootstrap login success without a session row", async () => {
+    await expectSmokeToRejectFakeWrite(
+      `    if (request.method === "POST" && new URL(request.url).pathname === "/api/auth/login" && !env.AUTH_PASSWORD_HASH.includes(":") && (await request.clone().json()).password === "release-smoke-only") {
+      return Response.json({ success: true }, { headers: { "set-cookie": "session=fake-native-login-session; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=2592000" } });
+    }\n`,
+      "password-login did not persist",
+    );
+  }, 30_000);
+
+  test("rejects an accepted invalid password", async () => {
+    await expectSmokeToRejectFakeWrite(
+      `    if (request.method === "POST" && new URL(request.url).pathname === "/api/auth/login" && (await request.clone().json()).password === "release-smoke-only-incorrect") {
+      return Response.json({ success: true });
+    }\n`,
+      "invalid-password-refusal",
+    );
+  }, 30_000);
+
+  test("rejects logout success without session revocation", async () => {
+    await expectSmokeToRejectFakeWrite(
+      `    if (request.method === "POST" && new URL(request.url).pathname === "/api/auth/logout") {
+      return Response.json({ success: true }, { headers: { "set-cookie": "session=; Path=/; Max-Age=0" } });
+    }\n`,
+      "logout-revocation left",
     );
   }, 30_000);
 

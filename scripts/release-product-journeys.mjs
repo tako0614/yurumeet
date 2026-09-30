@@ -1,4 +1,8 @@
 import { createHash } from "node:crypto";
+import {
+  loginProductSession,
+  logoutProductSession,
+} from "./release-auth-journey.mjs";
 
 const PNG_BYTES = new Uint8Array(
   Buffer.from(
@@ -19,6 +23,21 @@ function requireStatus(response, expected, label) {
   }
 }
 
+async function requirePrivateDenialBody(response, readJson, label) {
+  const denied = await readJson(response, label);
+  if (
+    denied === null ||
+    Object.keys(denied).length !== 1 ||
+    ![
+      "Authentication required",
+      "Not authorized",
+      "Not authorized to access this media",
+    ].includes(denied.error)
+  ) {
+    throw new Error(`${label} included non-error content`);
+  }
+}
+
 async function first(db, sql, ...values) {
   return db
     .prepare(sql)
@@ -33,14 +52,14 @@ async function run(db, sql, ...values) {
     .run();
 }
 
-async function seedActor(db, origin, username) {
+async function seedActor(db, origin, username, role = "member") {
   const actorApId = `${origin}/ap/users/${username}`;
   await run(
     db,
     `INSERT INTO actors (
       ap_id, preferred_username, name, inbox, outbox, followers_url,
-      following_url, public_key_pem, private_key_pem
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, 'journey-test-only', 'journey-test-only')`,
+      following_url, public_key_pem, private_key_pem, role
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, 'journey-test-only', 'journey-test-only', ?)`,
     actorApId,
     username,
     `Release smoke ${username}`,
@@ -48,6 +67,7 @@ async function seedActor(db, origin, username) {
     `${actorApId}/outbox`,
     `${actorApId}/followers`,
     `${actorApId}/following`,
+    role,
   );
   return actorApId;
 }
@@ -99,14 +119,19 @@ async function uploadKeys(media) {
 
 export async function qualifyProductJourneys(
   worker,
-  { origin, sessionSalt, readJson },
+  { origin, password, sessionSalt, readJson },
 ) {
   const db = await worker.getD1Database("DB");
   const media = await worker.getR2Bucket("MEDIA");
-  const senderApId = await seedActor(db, origin, "release-smoke-sender");
+  const senderApId = await seedActor(
+    db,
+    origin,
+    "release-smoke-sender",
+    "owner",
+  );
   const recipientApId = await seedActor(db, origin, "release-smoke-recipient");
   const unrelatedApId = await seedActor(db, origin, "release-smoke-unrelated");
-  const senderSession = await seedSession(
+  const oldSenderSession = await seedSession(
     db,
     senderApId,
     sessionSalt,
@@ -124,6 +149,16 @@ export async function qualifyProductJourneys(
     sessionSalt,
     "release-smoke-session-unrelated-ecf49f83",
   );
+
+  const authSession = await loginProductSession(worker, {
+    origin,
+    password,
+    sessionSalt,
+    readJson,
+    actorApId: senderApId,
+    oldSession: oldSenderSession,
+  });
+  const senderSession = authSession.sessionId;
 
   const content = "release smoke direct message";
   const postResponse = await worker.dispatchFetch(
@@ -328,7 +363,7 @@ export async function qualifyProductJourneys(
     if (denied.headers.get("cache-control") !== "no-store") {
       throw new Error("private-media-read-refusal was cacheable");
     }
-    await readJson(denied, "private-media-read-refusal");
+    await requirePrivateDenialBody(denied, readJson, "private-media-refusal");
   }
 
   const beforeUnauthenticated = await tableCounts(db);
@@ -385,8 +420,52 @@ export async function qualifyProductJourneys(
     throw new Error("unauthenticated API requests created R2 objects");
   }
 
+  await logoutProductSession(worker, { origin, readJson }, authSession);
+  const revokedDm = await worker.dispatchFetch(origin + dmPath(recipientApId), {
+    method: "POST",
+    headers: {
+      ...sessionHeaders(origin, senderSession),
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({ content: "revoked-session-write" }),
+  });
+  requireStatus(revokedDm, 401, "logout-revocation DM write");
+  await readJson(revokedDm, "logout-revocation");
+  const revokedForm = new FormData();
+  revokedForm.set(
+    "file",
+    new File([PNG_BYTES], "revoked.png", { type: "image/png" }),
+  );
+  const revokedUpload = await worker.dispatchFetch(
+    origin + "/api/media/upload",
+    {
+      method: "POST",
+      headers: sessionHeaders(origin, senderSession),
+      body: revokedForm,
+    },
+  );
+  requireStatus(revokedUpload, 401, "logout-revocation media write");
+  await readJson(revokedUpload, "logout-revocation");
+  const revokedRead = await worker.dispatchFetch(origin + mediaUrl, {
+    headers: sessionHeaders(origin, senderSession),
+  });
+  requireStatus(revokedRead, 403, "logout-revocation private media");
+  if (revokedRead.headers.get("cache-control") !== "no-store") {
+    throw new Error("logout-revocation cached private media");
+  }
+  await requirePrivateDenialBody(revokedRead, readJson, "logout-revocation");
+  if (
+    JSON.stringify(await tableCounts(db)) !==
+      JSON.stringify(beforeUnauthenticated) ||
+    JSON.stringify(await uploadKeys(media)) !== JSON.stringify(mediaKeysBefore)
+  ) {
+    throw new Error("logout-revocation left durable write effects");
+  }
   return {
     checks: [
+      "password-login",
+      "session-rotation",
+      "invalid-password-refusal",
       "authenticated-dm",
       "dm-isolation",
       "media-upload",
@@ -394,6 +473,7 @@ export async function qualifyProductJourneys(
       "private-media-read-refusal",
       "invalid-media-refusal",
       "unauthenticated-api-refusal",
+      "logout-revocation",
     ],
   };
 }
