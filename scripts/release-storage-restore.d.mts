@@ -38,8 +38,20 @@ export type StorageRestoreReceipt = {
   clonedStores: ClosedStores;
   schemaFingerprintSha256: string;
   dataFingerprintSha256: string;
+  authentication: "password" | "oidc";
+  oidc?: {
+    issuer: import("./release-storage-oidc.mjs").RestoreOidcEvidence;
+    credentials: string;
+    limitation: string;
+    runtimeDiagnostics: {
+      policy: "discard-without-retaining-or-forwarding-raw-output";
+      observedBytes: number;
+    };
+  };
   externalWorkerFetches: {
-    policy: "denied-locally-by-miniflare-outbound-service";
+    policy:
+      | "denied-locally-by-miniflare-outbound-service"
+      | "local-synthetic-oidc-endpoints-only";
     observedBlockedFetches: 0;
   };
   scope: string;
@@ -49,6 +61,7 @@ export declare function qualifyStorageRestore(args: {
   artifactPath: string;
   artifactSha256: string;
   repoRoot: string;
+  authentication?: "password" | "oidc";
   wranglerConfig: {
     compatibility_date: string;
     compatibility_flags: string[];

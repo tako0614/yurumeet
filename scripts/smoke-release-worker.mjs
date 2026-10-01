@@ -694,15 +694,31 @@ async function main() {
       ),
     }),
   );
+  const storageRestoreOidc = await qualifyStage(
+    "closed-storage-restore-oidc",
+    () =>
+      qualifyStorageRestore({
+        artifactPath,
+        artifactSha256: `sha256:${artifactDigest}`,
+        repoRoot: repo,
+        authentication: "oidc",
+        wranglerConfig: unstable_readConfig(
+          { config: resolve(repo, "wrangler.jsonc") },
+          { hideWarnings: true },
+        ),
+      }),
+  );
   process.stdout.write(
     `${JSON.stringify({
       ...results[0],
       sessionSaltGuard,
       storageRestore,
+      storageRestoreOidc,
       checks: [
         ...results[0].checks,
         ...sessionSaltGuard.checks,
         "native-persistent-storage-restore",
+        "native-persistent-oidc-storage-restore",
       ],
       authentication: {
         passwordMethods: PASSWORD_FIXTURES.map((fixture) => fixture.method),

@@ -11,10 +11,12 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
+import { Writable } from "node:stream";
 import { Miniflare } from "miniflare";
 import { unstable_splitSqlQuery } from "wrangler";
 
 import { createManagedNativeRuntime } from "./native-runtime-stdio.mjs";
+import { createSyntheticRestoreIssuer } from "./release-storage-oidc.mjs";
 
 const STORE_NAMES = ["d1", "kv", "r2"];
 const ORIGIN = "https://storage-restore.yurumeet.invalid";
@@ -43,8 +45,10 @@ const CHECKS = [
   "original-closed-unchanged",
 ];
 
+class StorageRestoreAssertion extends Error {}
+
 function requireEffect(condition, label) {
-  if (!condition) throw new Error(`storage restore ${label}`);
+  if (!condition) throw new StorageRestoreAssertion(`storage restore ${label}`);
 }
 
 function sha256(bytes) {
@@ -75,7 +79,7 @@ function inventoryDirectory(root) {
         const bytes = readFileSync(join(root, child));
         files.push({ path: child, bytes: bytes.length, sha256: sha256(bytes) });
       } else {
-        throw new Error("storage restore store contains a non-file entry");
+        requireEffect(false, "store-contains-non-file-entry");
       }
     }
   }
@@ -172,7 +176,15 @@ export function cloneClosedStores(
   return { paths, inventory };
 }
 
-function nativeWorker(artifactPath, paths, ids, wranglerConfig, outbound) {
+function nativeWorker(
+  artifactPath,
+  paths,
+  ids,
+  wranglerConfig,
+  outbound,
+  issuer,
+  diagnostics,
+) {
   const root = dirname(artifactPath);
   const deliveryQueue = "yurumeet-restore-delivery";
   const deadLetterQueue = "yurumeet-restore-dlq";
@@ -189,7 +201,9 @@ function nativeWorker(artifactPath, paths, ids, wranglerConfig, outbound) {
             compatibilityDate: wranglerConfig.compatibility_date,
             compatibilityFlags: wranglerConfig.compatibility_flags,
             bindings: {
-              AUTH_PASSWORD_HASH: PASSWORD_HASH,
+              ...(issuer
+                ? issuer.bindings
+                : { AUTH_PASSWORD_HASH: PASSWORD_HASH }),
               YURUCOMMU_SESSION_HASH_SALT: SESSION_SALT,
               ENCRYPTION_KEY,
               DELIVERY_QUEUE_NAME: deliveryQueue,
@@ -202,10 +216,12 @@ function nativeWorker(artifactPath, paths, ids, wranglerConfig, outbound) {
               DELIVERY_QUEUE: { queueName: deliveryQueue },
               DELIVERY_DLQ: { queueName: deadLetterQueue },
             },
-            outboundService: async () => {
-              outbound.blockedFetches += 1;
-              return new Response(null, { status: 502 });
-            },
+            outboundService: issuer
+              ? (request) => issuer.fetch(request)
+              : async () => {
+                  outbound.blockedFetches += 1;
+                  return new Response(null, { status: 502 });
+                },
           },
         ],
         compatibilityDate: wranglerConfig.compatibility_date,
@@ -216,6 +232,7 @@ function nativeWorker(artifactPath, paths, ids, wranglerConfig, outbound) {
         r2Persist: paths.r2,
         handleRuntimeStdio,
       }),
+    issuer ? { destination: diagnostics } : undefined,
   );
 }
 
@@ -245,13 +262,17 @@ async function jsonResponse(response, status, label) {
   try {
     return JSON.parse(text);
   } catch {
-    throw new Error(`storage restore ${label}-invalid-json`);
+    requireEffect(false, `${label}-invalid-json`);
   }
 }
 
 function cookieFrom(response) {
   const headers = response.headers.getSetCookie();
-  const cookies = headers.filter((header) => header.startsWith("session="));
+  const cookies = headers.filter(
+    (header) =>
+      header.startsWith("session=") &&
+      header.split(";", 1)[0].length > "session=".length,
+  );
   requireEffect(
     cookies.length === 1 && cookies[0].length <= 4096,
     "login-cookie-count",
@@ -312,7 +333,28 @@ async function applySchema(db, repoRoot) {
   };
 }
 
-async function dataSnapshot(db) {
+function actorTimestamp(raw) {
+  // Locked Core nowIso() writes UTC with a space separator and no zone suffix.
+  requireEffect(
+    typeof raw === "string" &&
+      /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}$/.test(raw),
+    "oidc-actor-login-timestamp-format",
+  );
+  const timestamp = Date.parse(raw.replace(" ", "T") + "Z");
+  requireEffect(
+    Number.isFinite(timestamp) &&
+      new Date(timestamp).toISOString().replace("T", " ").replace("Z", "") ===
+        raw,
+    "oidc-actor-login-timestamp-valid",
+  );
+  return timestamp;
+}
+
+async function dataSnapshot(
+  db,
+  includeSessions = true,
+  normalizeLoginTimestamp = false,
+) {
   const queries = {
     actors: "SELECT * FROM actors ORDER BY ap_id",
     sessions: "SELECT * FROM sessions ORDER BY id",
@@ -324,7 +366,17 @@ async function dataSnapshot(db) {
   };
   const rows = {};
   for (const [name, sql] of Object.entries(queries)) {
+    if (name === "sessions" && !includeSessions) continue;
     rows[name] = (await db.prepare(sql).all()).results;
+  }
+  let actorUpdatedAt;
+  if (normalizeLoginTimestamp) {
+    requireEffect(rows.actors.length === 1, "oidc-exact-one-product-actor");
+    actorUpdatedAt = rows.actors[0].updated_at;
+    actorTimestamp(actorUpdatedAt);
+    // Core's existing-subject login updates this one field through Drizzle.
+    // Full clone equality above uses the unnormalized snapshot.
+    rows.actors[0] = { ...rows.actors[0], updated_at: "login-timestamp" };
   }
   const { schema, ...data } = rows;
   return {
@@ -333,6 +385,7 @@ async function dataSnapshot(db) {
     counts: Object.fromEntries(
       Object.entries(data).map(([name, table]) => [name, table.length]),
     ),
+    ...(normalizeLoginTimestamp ? { actorUpdatedAt } : {}),
   };
 }
 
@@ -406,7 +459,41 @@ async function assertContent(handles, expected) {
   );
 }
 
-async function createFixture(handles) {
+async function oidcRow(db, credential, issuer, label) {
+  const sessionKey = sha256(
+    Buffer.from(`${SESSION_SALT}:${credential.cookie}`),
+  );
+  const row = await db
+    .prepare("SELECT * FROM sessions WHERE id = ?")
+    .bind(sessionKey)
+    .first();
+  requireEffect(
+    row?.id === sessionKey &&
+      row.access_token === sessionKey &&
+      row.member_id === `${ORIGIN}/ap/users/restore_fixture` &&
+      Date.parse(row.expires_at) > Date.now() &&
+      Date.parse(row.provider_token_expires_at) > Date.now(),
+    label + "-salted-session",
+  );
+  await issuer.assertEncrypted(row, credential, ENCRYPTION_KEY, label);
+  return row;
+}
+
+async function assertOidcPresence(fetcher, cookie, expectedActor) {
+  const response = await fetchPath(fetcher, "/api/auth/me", {
+    headers: { cookie: `session=${cookie}` },
+  });
+  const body = await jsonResponse(response, 200, "oidc-provider-presence");
+  requireEffect(
+    body.actor?.ap_id === expectedActor &&
+      body.actor.role === "owner" &&
+      body.provider === "takos" &&
+      body.has_takos_access === true,
+    "oidc-provider-ciphertext-presence",
+  );
+}
+
+async function createFixture(handles, issuer) {
   // No APP_URL binding: the first real HTTPS /readyz request must establish
   // the canonical-origin KV pin through Core's public-origin middleware.
   await ready(handles.fetcher);
@@ -415,19 +502,30 @@ async function createFixture(handles) {
     "initial-origin-pin",
   );
 
-  const response = await fetchPath(handles.fetcher, "/api/auth/login", {
-    method: "POST",
-    headers: { origin: ORIGIN, "content-type": "application/json" },
-    body: JSON.stringify({ password: PASSWORD }),
-  });
-  const body = await jsonResponse(response, 200, "password-login");
-  requireEffect(body.success === true, "password-login-body");
-  const cookie = cookieFrom(response);
+  const credential = issuer
+    ? await issuer.login(
+        handles.fetcher,
+        (_worker, path, init) => fetchPath(handles.fetcher, path, init),
+        cookieFrom,
+      )
+    : undefined;
+  const response = issuer
+    ? undefined
+    : await fetchPath(handles.fetcher, "/api/auth/login", {
+        method: "POST",
+        headers: { origin: ORIGIN, "content-type": "application/json" },
+        body: JSON.stringify({ password: PASSWORD }),
+      });
+  if (!issuer) {
+    const body = await jsonResponse(response, 200, "password-login");
+    requireEffect(body.success === true, "password-login-body");
+  }
+  const cookie = credential?.cookie ?? cookieFrom(response);
   const meResponse = await fetchPath(handles.fetcher, "/api/auth/me", {
     headers: { cookie: `session=${cookie}` },
   });
   const me = await jsonResponse(meResponse, 200, "initial-me");
-  const actorApId = `${ORIGIN}/ap/users/tako`;
+  const actorApId = `${ORIGIN}/ap/users/${issuer ? "restore_fixture" : "tako"}`;
   requireEffect(
     me.actor?.ap_id === actorApId && me.actor.role === "owner",
     "initial-owner",
@@ -445,6 +543,15 @@ async function createFixture(handles) {
       Date.parse(session.expires_at) > Date.now(),
     "salted-session-row",
   );
+  const encryptedRow = issuer
+    ? await oidcRow(handles.db, credential, issuer, "restore-oidc-initial")
+    : undefined;
+  if (issuer) {
+    requireEffect(
+      me.provider === "takos" && me.has_takos_access === true,
+      "initial-oidc-provider-presence",
+    );
+  }
 
   const form = new FormData();
   form.set(
@@ -505,7 +612,7 @@ async function createFixture(handles) {
       snapshot.counts.activities === 1,
     "fixture-d1-row-counts",
   );
-  return { expected, snapshot };
+  return { expected, snapshot, credential, encryptedRow };
 }
 
 export async function qualifyStorageRestore({
@@ -513,6 +620,7 @@ export async function qualifyStorageRestore({
   artifactSha256,
   repoRoot,
   wranglerConfig,
+  authentication = "password",
 }) {
   requireEffect(
     typeof artifactPath === "string" &&
@@ -526,6 +634,17 @@ export async function qualifyStorageRestore({
       Array.isArray(wranglerConfig.compatibility_flags),
     "input-artifact-and-config",
   );
+  requireEffect(
+    authentication === "password" || authentication === "oidc",
+    "supported-authentication-fixture",
+  );
+  const issuer =
+    authentication === "oidc"
+      ? await createSyntheticRestoreIssuer({
+          origin: ORIGIN,
+          need: requireEffect,
+        })
+      : undefined;
   const fixtureRoot = mkdtempSync(join(tmpdir(), "yurumeet-storage-restore-"));
   const originalPaths = storePaths(join(fixtureRoot, "original"));
   const ids = Object.fromEntries(
@@ -535,6 +654,20 @@ export async function qualifyStorageRestore({
     ]),
   );
   const outbound = { blockedFetches: 0 };
+  let diagnosticBytes = 0;
+  const diagnostics = issuer
+    ? new Writable({
+        write(chunk, _encoding, callback) {
+          // Never retain or forward runtime output from credential-bearing
+          // requests. A bounded count is sufficient diagnostic evidence.
+          diagnosticBytes = Math.min(
+            Number.MAX_SAFE_INTEGER,
+            diagnosticBytes + chunk.length,
+          );
+          callback();
+        },
+      })
+    : undefined;
   let original;
   let clone;
   let primaryFailure = false;
@@ -545,6 +678,8 @@ export async function qualifyStorageRestore({
       ids,
       wranglerConfig,
       outbound,
+      issuer,
+      diagnostics,
     );
     await original.worker.ready;
     const first = await handles(original.worker);
@@ -557,7 +692,7 @@ export async function qualifyStorageRestore({
         preFixture.counts.media === 0,
       "fresh-schema-empty",
     );
-    const fixture = await createFixture(first);
+    const fixture = await createFixture(first, issuer);
     requireEffect(
       (await first.kv.get(CANONICAL_ORIGIN_KV_KEY)) === ORIGIN,
       "fixture-origin-pin",
@@ -588,12 +723,14 @@ export async function qualifyStorageRestore({
       ids,
       wranglerConfig,
       outbound,
+      issuer,
+      diagnostics,
     );
     await clone.worker.ready;
     const restored = await handles(clone.worker);
     // No DDL or data seeding occurs on the clone.
     await ready(restored.fetcher);
-    await assertCookie(
+    await (issuer ? assertOidcPresence : assertCookie)(
       restored.fetcher,
       fixture.expected.cookie,
       fixture.expected.actorApId,
@@ -608,6 +745,149 @@ export async function qualifyStorageRestore({
       (await restored.kv.get(CANONICAL_ORIGIN_KV_KEY)) === ORIGIN,
       "restored-origin-pin",
     );
+    const oidcChecks = [];
+    if (issuer) {
+      const preserved = await oidcRow(
+        restored.db,
+        fixture.credential,
+        issuer,
+        "restore-oidc-preserved",
+      );
+      requireEffect(
+        JSON.stringify(preserved) === JSON.stringify(fixture.encryptedRow),
+        "oidc-exact-original-encrypted-row",
+      );
+      requireEffect(
+        JSON.stringify(await dataSnapshot(restored.db)) ===
+          JSON.stringify(fixture.snapshot),
+        "oidc-readback-does-not-change-any-row",
+      );
+      let stableProduct = await dataSnapshot(restored.db, false, true);
+      async function assertProductAfterLogin(label, started, completed) {
+        const next = await dataSnapshot(restored.db, false, true);
+        const previousTimestamp = actorTimestamp(stableProduct.actorUpdatedAt);
+        const nextTimestamp = actorTimestamp(next.actorUpdatedAt);
+        requireEffect(
+          JSON.stringify({
+            ...next,
+            actorUpdatedAt: stableProduct.actorUpdatedAt,
+          }) === JSON.stringify(stableProduct),
+          label + "-product-rows-and-schema-unchanged",
+        );
+        requireEffect(
+          nextTimestamp >= previousTimestamp &&
+            nextTimestamp >= started &&
+            nextTimestamp <= completed,
+          label + "-actor-login-timestamp-monotonic-and-bounded",
+        );
+        await assertContent(restored, fixture.expected);
+        requireEffect(
+          (await restored.kv.get(CANONICAL_ORIGIN_KV_KEY)) === ORIGIN,
+          label + "-kv-origin-unchanged",
+        );
+        stableProduct = next;
+      }
+      async function refused(cookie, label) {
+        const response = await fetchPath(restored.fetcher, "/api/auth/me", {
+          headers: { cookie: `session=${cookie}` },
+        });
+        await response.body?.cancel();
+        requireEffect(response.status === 401, label + "-cookie-refused");
+      }
+      async function reauthenticate(existingCookie, label) {
+        const started = Date.now();
+        const next = await issuer.login(
+          restored.fetcher,
+          (_worker, path, init) => fetchPath(restored.fetcher, path, init),
+          cookieFrom,
+          existingCookie,
+        );
+        const completed = Date.now();
+        requireEffect(
+          next.cookie !== existingCookie &&
+            next.access !== fixture.credential.access &&
+            next.refresh !== fixture.credential.refresh,
+          label + "-fresh-credentials",
+        );
+        const row = await oidcRow(restored.db, next, issuer, label);
+        const sessionIds = (
+          await restored.db.prepare("SELECT id FROM sessions ORDER BY id").all()
+        ).results;
+        requireEffect(
+          sessionIds.length === 1 && sessionIds[0].id === row.id,
+          label + "-exact-one-recovered-session",
+        );
+        await assertOidcPresence(
+          restored.fetcher,
+          next.cookie,
+          fixture.expected.actorApId,
+        );
+        fixture.expected.cookie = next.cookie;
+        await assertProductAfterLogin(label, started, completed);
+        return { credential: next, row };
+      }
+      const rotated = await reauthenticate(
+        fixture.credential.cookie,
+        "restore-oidc-rotated",
+      );
+      requireEffect(
+        rotated.row.provider_access_token !== preserved.provider_access_token &&
+          rotated.row.provider_refresh_token !==
+            preserved.provider_refresh_token,
+        "oidc-rotated-encrypted-values",
+      );
+      await refused(fixture.credential.cookie, "restore-oidc-old-replay");
+      const logout = await fetchPath(restored.fetcher, "/api/auth/logout", {
+        method: "POST",
+        headers: {
+          origin: ORIGIN,
+          cookie: `session=${rotated.credential.cookie}`,
+        },
+      });
+      const loggedOut = await jsonResponse(logout, 200, "oidc-logout");
+      requireEffect(
+        loggedOut.success === true &&
+          (
+            await restored.db
+              .prepare("SELECT COUNT(*) AS count FROM sessions")
+              .first()
+          ).count === 0,
+        "oidc-logout-removes-all-fixture-sessions",
+      );
+      await refused(rotated.credential.cookie, "restore-oidc-logout-replay");
+      // Verify durable data directly while unauthenticated; content is rechecked
+      // through HTTP after the next actual OIDC login.
+      requireEffect(
+        JSON.stringify(await dataSnapshot(restored.db, false, true)) ===
+          JSON.stringify(stableProduct),
+        "oidc-logout-product-data-preserved",
+      );
+      const recovered = await reauthenticate(
+        undefined,
+        "restore-oidc-recovered",
+      );
+      requireEffect(
+        recovered.credential.cookie !== rotated.credential.cookie &&
+          recovered.credential.access !== rotated.credential.access &&
+          recovered.credential.refresh !== rotated.credential.refresh,
+        "oidc-after-logout-fresh-credentials",
+      );
+      await refused(
+        rotated.credential.cookie,
+        "restore-oidc-after-relogin-old-replay",
+      );
+      oidcChecks.push(
+        "fixture-oidc-encrypted-access-refresh-and-recovery-controls",
+        "restored-exact-oidc-ciphertext-and-recovery-controls",
+        "restored-same-subject-reauth-rotates-session-and-bounds-actor-login-time",
+        "restored-oidc-logout-removes-row-and-refuses-replay",
+        "restored-oidc-relogin-recovers-identity-and-data",
+      );
+      requireEffect(
+        issuer.evidence().blocked === 0,
+        "oidc-unexpected-outbound-request",
+      );
+    }
     await clone.dispose();
     clone = undefined;
     requireEffect(
@@ -626,20 +906,41 @@ export async function qualifyStorageRestore({
       physicalIds: ids,
       schemaSha256: schema.schemaSha256,
       migrationCount: schema.migrationCount,
-      checks: [...CHECKS],
+      checks: [...CHECKS, ...oidcChecks],
+      authentication,
+      ...(issuer
+        ? {
+            oidc: {
+              issuer: issuer.evidence(),
+              credentials:
+                "exact opaque ciphertext retained; independent AES-GCM access/refresh recovery and wrong-key/tamper refusal",
+              limitation:
+                "Core has no provider-token decrypt-and-use or refresh path",
+              runtimeDiagnostics: {
+                policy: "discard-without-retaining-or-forwarding-raw-output",
+                observedBytes: diagnosticBytes,
+              },
+            },
+          }
+        : {}),
       closedStores,
       clonedStores: copied.inventory,
       schemaFingerprintSha256: fixture.snapshot.schemaSha256,
       dataFingerprintSha256: fixture.snapshot.dataSha256,
       externalWorkerFetches: {
-        policy: "denied-locally-by-miniflare-outbound-service",
+        policy: issuer
+          ? "local-synthetic-oidc-endpoints-only"
+          : "denied-locally-by-miniflare-outbound-service",
         observedBlockedFetches: 0,
       },
       scope:
-        "same current artifact and physical D1/KV/R2 IDs; fresh 29-migration owner, cookie, public Note and PNG; closed-store byte clone and reopen; no public v0.1.2 upgrade or live custody",
+        "same current artifact and physical D1/KV/R2 IDs; fresh 29-migration fixture actor, cookie, public Note and PNG; closed-store byte clone and reopen; no public v0.1.2 upgrade, real OIDC/token use or live custody; no product ownership policy inferred from fixture identity count",
     };
   } catch (error) {
     primaryFailure = true;
+    if (issuer && !(error instanceof StorageRestoreAssertion)) {
+      throw new StorageRestoreAssertion("storage restore oidc-runtime-failed");
+    }
     throw error;
   } finally {
     let cleanupError;
@@ -656,11 +957,21 @@ export async function qualifyStorageRestore({
     } catch (error) {
       cleanupError ??= error;
     }
+    diagnostics?.destroy();
     if (cleanupError !== undefined) {
-      if (!primaryFailure) throw cleanupError;
-      process.stderr.write(
-        `storage restore cleanup also failed: ${cleanupError}\n`,
-      );
+      if (issuer) {
+        if (!primaryFailure) {
+          throw new StorageRestoreAssertion(
+            "storage restore oidc-cleanup-failed",
+          );
+        }
+        process.stderr.write("storage restore oidc-cleanup-also-failed\n");
+      } else {
+        if (!primaryFailure) throw cleanupError;
+        process.stderr.write(
+          `storage restore cleanup also failed: ${cleanupError}\n`,
+        );
+      }
     }
   }
 }
