@@ -40,6 +40,10 @@ without a signal; partial markers never qualify a failed mutant. Bun can report
 a timeout as exit143 without signalCode, so elapsed deadline refusal is explicit.
 Real signal and timeout subprocess regressions retain this refusal. Positive
 failures retain the child's stderr rather than only an exit-code assertion.
+Each password lane, the required-salt qualifier and closed-store restore log
+safe start/complete phase diagnostics to stderr. Completion is reported only
+after that qualifier's cleanup resolves. These diagnostics improve failure
+location evidence; they do not establish the cause of an earlier local timeout.
 
 The copied operator extension retains old Worker fbe963…/Core4.1.7/schema28 and
 its original artifact/proof identity. It is not a published-release predecessor.

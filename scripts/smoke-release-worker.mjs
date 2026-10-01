@@ -675,19 +675,25 @@ async function main() {
   for (const fixture of PASSWORD_FIXTURES) {
     // Separate disposable bindings; both auth paths must pass on these bytes.
     results.push(
-      await smokeNativeWorker(artifactPath, artifactDigest, fixture),
+      await qualifyStage(`password-${fixture.method}`, () =>
+        smokeNativeWorker(artifactPath, artifactDigest, fixture),
+      ),
     );
   }
-  const sessionSaltGuard = await qualifyRequiredSessionSalt(artifactPath);
-  const storageRestore = await qualifyStorageRestore({
-    artifactPath,
-    artifactSha256: `sha256:${artifactDigest}`,
-    repoRoot: repo,
-    wranglerConfig: unstable_readConfig(
-      { config: resolve(repo, "wrangler.jsonc") },
-      { hideWarnings: true },
-    ),
-  });
+  const sessionSaltGuard = await qualifyStage("required-session-salt", () =>
+    qualifyRequiredSessionSalt(artifactPath),
+  );
+  const storageRestore = await qualifyStage("closed-storage-restore", () =>
+    qualifyStorageRestore({
+      artifactPath,
+      artifactSha256: `sha256:${artifactDigest}`,
+      repoRoot: repo,
+      wranglerConfig: unstable_readConfig(
+        { config: resolve(repo, "wrangler.jsonc") },
+        { hideWarnings: true },
+      ),
+    }),
+  );
   process.stdout.write(
     `${JSON.stringify({
       ...results[0],
@@ -705,6 +711,16 @@ async function main() {
       },
     })}\n`,
   );
+}
+
+async function qualifyStage(label, qualify) {
+  const started = performance.now();
+  process.stderr.write(`release-worker stage=${label} start\n`);
+  const result = await qualify();
+  process.stderr.write(
+    `release-worker stage=${label} complete elapsedMs=${Math.round(performance.now() - started)}\n`,
+  );
+  return result;
 }
 
 await main();
