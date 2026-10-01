@@ -519,6 +519,7 @@ export async function qualifyBrowserTalk({
     const request = route.request();
     if (
       request.method() === "POST" &&
+      new URL(request.url()).origin === origin &&
       new URL(request.url()).pathname ===
         `/api/dm/user/${encodeURIComponent(peerApId)}/messages` &&
       request.postDataJSON()?.content === failedText
@@ -529,7 +530,7 @@ export async function qualifyBrowserTalk({
       await route.abort("failed");
       return;
     }
-    await route.continue();
+    await route.fallback();
   };
   const failedRow = page
     .locator("li.c-talk-chat.is-failed")
