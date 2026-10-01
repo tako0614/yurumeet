@@ -95,7 +95,10 @@ bun run smoke:release-browser -- dist/takos-worker.js
 Set `BROWSER_SMOKE_CHROME` to specify the executable. The script does not download
 a browser and fails if Chrome is unavailable. CI also requires this step after
 the complete `check`. It verifies actual form rejection, retry, the signed-in
-talk screen and persisted sessions with disposable local HTTP and native bindings.
+persisted sessions and actual UI contact selection, DM, image/video attachment
+and failed-send retry with disposable local HTTP and native bindings, checking
+the persisted DB and ObjectBucket data. The synthetic communication peer is
+added only after first-login qualification.
 Public TLS, OIDC, cross-server communication and update/recovery need separate
 evidence.
 

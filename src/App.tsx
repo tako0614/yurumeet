@@ -38,8 +38,8 @@ import {
   markStoryViewed,
   shareStory,
   unlikeStory,
-  uploadMedia,
 } from "@takosjp/yurucommu-api";
+import { uploadProductMedia } from "./lib/media-upload.ts";
 import { useApp } from "./lib/app-context.tsx";
 import { useChat } from "./lib/chat-context.tsx";
 import { DialogA11y } from "./lib/dialog.tsx";
@@ -1707,7 +1707,7 @@ function StoryComposerModal(props: {
     setSaving(true);
     setError(null);
     try {
-      const uploaded = await uploadMedia(selected);
+      const uploaded = await uploadProductMedia(selected);
       await createStory({
         attachment: {
           url: uploaded.url,

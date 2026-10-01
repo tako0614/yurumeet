@@ -8,11 +8,8 @@ import {
   Show,
 } from "solid-js";
 import { A } from "@solidjs/router";
-import {
-  type DMContact,
-  type MediaAttachment,
-  uploadMedia,
-} from "@takosjp/yurucommu-api";
+import { type DMContact, type MediaAttachment } from "@takosjp/yurucommu-api";
+import { uploadProductMedia } from "../lib/media-upload.ts";
 import { useApp } from "../lib/app-context.tsx";
 import { type ChatMessage, useChat } from "../lib/chat-context.tsx";
 import { createEscapeClose, DialogA11y } from "../lib/dialog.tsx";
@@ -227,7 +224,7 @@ export function ChatPane() {
           continue;
         }
         try {
-          const uploaded = await uploadMedia(file);
+          const uploaded = await uploadProductMedia(file);
           // The conversation switched while uploading: this file belongs to
           // the previous thread — drop it instead of staging it here.
           if (generation !== stagedGeneration) return;

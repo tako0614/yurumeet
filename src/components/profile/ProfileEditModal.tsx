@@ -1,5 +1,6 @@
 import { createSignal, Index, Show } from "solid-js";
-import { type Actor, updateProfile, uploadMedia } from "@takosjp/yurucommu-api";
+import { type Actor, updateProfile } from "@takosjp/yurucommu-api";
+import { uploadProductMedia } from "../../lib/media-upload.ts";
 import { DialogA11y } from "../../lib/dialog.tsx";
 import { CloseIcon, UserAvatar } from "../../lib/ui.tsx";
 
@@ -46,7 +47,7 @@ export function ProfileEditModal(props: {
     setUploading(target);
     setError(null);
     try {
-      const uploaded = await uploadMedia(file);
+      const uploaded = await uploadProductMedia(file);
       if (target === "icon") setIconUrl(uploaded.url ?? "");
       else setHeaderUrl(uploaded.url ?? "");
     } catch {
