@@ -49,7 +49,11 @@ import {
   releaseAssetUrl,
 } from "./release-artifact-manifest.mjs";
 import { releaseIdentityFailures } from "./release-identity.mjs";
-import { checkMediaDeletionSchema } from "./check-media-deletion-schema.mjs";
+import { MEDIA_DELETION_SCHEMA_QUERY } from "./check-media-deletion-schema.mjs";
+import {
+  createYurumeetCodeOnlyProvider,
+  YurumeetProviderFailure,
+} from "./yurumeet-code-only-provider.mjs";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const OWNER_GATE = "bun run check";
@@ -102,6 +106,8 @@ const CONTRACT = {
         "scripts/deploy.mjs",
         "scripts/yurumeet-worker-bindings.ts",
         "scripts/worker-publish-empty.env.example",
+        "scripts/yurumeet-code-only-provider.mjs",
+        "scripts/check-media-deletion-schema.mjs",
       ],
       requiresScripts: ["check", "build:takos-worker", "smoke:postdeploy"],
       requiresTools: ["git", "bun", "wrangler"],
@@ -115,13 +121,15 @@ const CONTRACT = {
       // re-read は CAS ではないため、同時 publisher を避ける operator 協調が必要です。
       triggers: ["authority"],
       obligations: {
-        provenance: `requires the realized YURUMEET_WRANGLER_CONFIG to declare YURUCOMMU_SESSION_HASH_SALT in root secrets.required and to pin name=${W.worker} plus an account_id; rejects selected Wrangler environments, non-public compliance regions, and non-default Cloudflare API endpoint overrides; passes the same config and a verified zero-byte explicit --env-file to every Wrangler query/publication call; refuses a dirty worktree, captures and validates the active Deployment traffic map before \`${OWNER_GATE}\`, builds ${W.bundle} from that worktree with \`bun run build:takos-worker\`, records the commit and bundle sha256, then uses the same config for a read-only D1 metadata query requiring Core 4.1.11 migration 0030's media deletion table and index before publication.`,
-        "post-conditions": `runs \`bun run smoke:postdeploy\`, which exercises real request paths against the deployed Worker rather than a health endpoint; the smoke reads the public launch URL from the Capsule outputs file selected by TAKOSUMI_CAPSULE_OUTPUTS_FILE and authenticates with YURUMEET_E2E_SESSION_COOKIE for OIDC-only deployments or YURUMEET_E2E_PASSWORD where password auth is enabled`,
-        reversal: `the active Deployment id and complete version/percentage traffic map are read before the gate and checked again immediately before publication; restore that captured map with \`wrangler versions deploy <version-id>@<percentage> ... --name ${W.worker} --config <realized-config> --env-file <verified-empty-env-file> --yes\`. The re-read detects intervening changes but is not an atomic compare-and-swap; operator serialization is required.`,
+        provenance: `requires the realized YURUMEET_WRANGLER_CONFIG to declare YURUCOMMU_SESSION_HASH_SALT in root secrets.required and pin name=${W.worker} plus an account_id; rejects selected Wrangler environments and non-default Cloudflare endpoints; uses a verified zero-byte --env-file only for Wrangler auth token --json to read existing authentication, never to create permissions; captures the active Deployment and one exact 100% predecessor before ${OWNER_GATE}, refusing split traffic and config/binding drift; refuses dirty or changed source, builds ${W.bundle}, records commit and bundle sha256, and runs a read-only D1 metadata query against the actual predecessor DB requiring migration 0030; uploads one Version with strict secret inheritance and every binding explicitly pinned to that predecessor, then promotes through the fixed Deployment API without resource, Secret, settings or trigger writes.`,
+        "post-conditions":
+          "checks authoritative uploaded code and complete non-code closure before promotion; runs bun run smoke:postdeploy through the launch URL from TAKOSUMI_CAPSULE_OUTPUTS_FILE with YURUMEET_E2E_SESSION_COOKIE for OIDC-only installations or YURUMEET_E2E_PASSWORD; finally rechecks exact acknowledged Deployment/Version, code and non-code settings plus predecessor availability; local and CI fixtures do not qualify live permission or API behavior",
+        reversal:
+          "captures the active Deployment id and complete version/percentage traffic map; prints a credential-free manual POST Deployment API request restoring that map, never Wrangler versions deploy because that command may also patch settings; reconcile current traffic and review predecessor availability/secret custody before manual recovery; re-read is not an atomic compare-and-swap, so operator serialization is required",
         "failure-handling":
-          "prints provider stdout and stderr; invalid target/environment/endpoint/empty-env-file/session-salt config blocks before git/provider/gate work; invalid active Deployment or D1 query/schema mismatch blocks before publication; after publication begins, failures are indeterminate, never retried or rolled back automatically, and print a structured recovery record with account, target, source, full prior traffic map, exact rollback argv, and command",
+          "invalid target/environment/endpoint/empty-env-file/session-salt config blocks before authentication or gate work; malformed active state or schema mismatch blocks before publication; prints bounded credential-masked provider code/messages, never raw authentication or binding bodies; PRE_UPLOAD_FAILURE before upload, monotonic indeterminate recovery after any attempted Version or Deployment write, with full prior traffic map and exact rollbackRequest; no automatic retry or rollback",
         "independent-review":
-          "before publishing, independently review exact source, native artifact, and CI evidence for session-salt behavior, realized worker/account target admission, explicit empty env-file handling, active Deployment status parsing and recheck, the full-map rollback command, and Wrangler's pinned strict secret inheritance; these checks prove declaration and behavior only, not the secret value or active Worker binding, so the operator separately owns secret custody and must supply the exact existing secret without rotation",
+          "review exact source/native/CI evidence and API contracts for strict secret inheritance with explicit predecessor version_id, actual DB authority, code/non-code readbacks, authentication-output suppression, fixed target, no auxiliary mutations and full recovery state; metadata proves the active Worker binding declaration, not the secret value or entropy; existing secrets remain credential-owner custody and must not rotate",
       },
     },
     {
@@ -700,7 +708,11 @@ for (const variable of ["CLOUDFLARE_API_BASE_URL", "CF_API_BASE_URL"]) {
     );
   }
 }
-requireEmptyWranglerEnvFile("Worker config admission");
+try {
+  requireEmptyWranglerEnvFile("Worker config admission");
+} catch (error) {
+  die(error.message);
+}
 const configValues = configText
   .split("\n")
   .filter((line) => !/^\s*(?:#|\/\/)/u.test(line))
@@ -720,323 +732,279 @@ function requireStableDeployConfig(phase) {
   let current;
   try {
     current = readFileSync(resolvedConfig, "utf8");
-  } catch (error) {
-    die(
-      `cannot re-read the realized deploy config before ${phase}; publication was not attempted`,
-      [error.message],
+  } catch {
+    throw new Error(
+      `cannot re-read the realized deploy config before ${phase}`,
     );
   }
-  if (current !== configText) {
-    die(
-      `the realized deploy config changed before ${phase}; publication was not attempted`,
-    );
-  }
+  if (current !== configText)
+    throw new Error(`the realized deploy config changed before ${phase}`);
 }
-
 function requireEmptyWranglerEnvFile(phase) {
   let bytes;
   try {
     bytes = readFileSync(WORKER_EMPTY_ENV_FILE);
   } catch {
-    die(
-      `the explicit Wrangler env-file is missing before ${phase}; publication was not attempted`,
+    throw new Error(
+      `the explicit Wrangler env-file is missing before ${phase}`,
     );
   }
-  if (bytes.byteLength !== 0) {
-    die(
-      `the explicit Wrangler env-file must remain zero bytes before ${phase}; publication was not attempted`,
+  if (bytes.byteLength !== 0)
+    throw new Error(
+      `the explicit Wrangler env-file must remain zero bytes before ${phase}`,
     );
-  }
 }
-
-function runWorkerWrangler(args, phase) {
-  requireStableDeployConfig(phase);
-  requireEmptyWranglerEnvFile(phase);
-  const configIndex = args.indexOf("--config");
-  if (configIndex < 0 || args[configIndex + 1] !== resolvedConfig) {
-    die(
-      `Wrangler ${phase} must use the same realized config; publication was not attempted`,
-    );
-  }
-  if (args.includes("--env-file")) {
-    die(`Wrangler ${phase} supplied an unexpected env-file`);
-  }
-  const commandIndex = args.indexOf("--command");
-  const envFileArgs = ["--env-file", WORKER_EMPTY_ENV_FILE];
-  const fullArgs = [...args];
-  fullArgs.splice(
-    commandIndex < 0 ? fullArgs.length : commandIndex,
-    0,
-    ...envFileArgs,
-  );
-  return run("wrangler", fullArgs);
-}
-
-const DEPLOYMENT_UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
-
-function parseActiveDeployment(stdout) {
-  let deployment;
+function readExistingWranglerAuthentication() {
+  requireStableDeployConfig("existing authentication read");
+  requireEmptyWranglerEnvFile("existing authentication read");
+  let output;
   try {
-    deployment = JSON.parse(stdout);
-  } catch {
-    throw new Error("Wrangler returned malformed active Deployment JSON");
-  }
-  if (
-    !deployment ||
-    typeof deployment !== "object" ||
-    Array.isArray(deployment) ||
-    typeof deployment.id !== "string" ||
-    !DEPLOYMENT_UUID_RE.test(deployment.id) ||
-    deployment.strategy !== "percentage" ||
-    !Array.isArray(deployment.versions) ||
-    deployment.versions.length < 1 ||
-    deployment.versions.length > 2
-  ) {
-    throw new Error("Wrangler returned an invalid active Deployment");
-  }
-  const seen = new Set();
-  const versions = [];
-  let total = 0;
-  for (const entry of deployment.versions) {
-    if (
-      !entry ||
-      typeof entry !== "object" ||
-      Array.isArray(entry) ||
-      typeof entry.version_id !== "string" ||
-      !DEPLOYMENT_UUID_RE.test(entry.version_id) ||
-      typeof entry.percentage !== "number" ||
-      !Number.isFinite(entry.percentage) ||
-      entry.percentage < 0.01 ||
-      entry.percentage > 100
-    ) {
-      throw new Error(
-        "Wrangler returned an invalid active Deployment traffic entry",
-      );
-    }
-    const versionId = entry.version_id.toLowerCase();
-    if (seen.has(versionId)) {
-      throw new Error("Wrangler returned duplicate active Deployment versions");
-    }
-    seen.add(versionId);
-    total += entry.percentage;
-    versions.push({ version_id: versionId, percentage: entry.percentage });
-  }
-  if (Math.abs(total - 100) > 0.001) {
-    throw new Error("Wrangler active Deployment traffic does not total 100%");
-  }
-  versions.sort((left, right) =>
-    left.version_id.localeCompare(right.version_id),
-  );
-  return { id: deployment.id.toLowerCase(), versions };
-}
-
-function readActiveDeployment(phase) {
-  let stdout;
-  try {
-    stdout = runWorkerWrangler(
+    output = execFileSync(
+      "wrangler",
       [
-        "versions",
-        "deployments",
-        "status",
-        "--name",
-        W.worker,
+        "auth",
+        "token",
+        "--json",
         "--config",
         resolvedConfig,
-        "--json",
+        "--env-file",
+        WORKER_EMPTY_ENV_FILE,
       ],
-      phase,
-    );
-    return parseActiveDeployment(stdout);
-  } catch (error) {
-    const providerStdout = error.stdout ?? stdout;
-    if (providerStdout !== undefined) {
-      process.stderr.write(`${providerStdout.toString()}`);
-      if (!String(providerStdout).endsWith("\n")) process.stderr.write("\n");
-    }
-    if (error.stderr !== undefined) {
-      process.stderr.write(`${error.stderr.toString()}`);
-      if (!String(error.stderr).endsWith("\n")) process.stderr.write("\n");
-    }
-    die(
-      `cannot read and validate the active Worker Deployment during ${phase}; publication was not attempted`,
-      [String(error.message)],
-    );
-  }
-}
-
-function rollbackArguments(deployment) {
-  return [
-    "versions",
-    "deploy",
-    ...deployment.versions.map(
-      ({ version_id, percentage }) => `${version_id}@${percentage}`,
-    ),
-    "--name",
-    W.worker,
-    "--config",
-    resolvedConfig,
-    "--env-file",
-    WORKER_EMPTY_ENV_FILE,
-    "--yes",
-  ];
-}
-
-function shellQuote(value) {
-  return `'${String(value).replaceAll("'", "'\\''")}'`;
-}
-
-function rollbackCommand(deployment) {
-  return `wrangler ${rollbackArguments(deployment).map(shellQuote).join(" ")}`;
-}
-
-// provenance
-const dirty = git("status", "--porcelain");
-if (dirty !== "") {
-  die(
-    "the worktree is not clean; the published bundle must belong to one commit",
-    dirty.split("\n").slice(0, 20),
-  );
-}
-const commit = git("rev-parse", "HEAD");
-process.stdout.write(
-  `source ${commit} (${git("rev-parse", "--abbrev-ref", "HEAD")})\n`,
-);
-
-// Capture actual serving state before the gate/build. Wrangler's version list
-// is inventory, not a Deployment traffic map; this full map is the rollback target.
-const previousDeployment = readActiveDeployment(
-  "initial active Deployment read",
-);
-process.stdout.write(
-  `active Deployment ${JSON.stringify(previousDeployment)}\n`,
-);
-
-process.stdout.write(`\n==> ${OWNER_GATE}\n`);
-execFileSync("bun", ["run", "check"], { cwd: repo, stdio: "inherit" });
-
-process.stdout.write(`\n==> bun run build:takos-worker\n`);
-execFileSync(W.build[0], W.build.slice(1), { cwd: repo, stdio: "inherit" });
-
-const bundlePath = resolve(repo, W.bundle);
-if (!existsSync(bundlePath)) die(`${W.bundle} is missing after the build`);
-const bundleDigest = digest(readFileSync(bundlePath));
-process.stdout.write(
-  `\ncandidate ${W.bundle} sha256 ${bundleDigest.slice(0, 16)}\n`,
-);
-
-let schemaPreflight;
-requireStableDeployConfig("D1 schema query");
-try {
-  schemaPreflight = checkMediaDeletionSchema({
-    configText,
-    configPath: resolvedConfig,
-    cloudflareEnv: process.env.CLOUDFLARE_ENV,
-    run: (command, args) => {
-      if (command !== "wrangler") {
-        die("unexpected executable in the read-only D1 schema preflight");
-      }
-      return runWorkerWrangler(args, "D1 schema query");
-    },
-  });
-} catch (error) {
-  if (error.stdout !== undefined) {
-    process.stderr.write(error.stdout.toString());
-    if (!String(error.stdout).endsWith("\n")) process.stderr.write("\n");
-  }
-  if (error.stderr !== undefined) {
-    process.stderr.write(error.stderr.toString());
-    if (!String(error.stderr).endsWith("\n")) process.stderr.write("\n");
-  }
-  die(
-    "the realized D1 does not satisfy the read-only Core 4.1.11 migration 0030 schema preflight; Worker publication was not attempted",
-    [error.message],
-  );
-}
-process.stdout.write(
-  `D1 schema preflight ${schemaPreflight.table} ${schemaPreflight.scope}\n`,
-);
-
-const beforePublishDeployment = readActiveDeployment(
-  "pre-publication active Deployment recheck",
-);
-if (
-  JSON.stringify(beforePublishDeployment) !== JSON.stringify(previousDeployment)
-) {
-  die(
-    "the active Worker Deployment changed during preflight; publication was not attempted; re-establish operator serialization and review the current deployment",
-  );
-}
-requireStableDeployConfig("Worker publication");
-requireEmptyWranglerEnvFile("Worker publication");
-process.stdout.write(`\n==> publishing ${W.worker}\n`);
-let output;
-try {
-  output = runWorkerWrangler(
-    ["deploy", "--name", W.worker, "--config", resolvedConfig],
-    "Worker publication",
-  );
-} catch (error) {
-  process.stderr.write(`${error.stdout ?? ""}${error.stderr ?? ""}\n`);
-  process.stderr.write(
-    `${JSON.stringify(
       {
-        kind: "takos.deploy-result@v1",
-        surface: W.surface,
-        target: `cloudflare-worker:${W.worker}`,
-        accountId: realizedWorkerConfig.account_id,
-        commit,
-        bundleDigest,
-        previousDeployment,
-        rollbackArgs: rollbackArguments(previousDeployment),
-        rollbackCommand: rollbackCommand(previousDeployment),
-        postConditions: "NOT_RUN",
-        status: "INDETERMINATE",
+        cwd: repo,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+        maxBuffer: 64 * 1024,
       },
-      null,
-      2,
-    )}\n`,
-  );
-  die(
-    "publication failed; production may be unchanged or partially updated. " +
-      `Reconcile the active Deployment before any retry; captured rollback command: ${rollbackCommand(previousDeployment)}`,
+    );
+  } catch {
+    // Even failed auth output may contain credential material. Never print it.
+    throw new Error(
+      "cannot obtain existing Wrangler authentication; no credential or permission was created; auth output was suppressed",
+    );
+  }
+  let value;
+  try {
+    value = JSON.parse(output);
+  } catch {
+    throw new Error(
+      "Wrangler authentication output is invalid; credential output was suppressed",
+    );
+  }
+  const text = (item) =>
+    typeof item === "string" &&
+    item !== "" &&
+    item.trim() === item &&
+    !/[\r\n]/u.test(item);
+  const keys = (names) =>
+    value &&
+    typeof value === "object" &&
+    !Array.isArray(value) &&
+    Object.keys(value).length === names.length &&
+    names.every((name) => Object.hasOwn(value, name));
+  if (
+    keys(["type", "token"]) &&
+    ["api_token", "oauth"].includes(value.type) &&
+    text(value.token)
+  )
+    return value;
+  if (
+    keys(["type", "key", "email"]) &&
+    value.type === "api_key" &&
+    text(value.key) &&
+    text(value.email)
+  )
+    return value;
+  throw new Error(
+    "Wrangler authentication metadata is unsupported; credential output was suppressed",
   );
 }
-process.stdout.write(output);
 
-// post-conditions: 実利用者の経路が通ることまで確認する。
-let postOk = false;
-let postDetail = null;
+// Recovery is an explicit provider request, never an automatic CLI rollback.
+function rollbackRequest(trafficMap) {
+  return {
+    method: "POST",
+    path: `/accounts/${realizedWorkerConfig.account_id}/workers/scripts/${W.worker}/deployments`,
+    body: {
+      strategy: "percentage",
+      versions: trafficMap.map(({ versionId, percentage }) => ({
+        version_id: versionId,
+        percentage,
+      })),
+    },
+  };
+}
+let phase = "PRE_UPLOAD_FAILURE";
+let snapshot, commit, bundleDigest, versionId, deploymentId;
+let postConditions = "NOT_RUN";
+let authentication;
+function safeWorkerText(value) {
+  const secrets = [];
+  const add = (item) => {
+    if (typeof item === "string" && item !== "")
+      secrets.push(item, JSON.stringify(item).slice(1, -1));
+    else if (item && typeof item === "object") Object.values(item).forEach(add);
+  };
+  add(realizedWorkerConfig.vars);
+  for (const item of [
+    authentication?.token,
+    authentication?.key,
+    authentication?.email,
+    process.env.YURUMEET_E2E_PASSWORD,
+    process.env.YURUMEET_E2E_SESSION_COOKIE,
+  ])
+    add(item);
+  let text = String(value ?? "");
+  for (const item of [...new Set(secrets)].sort((a, b) => b.length - a.length))
+    text = text.replaceAll(item, "[REDACTED]");
+  return text.slice(0, 4096);
+}
+function recoveryRecord(status, fallback) {
+  const prior = snapshot ?? fallback;
+  return {
+    kind: "takos.deploy-result@v1",
+    surface: W.surface,
+    target: `cloudflare-worker:${W.worker}`,
+    accountId: realizedWorkerConfig.account_id,
+    commit,
+    bundleDigest,
+    phase,
+    status,
+    postConditions,
+    ...(prior
+      ? {
+          previousDeployment: {
+            id: prior.deploymentId,
+            versions: prior.trafficMap.map(({ versionId, percentage }) => ({
+              version_id: versionId,
+              percentage,
+            })),
+          },
+          predecessorVersionId: prior.predecessorVersionId,
+          closureDigest: prior.closureDigest,
+          rollbackRequest: rollbackRequest(prior.trafficMap),
+        }
+      : {}),
+    versionId: versionId ?? fallback?.versionId,
+    deploymentId: deploymentId ?? fallback?.publishedDeploymentId,
+    operatorSerializationRequired: true,
+  };
+}
+function requireReviewedSource() {
+  if (
+    git("status", "--porcelain") !== "" ||
+    (commit && git("rev-parse", "HEAD") !== commit)
+  ) {
+    throw new Error("the worktree is not clean at the captured source commit");
+  }
+}
 try {
+  requireReviewedSource();
+  commit = git("rev-parse", "HEAD");
+  process.stdout.write(`source ${commit}\n`);
+  authentication = readExistingWranglerAuthentication();
+  const provider = createYurumeetCodeOnlyProvider({
+    accountId: realizedWorkerConfig.account_id,
+    workerName: W.worker,
+    authentication,
+  });
+  snapshot = await provider.readTrafficAndVersion({
+    requiredSecretNames: realizedWorkerConfig.secrets.required,
+    expectedConfig: realizedWorkerConfig,
+  });
+  process.stdout.write(
+    `active Deployment ${snapshot.deploymentId}; predecessor ${snapshot.predecessorVersionId}; non-code sha256 ${snapshot.closureDigest}\n`,
+  );
+  process.stdout.write(`\n==> ${OWNER_GATE}\n`);
+  execFileSync("bun", ["run", "check"], { cwd: repo, stdio: "inherit" });
+  process.stdout.write(`\n==> bun run build:takos-worker\n`);
+  execFileSync(W.build[0], W.build.slice(1), { cwd: repo, stdio: "inherit" });
+  const bundleBytes = readFileSync(resolve(repo, W.bundle));
+  bundleDigest = digest(bundleBytes);
+  process.stdout.write(`candidate ${W.bundle} sha256 ${bundleDigest}\n`);
+  requireStableDeployConfig("D1 schema query");
+  requireEmptyWranglerEnvFile("D1 schema query");
+  await provider.revalidate(snapshot);
+  const schema = await provider.queryReadonlySchema(
+    snapshot.activeDatabaseId,
+    MEDIA_DELETION_SCHEMA_QUERY,
+  );
+  process.stdout.write(`D1 schema preflight ${schema.table} ${schema.scope}\n`);
+  requireReviewedSource();
+  requireStableDeployConfig("Worker Version upload");
+  requireEmptyWranglerEnvFile("Worker Version upload");
+  const uploaded = await provider.uploadCodeOnly({
+    bundleBytes,
+    snapshot,
+    expectedConfig: realizedWorkerConfig,
+    message: `Yurumeet ${commit} sha256:${bundleDigest}`,
+  });
+  phase = "POST_UPLOAD_INDETERMINATE";
+  versionId = uploaded.versionId;
+  if (uploaded.sha256 !== bundleDigest)
+    throw new Error("uploaded Worker digest differs from reviewed bytes");
+  requireReviewedSource();
+  requireStableDeployConfig("Deployment promotion");
+  requireEmptyWranglerEnvFile("Deployment promotion");
+  const promoted = await provider.promote({
+    snapshot,
+    versionId,
+    message: `Yurumeet ${commit}`,
+  });
+  phase = "POST_DEPLOY_INDETERMINATE";
+  deploymentId = promoted.deploymentId;
+  phase = "POST_CONDITION_INDETERMINATE";
+  postConditions = "FAILED";
+  requireStableDeployConfig("post-conditions");
+  requireEmptyWranglerEnvFile("post-conditions");
   process.stdout.write(`\n==> bun run smoke:postdeploy\n`);
-  postDetail = run(W.smoke[0], W.smoke.slice(1));
-  process.stdout.write(postDetail);
-  postOk = true;
+  try {
+    process.stdout.write(safeWorkerText(run(W.smoke[0], W.smoke.slice(1))));
+  } catch (error) {
+    process.stderr.write(
+      safeWorkerText(`${error.stdout ?? ""}${error.stderr ?? ""}`),
+    );
+    throw new Error(
+      "application post-conditions failed; reconcile the serving Deployment before any retry",
+    );
+  }
+  requireReviewedSource();
+  requireStableDeployConfig("final published readback");
+  requireEmptyWranglerEnvFile("final published readback");
+  await provider.verifyPublished({ snapshot, versionId, deploymentId });
+  postConditions = "PASSED";
+  process.stdout.write(
+    `\n${JSON.stringify(recoveryRecord("VERIFIED"), null, 2)}\n`,
+  );
 } catch (error) {
-  postDetail = `${error.stdout ?? ""}${error.stderr ?? ""}`;
-  process.stderr.write(postDetail);
-  postOk = false;
-}
-
-const result = {
-  kind: "takos.deploy-result@v1",
-  surface: W.surface,
-  target: `cloudflare-worker:${W.worker}`,
-  accountId: realizedWorkerConfig.account_id,
-  commit,
-  bundleDigest,
-  previousDeployment,
-  rollbackArgs: rollbackArguments(previousDeployment),
-  rollbackCommand: rollbackCommand(previousDeployment),
-  postConditions: postOk ? "PASSED" : "FAILED",
-  status: postOk ? "PUBLISHED" : "INDETERMINATE",
-};
-process.stdout.write(`\n${JSON.stringify(result, null, 2)}\n`);
-
-if (!postOk) {
+  const providerFailure = error instanceof YurumeetProviderFailure;
+  // Provider phase advances immediately before each actual write. Preserve a
+  // later wrapper phase without classifying a pre-write refusal as a mutation.
+  const phases = [
+    "PRE_UPLOAD_FAILURE",
+    "POST_UPLOAD_INDETERMINATE",
+    "POST_DEPLOY_INDETERMINATE",
+    "POST_CONDITION_INDETERMINATE",
+  ];
+  if (providerFailure && phases.indexOf(error.phase) > phases.indexOf(phase))
+    phase = error.phase;
+  const record = recoveryRecord(
+    phase === "PRE_UPLOAD_FAILURE" ? "PRE_UPLOAD_FAILURE" : "INDETERMINATE",
+    providerFailure ? error.recovery : undefined,
+  );
+  if (providerFailure)
+    record.providerError = {
+      operation: error.operation,
+      status: error.status,
+      codes: error.codes,
+      diagnostic: error.diagnostic,
+    };
+  process.stderr.write(`${JSON.stringify(record, null, 2)}\n`);
+  const message = providerFailure
+    ? error.message
+    : safeWorkerText(error.message);
   process.stderr.write(
-    `\npublication completed but the post-conditions did not pass, so the serving Deployment has not been verified. ` +
-      `Do not retry blindly: read the active Deployment with \`wrangler versions deployments status --name ${shellQuote(W.worker)} --config ${shellQuote(resolvedConfig)} --env-file ${shellQuote(WORKER_EMPTY_ENV_FILE)} --json\`, then review the captured full-map rollback command: ${rollbackCommand(previousDeployment)}\n`,
+    `deploy blocked: ${message}; ${phase === "PRE_UPLOAD_FAILURE" ? "publication was not attempted" : "reconcile serving state before any retry; no automatic retry or rollback"}\n`,
   );
   process.exit(1);
 }
