@@ -83,6 +83,29 @@ describe("splitHighlight", () => {
     ]);
   });
 
+  test("case folding expansion does not shift match offsets", () => {
+    const text = "İstanbul"; // U+0130 lowercases to two UTF-16 code units.
+    expect(searchMessages([msg("city", text)], "stan")).toEqual(["city"]);
+    expect(splitHighlight(text, "stan")).toEqual([
+      { text: "İ", hit: false },
+      { text: "stan", hit: true },
+      { text: "bul", hit: false },
+    ]);
+    expect(splitHighlight("İXİ", "i̇")).toEqual([
+      { text: "İ", hit: true },
+      { text: "X", hit: false },
+      { text: "İ", hit: true },
+    ]);
+  });
+
+  test("supplementary characters keep UTF-16 offsets aligned", () => {
+    expect(splitHighlight("😀İx😀", "x")).toEqual([
+      { text: "😀İ", hit: false },
+      { text: "x", hit: true },
+      { text: "😀", hit: false },
+    ]);
+  });
+
   test("adjacent matches produce consecutive hit runs", () => {
     expect(splitHighlight("aa", "a")).toEqual([
       { text: "a", hit: true },
