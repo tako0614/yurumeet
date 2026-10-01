@@ -83,8 +83,8 @@ describe("deploy contract", () => {
       "read-only D1 metadata query",
     );
     expect(worker?.obligations.provenance).toContain("migration 0030");
-    expect(worker?.obligations["failure-handling"]).toContain(
-      "missing session-salt config blocks before any gate",
+    expect(worker?.obligations["failure-handling"]).toMatch(
+      /session-salt config blocks before .*gate/u,
     );
     expect(worker?.obligations["failure-handling"]).toContain(
       "schema mismatch blocks before publication",
@@ -97,6 +97,26 @@ describe("deploy contract", () => {
     );
     expect(worker?.covers).toContain("scripts/deploy.mjs");
     expect(worker?.covers).toContain("scripts/yurumeet-worker-bindings.ts");
+  });
+
+  test("declares the serving traffic map, explicit target, and controlled Wrangler env file", () => {
+    const worker = surfaceOf("yurumeet-worker");
+    expect(worker?.covers).toContain(
+      "scripts/worker-publish-empty.env.example",
+    );
+    expect(worker?.obligations.provenance).toContain("account_id");
+    expect(worker?.obligations.provenance).toContain("zero-byte");
+    expect(worker?.obligations.provenance).toContain("--env-file");
+    expect(worker?.obligations.provenance).toContain("active Deployment");
+    expect(worker?.obligations.reversal).toContain(
+      "complete version/percentage traffic map",
+    );
+    expect(worker?.obligations.reversal).toContain("versions deploy");
+    expect(worker?.obligations.reversal).toContain("--env-file");
+    expect(worker?.obligations.reversal).toContain(
+      "not an atomic compare-and-swap",
+    );
+    expect(worker?.obligations.reversal).toContain("operator serialization");
   });
 
   test("keeps the checked-in Wrangler config as the flexible local-dev template", () => {

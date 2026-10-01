@@ -142,6 +142,20 @@ Secret を設定し、その環境の password または OIDC による再認証
 暗号化キー・既存データを保持し、新しい salt は更新と code rollback でも保持します。
 旧 session を変換・削除して再認証を回避しません。ローカル検証と公開環境の保持確認は別です。
 
+repo の `bun run deploy -- yurumeet-worker` は maintainer の既存 Worker 更新入口です。
+公開用 strict JSON config は root `name: "yurumeet"` と小文字32桁の hex `account_id`
+を明示します。任意の名前で self-host する利用者の deploy は、その利用者の runbook に
+従います。この入口は parent の `CLOUDFLARE_ENV` と非標準 API endpoint を拒否し、
+全 Wrangler 呼び出しに空の `scripts/worker-publish-empty.env.example` を渡します。
+repo の `.env` / `.env.local` から公開対象や認証を暗黙に選ばず、認証は operator が
+親プロセスへ渡す設定または既存の Wrangler 認証を使います。空ファイルへの追記は拒否します。
+
+更新前の実配信 Deployment ID と全 version/percentage を捕捉し、公開直前に再確認します。
+version 一覧の先頭を復帰先にせず、split 配信も全割合を保持した rollback argv を結果と
+失敗診断に残します。自動 rollback や再試行は行いません。再確認は競合の検出であって
+原子的な条件付き更新ではないため、operator は同じ対象の更新を直列に実行してください。
+実環境の secret/binding 保持・復帰・公開後の利用者経路は、source/mock 検証とは別です。
+
 root `main.tf` の機密入力 `auth_password_hash` は、正規の PBKDF2 hash または
 bootstrap token を `AUTH_PASSWORD_HASH` Secret に渡します。非空値は OpenTofu が
 受け取った文字列のまま渡し、空値・HCL または Core が空白だけと判定する値は省略します。
