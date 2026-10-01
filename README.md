@@ -168,8 +168,18 @@ bun run deploy -- yurumeet-site --environment=integration|production
 が同じ release を指していないときも、publish を始める前に止めます。この整合は
 `bun run check` でも毎回検査します。
 
+`yurumeet-worker` は公開前に、`YURUMEET_WRANGLER_CONFIG` の実現済み strict JSON
+config で選ばれる DB の metadata を、既存の Wrangler credential で読み取ります。
+Core 4.1.11 の追加 migration `0030` が必要とする media deletion table の column・
+primary key・due index を検査し、不足・不整合・読取拒否・不正な応答なら公開を止めます。
+schema 全体や migration 台帳を検証するものではなく、schema 適用や権限追加は行いません。
+`CLOUDFLARE_ENV` による環境選択は未対応として拒否し、検査後に config の内容が
+変わった場合も公開を止めます。
+root の direct Cloudflare module の Apply はこの検査の対象外で、別途レビュー済みの
+schema 適用証拠が必要です。portable module は schema 適用後に Worker を更新します。
+
 どの surface も、raw な Worker deploy や migration へ fallback しません。永続 store
-(D1 DB / KV / R2 MEDIA) にも触れません。site の公開手順は
+(D1 DB / KV / R2 MEDIA) を変更しません。site の公開手順は
 [`site/DEPLOY.md`](site/DEPLOY.md) にあります。
 
 ### Takosumi 管理付き導入（公開検証前）
