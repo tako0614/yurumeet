@@ -160,6 +160,13 @@ message.
 Public TLS, OIDC, cross-server communication and update/recovery need separate
 evidence.
 
+Artifact smoke also closes and clones the same current Worker's native D1/KV/R2
+stores, comparing every file path, size and SHA before reopening the clone. It
+checks the original cookie, schema/data, post/media bytes, Core KV origin pin
+and unchanged original snapshot. This disposable same-artifact fixture requires
+separate evidence for published-version upgrades, live backup, Secret custody
+and OIDC recovery.
+
 ## Runtime API
 
 The bundled fullstack Worker serves the API and UI from the same origin by

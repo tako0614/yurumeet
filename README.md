@@ -55,6 +55,12 @@ Chrome の場所は `BROWSER_SMOKE_CHROME` で指定できます。ブラウザ�
 通信相手の fixture は初回ログインの確認後に追加します。公開環境の TLS、OIDC、
 他サーバーとの通信、更新・復旧の証拠は別途必要です。
 
+artifact smoke は、同じ現行 Worker の native D1/KV/R2 を閉じて複製し、
+全ファイルの path・size・SHA を照合してから復元先を開きます。元の cookie、
+schema/data、投稿・media bytes、Core の KV origin pin と元 snapshot の不変性を
+検証します。使い捨ての fixture に対する同一 artifact の復元であり、公開旧版からの
+更新、実環境の backup・Secret 保全・OIDC 復旧は別の証拠が必要です。
+
 ## 仕組み
 
 ### Runtime API
