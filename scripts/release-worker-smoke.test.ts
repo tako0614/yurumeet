@@ -65,7 +65,7 @@ async function smoke(artifactPath: string) {
       artifactPath,
       `sha256:${digest}`,
     ],
-    { cwd: repo, stdout: "pipe", stderr: "pipe", timeout: 20_000 },
+    { cwd: repo, stdout: "pipe", stderr: "pipe", timeout: 30_000 },
   );
 }
 
@@ -147,12 +147,35 @@ describe("release Worker smoke", () => {
         "public-post-activitypub",
         "followers-post-activitypub-refusal",
         "logout-revocation",
+        "required-session-salt-valid-control",
+        "required-session-salt-missing-refusal",
+        "required-session-salt-blank-refusal",
+        "required-session-salt-public-fallback-refusal",
       ],
       migrationCount: expect.any(Number),
       authentication: { passwordMethods: ["pbkdf2-sha256", "bootstrap"] },
+      sessionSaltGuard: {
+        status: "PASSED",
+        migrationCount: expect.any(Number),
+        validControl: "password-login-persisted-one-owner-and-salted-session",
+        invalidCases: ["missing", "blank", "public-fallback"],
+        guardClass: "required-nondevelopment-session-salt",
+        guardSource: "native-fetch-thrown-error-message",
+        identityRowsAfterRefusal: { actors: 0, sessions: 0 },
+        externalWorkerFetches: {
+          policy: "denied-locally-by-miniflare-outbound-service",
+          observedBlockedFetches: 0,
+        },
+        checks: [
+          "required-session-salt-valid-control",
+          "required-session-salt-missing-refusal",
+          "required-session-salt-blank-refusal",
+          "required-session-salt-public-fallback-refusal",
+        ],
+      },
       status: "PASSED",
     });
-  }, 30_000);
+  }, 35_000);
 
   for (const [name, injected, error] of [
     [

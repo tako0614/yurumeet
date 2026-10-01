@@ -22,6 +22,13 @@ const repo = new URL("../", import.meta.url);
 const dbId = "00000000-0000-4000-8000-000000000001";
 const config = JSON.stringify({
   name: "yurumeet-preflight-test",
+  secrets: {
+    required: [
+      "ENCRYPTION_KEY",
+      "YURUCOMMU_SESSION_HASH_SALT",
+      "AUTH_PASSWORD_HASH",
+    ],
+  },
   d1_databases: [
     {
       binding: "DB",
@@ -411,6 +418,7 @@ async function createIsolatedDeployFixture(options: {
   const configPath = join(root, "realized-wrangler.jsonc");
   await writeFile(configPath, options.configText ?? config, "utf8");
   const callLog = join(root, "calls.log");
+  await writeFile(callLog, "", "utf8");
   const wranglerStub = `#!/bin/sh
 printf 'wrangler %s\\n' "$*" >> "$CALL_LOG"
 if [ "$1" = "d1" ] && [ "$2" = "execute" ]; then
@@ -486,9 +494,137 @@ esac
 }
 
 describe("actual Worker deploy entrypoint schema barrier with isolated command mocks", () => {
-  test("blocks malformed config, missing D1 schema, CLI denial, invalid JSON, and selected environments before deploy", async () => {
+  test("blocks malformed config, missing salt declaration, D1 failures, and selected environments before any gate or publish", async () => {
     const scenarios = [
       { label: "invalid JSON", configText: "{", queryMode: "valid" as const },
+      {
+        label: "missing salt declaration",
+        configText: JSON.stringify({
+          name: "fixture",
+          secrets: { required: ["ENCRYPTION_KEY", "AUTH_PASSWORD_HASH"] },
+          d1_databases: JSON.parse(config).d1_databases,
+        }),
+      },
+      {
+        label: "missing secrets object",
+        configText: JSON.stringify({
+          name: "fixture",
+          d1_databases: JSON.parse(config).d1_databases,
+        }),
+      },
+      {
+        label: "secrets is not an object",
+        configText: JSON.stringify({
+          name: "fixture",
+          secrets: ["YURUCOMMU_SESSION_HASH_SALT"],
+          d1_databases: JSON.parse(config).d1_databases,
+        }),
+      },
+      {
+        label: "required is empty",
+        configText: JSON.stringify({
+          name: "fixture",
+          secrets: { required: [] },
+          d1_databases: JSON.parse(config).d1_databases,
+        }),
+      },
+      {
+        label: "required is not an array",
+        configText: JSON.stringify({
+          name: "fixture",
+          secrets: { required: "YURUCOMMU_SESSION_HASH_SALT" },
+          d1_databases: JSON.parse(config).d1_databases,
+        }),
+      },
+      {
+        label: "required contains a non-string entry",
+        configText: JSON.stringify({
+          name: "fixture",
+          secrets: {
+            required: ["YURUCOMMU_SESSION_HASH_SALT", null],
+          },
+          d1_databases: JSON.parse(config).d1_databases,
+        }),
+      },
+      {
+        label: "required has an empty entry",
+        configText: JSON.stringify({
+          name: "fixture",
+          secrets: { required: ["YURUCOMMU_SESSION_HASH_SALT", "  "] },
+          d1_databases: JSON.parse(config).d1_databases,
+        }),
+      },
+      {
+        label: "required has duplicate salt declarations",
+        configText: JSON.stringify({
+          name: "fixture",
+          secrets: {
+            required: [
+              "YURUCOMMU_SESSION_HASH_SALT",
+              "YURUCOMMU_SESSION_HASH_SALT",
+            ],
+          },
+          d1_databases: JSON.parse(config).d1_databases,
+        }),
+      },
+      {
+        label: "required has duplicate declarations",
+        configText: JSON.stringify({
+          name: "fixture",
+          secrets: {
+            required: [
+              "YURUCOMMU_SESSION_HASH_SALT",
+              "ENCRYPTION_KEY",
+              "ENCRYPTION_KEY",
+            ],
+          },
+          d1_databases: JSON.parse(config).d1_databases,
+        }),
+      },
+      {
+        label: "environment-only salt declaration",
+        configText: JSON.stringify({
+          name: "fixture",
+          secrets: { required: ["ENCRYPTION_KEY"] },
+          env: {
+            production: {
+              secrets: { required: ["YURUCOMMU_SESSION_HASH_SALT"] },
+            },
+          },
+          d1_databases: JSON.parse(config).d1_databases,
+        }),
+      },
+      ...["", null].map((salt) => ({
+        label: `plaintext salt var ${salt === null ? "null" : "empty"}`,
+        configText: JSON.stringify({
+          name: "fixture",
+          secrets: { required: ["YURUCOMMU_SESSION_HASH_SALT"] },
+          vars: { YURUCOMMU_SESSION_HASH_SALT: salt },
+          d1_databases: JSON.parse(config).d1_databases,
+        }),
+      })),
+      {
+        label: "plaintext salt var value",
+        configText: JSON.stringify({
+          name: "fixture",
+          secrets: { required: ["YURUCOMMU_SESSION_HASH_SALT"] },
+          vars: { YURUCOMMU_SESSION_HASH_SALT: "do-not-echo" },
+          d1_databases: JSON.parse(config).d1_databases,
+        }),
+      },
+      {
+        label: "environment plaintext salt var",
+        configText: JSON.stringify({
+          name: "fixture",
+          secrets: { required: ["YURUCOMMU_SESSION_HASH_SALT"] },
+          env: {
+            production: {
+              vars: { YURUCOMMU_SESSION_HASH_SALT: "must-not-echo" },
+            },
+          },
+          d1_databases: JSON.parse(config).d1_databases,
+        }),
+      },
       {
         label: "missing table columns",
         configText: config,
@@ -519,8 +655,25 @@ describe("actual Worker deploy entrypoint schema barrier with isolated command m
         "wrangler versions list",
       );
       expect(result.stderr, scenario.label).toContain(
-        "Worker publication was not attempted",
+        "publication was not attempted",
       );
+      if (
+        scenario.label === "invalid JSON" ||
+        scenario.label === "missing salt declaration" ||
+        scenario.label === "missing secrets object" ||
+        scenario.label === "secrets is not an object" ||
+        scenario.label === "required is empty" ||
+        scenario.label === "required is not an array" ||
+        scenario.label === "required contains a non-string entry" ||
+        scenario.label === "required has an empty entry" ||
+        scenario.label === "required has duplicate declarations" ||
+        scenario.label === "required has duplicate salt declarations" ||
+        scenario.label === "environment-only salt declaration" ||
+        scenario.label.startsWith("plaintext salt var") ||
+        scenario.label === "environment plaintext salt var"
+      ) {
+        expect(result.calls, scenario.label).toBe("");
+      }
       if (scenario.label === "invalid JSON") {
         expect(result.calls).not.toContain("wrangler d1 execute");
       }
@@ -531,7 +684,46 @@ describe("actual Worker deploy entrypoint schema barrier with isolated command m
       if (scenario.label === "invalid query JSON") {
         expect(result.stderr).toContain("not-json");
       }
+      if (scenario.label === "environment plaintext salt var") {
+        expect(result.stderr).not.toContain("must-not-echo");
+      }
+      if (scenario.label === "plaintext salt var value") {
+        expect(result.stderr).not.toContain("do-not-echo");
+      }
     }
+  });
+
+  test("accepts both password and OIDC-only realized auth configurations", async () => {
+    const password = await createIsolatedDeployFixture({
+      configText: config,
+      queryMode: "valid",
+    });
+    const oidcConfig = JSON.stringify({
+      name: "yurumeet-oidc-test",
+      secrets: {
+        required: ["ENCRYPTION_KEY", "YURUCOMMU_SESSION_HASH_SALT"],
+      },
+      vars: {
+        TAKOSUMI_ACCOUNTS_ISSUER_URL: "https://accounts.example.invalid",
+        TAKOSUMI_ACCOUNTS_CLIENT_ID: "yurumeet-public-client",
+        OIDC_OWNER_SUB: "pairwise-owner-subject",
+      },
+      d1_databases: JSON.parse(config).d1_databases,
+    });
+    const oidc = await createIsolatedDeployFixture({
+      configText: oidcConfig,
+      queryMode: "valid",
+    });
+
+    for (const [label, result] of [
+      ["password", password],
+      ["OIDC-only", oidc],
+    ] as const) {
+      expect(result.exitCode, label).toBe(0);
+      expect(result.calls, label).toContain("wrangler deploy");
+      expect(result.stdout, label).toContain("worker-published");
+    }
+    expect(oidc.calls).not.toContain("AUTH_PASSWORD_HASH");
   });
 
   test("valid metadata uses the same config path and preserves build, version, publish, and smoke order", async () => {
