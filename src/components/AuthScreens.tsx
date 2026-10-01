@@ -172,12 +172,18 @@ export function SignedOut(props: { origin: string }) {
                     void login();
                   }}
                 >
+                  <label for="yurumeet-password">パスワード</label>
                   <input
+                    id="yurumeet-password"
                     type="password"
                     value={password()}
                     onInput={(event) => setPassword(event.currentTarget.value)}
                     placeholder="パスワード"
                     autocomplete="current-password"
+                    aria-invalid={error() ? true : undefined}
+                    aria-describedby={
+                      error() ? "yurumeet-login-error" : undefined
+                    }
                     autofocus={(authConfig()?.providers.length ?? 0) === 0}
                   />
                   <button type="submit" disabled={submitting() || !password()}>
@@ -189,7 +195,11 @@ export function SignedOut(props: { origin: string }) {
           </Show>
         </Show>
         <Show when={error()}>
-          {(message) => <p class="p-connect-error">{message()}</p>}
+          {(message) => (
+            <p id="yurumeet-login-error" class="p-connect-error" role="alert">
+              {message()}
+            </p>
+          )}
         </Show>
       </section>
     </main>

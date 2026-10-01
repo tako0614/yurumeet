@@ -36,6 +36,20 @@ mock は Yurucommu と同じ `/api/auth/me` / `/api/auth/login` のパスワー�
 型チェックは `bun run check`、lint は `bun run lint` を使います（内部で同じ `tsc --noEmit`
 を実行します）。
 
+`bun run check` は format・型・テスト・portable build と artifact smoke を通す
+repo の完全な検証入口です。追加のブラウザ検証には、インストール済みの Chrome と
+`bun run check` が生成した Worker を使います。
+
+```sh
+bun run smoke:release-browser -- dist/takos-worker.js
+```
+
+Chrome の場所は `BROWSER_SMOKE_CHROME` で指定できます。ブラウザは自動取得せず、
+未インストール時は失敗します。CI は完全な `check` の後でこの検証も必須実行します。
+使い捨てのローカル HTTP と native bindings 上で、実際のフォームによる認証失敗・再入力・
+ログイン後のトーク画面・永続 session を確認します。公開環境の TLS、OIDC、
+他サーバーとの通信、更新・復旧の証拠は別途必要です。
+
 ## 仕組み
 
 ### Runtime API

@@ -84,6 +84,21 @@ updates the Vite proxy target.
 Use `bun run check` for type checking and `bun run lint` for linting (both run
 the same `tsc --noEmit` under the hood).
 
+`bun run check` is the complete repository gate for formatting, types, tests,
+portable build and artifact smoke. An additional browser check uses installed
+Chrome and the Worker produced by that gate:
+
+```sh
+bun run smoke:release-browser -- dist/takos-worker.js
+```
+
+Set `BROWSER_SMOKE_CHROME` to specify the executable. The script does not download
+a browser and fails if Chrome is unavailable. CI also requires this step after
+the complete `check`. It verifies actual form rejection, retry, the signed-in
+talk screen and persisted sessions with disposable local HTTP and native bindings.
+Public TLS, OIDC, cross-server communication and update/recovery need separate
+evidence.
+
 ## Runtime API
 
 The bundled fullstack Worker serves the API and UI from the same origin by
