@@ -1,0 +1,13 @@
+# Community deletion preview refresh — 2026-10-01
+
+Task: `GA-20261001-meet-delete-preview`. Yurumeet only, stacked after qualified #32. Parent owns `src/lib/chat-context.tsx`, the new `scripts/release-browser-community-delete-preview.mjs`, its invocation in `scripts/smoke-release-browser.mjs`, and this product ledger. No other repository, shared Core, schema, identity or deploy behavior changes. Preserve original message-search work and all existing checks. Do not infer Yurucommu single-owner policy for Yurumeet.
+
+GA condition: after a user deletes a community message successfully, the thread and Talk-list preview promptly reflect native stored messages; a failed transport delete restores the thread without writing. Evidence must distinguish actual DELETE200 from an explicitly aborted-before-Worker request and native stored state from the displayed cache. Community Group ownership membership is distinct from a human account or instance-ownership premise.
+
+Immutable #32 Worker `sha256:8bb8addaaf4579984a8d15a04373734fed0c45dc3f6006b249badab789b1c641` red at22:12 UTC: real UI DELETE200, newest object absent in native D1, older object preserved, native contacts preview points to older text, but Talk list still displays deleted newest text at5139ms after deletion /5623ms after route startup, before20s polling. The helper correction uses the source's actual `alertdialog` confirm semantics. All data is disposable local fixture data; no production deletion.
+
+Fix: invoke the existing contacts refetch after successful community deletion, matching message-send behavior. Keep native delete success independent of completion of this background refresh; leave failure rollback unchanged. The browser journey retains existing password/DM/media/search/archive assertions and adds actual API Group creation, two real composer sends, strict native ordering, no-write transport rollback, successful real delete and native/DOM preview convergence before the poll.
+
+Qualification: preserve the old Worker, validate the new exact artifact with the same operator helper, review source/test independence, freeze source and commit, then serialize mandatory `bun run check` and fresh tracked browser against digest-identified bytes after each free-slot scan. CI must use an actual base+head merge checkout whose tree equals the reviewed head. Retain failed controls and unknown causes rather than changing deadlines or calling them product defects.
+
+Remaining dependencies: real federation/Queue/Cron, public install/update/rollback/restore/monitor, real OIDC/Takos token use/refresh and secret custody, public v0.1.2/Core3.2.0 same-name0019 schema reconciliation, shared per-intent DM idempotency/Follow hydration/upload lifecycle. No public GA claim or deployment.
