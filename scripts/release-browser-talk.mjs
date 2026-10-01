@@ -629,15 +629,31 @@ export async function qualifyBrowserTalk({
   page.on("request", onBadgeRequest);
   try {
     const badgeJourneyStartedAt = Date.now();
-    // Restart before archiving so the first badge refresh and the 20-second
-    // interval have a fresh deadline for this UI journey.
+    const initialBadgeResponse = page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === badgePath &&
+        response.request().method() === "GET",
+      { timeout: 10_000 },
+    );
+    initialBadgeResponse.catch(() => {});
+    // Restart before archiving and arm the waiter first: domcontentloaded can
+    // precede AppRoot's asynchronous actor load and initial badge request.
     await page.goto(`${origin}/?tab=talk`, {
       waitUntil: "domcontentloaded",
       timeout: 20_000,
     });
+    const initialBadge = await initialBadgeResponse;
+    const initialBadgeBody = await jsonResponse(
+      initialBadge,
+      "initial unread badge refresh",
+    );
     requireTalk(
-      badgeRequests.length > 0 && Date.now() - badgeJourneyStartedAt < 10_000,
-      "talk route did not refresh badges inside the 20-second poll window",
+      initialBadge.status() === 200 &&
+        initialBadgeBody.total === 0 &&
+        initialBadgeBody.dm === 0 &&
+        badgeRequests.length > 0 &&
+        Date.now() - badgeJourneyStartedAt < 10_000,
+      `talk route initial badge response was not a timely native zero: status=${initialBadge.status()}, body=${JSON.stringify(initialBadgeBody)}, elapsedMs=${Date.now() - badgeJourneyStartedAt}`,
     );
     const unreadContactRow = page
       .locator("li.c-talk-rooms")

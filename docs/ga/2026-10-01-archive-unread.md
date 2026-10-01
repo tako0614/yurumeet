@@ -36,3 +36,12 @@ then inserts one new synthetic inbound Note newer than its persisted read marker
 while archived. This is explicit local D1 fixture input, not remote federation
 delivery. Qualify count0 while archived, then count1/contact restoration and
 nav display immediately after restore, before the20-second badge poll.
+
+Actual corrected old-control at20:46 UTC qualifies the intended red:3.37s after
+restore, native total/dm1, archiveRows0, active contacts unread1, but Talk nav
+has no badge. The archived view correctly has no active contact DOM yet. Add
+one existing app.refreshBadges() call to the archived-list restore success
+handler. Controlled CI36922728012 had full266/0/1607 and native33 on the exact
+oldfd9 bytes, but its browser failed at initial readiness; that is excluded from
+product regression evidence. The readiness waiter now starts before navigation
+and awaits the actual200 unread response. New full/browser/CI remain required.

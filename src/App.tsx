@@ -889,6 +889,7 @@ function TalkListPane(props: {
       await unarchiveDMConversation(contact.ap_id);
       void refetchArchived();
       chat.refetchContacts();
+      app.refreshBadges();
       app.toast("アーカイブから戻しました");
     } catch {
       app.toast("操作に失敗しました", "error");
