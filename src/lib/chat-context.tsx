@@ -28,6 +28,10 @@ import {
   sendUserDMTyping,
 } from "@takosjp/yurucommu-api";
 import { useApp } from "./app-context.tsx";
+import {
+  classifyMessageDeliveryFailure,
+  type MessageDeliveryFailure,
+} from "./message-delivery.ts";
 
 /**
  * A chat message plus local delivery state: `pending` while an optimistic
@@ -37,6 +41,7 @@ import { useApp } from "./app-context.tsx";
 export type ChatMessage = (DMMessage | CommunityMessage) & {
   pending?: boolean;
   failed?: boolean;
+  deliveryFailure?: MessageDeliveryFailure;
 };
 
 const POLL_MS = 4000;
@@ -625,15 +630,23 @@ export function ChatProvider(props: { children: JSX.Element }) {
       }
       void refetchContacts();
       return true;
-    } catch {
+    } catch (error) {
+      const deliveryFailure = classifyMessageDeliveryFailure(error);
       if (isSelectedContact(contact)) {
         setMessages((current) =>
           current.map((m) =>
-            m.id === temp.id ? { ...m, pending: false, failed: true } : m,
+            m.id === temp.id
+              ? { ...m, pending: false, failed: true, deliveryFailure }
+              : m,
           ),
         );
       }
-      app.toast("送信に失敗しました", "error");
+      app.toast(
+        deliveryFailure === "rejected"
+          ? "送信を受け付けられませんでした"
+          : "送信結果を確認できません",
+        "error",
+      );
       return false;
     }
   };
@@ -694,6 +707,7 @@ export function ChatProvider(props: { children: JSX.Element }) {
       ...target,
       failed: false,
       pending: true,
+      deliveryFailure: undefined,
       created_at: new Date().toISOString(),
     };
     setMessages((prev) => prev.map((m) => (m.id === messageId ? retry : m)));

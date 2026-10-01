@@ -96,9 +96,13 @@ Set `BROWSER_SMOKE_CHROME` to specify the executable. The script does not downlo
 a browser and fails if Chrome is unavailable. CI also requires this step after
 the complete `check`. It verifies actual form rejection, retry, the signed-in
 persisted sessions and actual UI contact selection, DM, image/video attachment
-and failed-send retry with disposable local HTTP and native bindings, checking
+and retry after interruption before the request reaches the server, with disposable local HTTP and native bindings, checking
 the persisted DB and ObjectBucket data. The synthetic communication peer is
-added only after first-login qualification.
+added only after first-login qualification. It also checks response loss after a
+message is saved. The UI reports unconfirmed delivery and warns that another send
+may duplicate it; the current Core/API cannot guarantee duplicate prevention.
+Hiding the unconfirmed placeholder removes its local display, not a saved server
+message.
 Public TLS, OIDC, cross-server communication and update/recovery need separate
 evidence.
 
