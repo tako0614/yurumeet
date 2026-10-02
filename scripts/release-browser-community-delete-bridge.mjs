@@ -515,7 +515,6 @@ async function beginHeldDelete(page, origin, community, message, delivery) {
   const entered = gate("DELETE held before local Worker/Core");
   const finish = gate("DELETE delivery release");
   const handled = gate("DELETE route handler finished");
-  const failed = gate("synthetic DELETE transport abort observed");
   let intercepted = 0;
   let outcome = null;
   const handler = async (route) => {
@@ -534,7 +533,6 @@ async function beginHeldDelete(page, origin, community, message, delivery) {
         // Explicit synthetic boundary fault: route.fetch is skipped, so Core
         // cannot mutate native state in the failure qualification.
         await route.abort("failed");
-        failed.resolve();
         outcome = { kind: "synthetic-abort-before-Core" };
       } else {
         const response = await route.fetch({ maxRedirects: 0 });
@@ -547,9 +545,6 @@ async function beginHeldDelete(page, origin, community, message, delivery) {
         };
         await fulfillSnapshot(route, outcome);
       }
-    } catch (error) {
-      failed.reject(error);
-      throw error;
     } finally {
       handled.resolve();
     }
@@ -566,13 +561,16 @@ async function beginHeldDelete(page, origin, community, message, delivery) {
     await row.getByRole("menuitem", { name: "削除", exact: true }).click();
     const dialog = page.getByRole("alertdialog", { name: "メッセージを削除" });
     await dialog.waitFor({ state: "visible", timeout: 5_000 });
-    const requestFailed = page.waitForEvent("requestfailed", {
-      predicate: (request) =>
-        request.method() === "DELETE" &&
-        new URL(request.url()).pathname === new URL(exactPath).pathname,
-      timeout: 15_000,
-    });
-    requestFailed.catch(() => {});
+    const requestFailed =
+      delivery === "abort-before-core"
+        ? page.waitForEvent("requestfailed", {
+            predicate: (request) =>
+              request.method() === "DELETE" &&
+              new URL(request.url()).pathname === new URL(exactPath).pathname,
+            timeout: 15_000,
+          })
+        : null;
+    requestFailed?.catch(() => {});
     await dialog.getByRole("button", { name: "削除", exact: true }).click();
     await bounded(entered.promise, "DELETE interception before Core");
     return {
@@ -580,7 +578,6 @@ async function beginHeldDelete(page, origin, community, message, delivery) {
       entered,
       handled: bounded(handled.promise, "DELETE handler completion"),
       requestFailed,
-      failed: bounded(failed.promise, "synthetic DELETE abort"),
       intercepted: () => intercepted,
       outcome: () => outcome,
       dispose,
