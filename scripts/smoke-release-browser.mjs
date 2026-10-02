@@ -20,6 +20,7 @@ import {
 } from "./release-browser-community-delete-bridge.mjs";
 import { qualifyBrowserCommunityDeleteReload } from "./release-browser-community-delete-reload.mjs";
 import { qualifyBrowserFeedRefresh } from "./release-browser-feed-refresh.mjs";
+import { qualifyBrowserFeedAck } from "./release-browser-feed-ack.mjs";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const password = " browser-smoke-only ";
@@ -506,6 +507,27 @@ async function smoke(artifact, digest) {
       await feedPage.close();
     }
 
+    // Each timeline fixture owns a separate page, preserving the prior
+    // observer/response controls without carrying them into the ACK lane.
+    const feedAckPage = await context.newPage();
+    let feedAck;
+    try {
+      await feedAckPage.goto(`${origin}/?tab=timeline`, {
+        waitUntil: "domcontentloaded",
+        timeout: 20_000,
+      });
+      feedAck = await qualifyBrowserFeedAck({
+        page: feedAckPage,
+        db,
+        origin,
+        actorApId: ownerId,
+        checks,
+        expectedBaseline: false,
+      });
+    } finally {
+      await feedAckPage.close();
+    }
+
     check(
       pageErrors.length === 0,
       "community delete browser raised a runtime error",
@@ -529,6 +551,7 @@ async function smoke(artifact, digest) {
       currentActorRecovery,
       communityDeleteReload,
       feedRefresh,
+      feedAck,
       status: "PASSED",
     };
   } catch (error) {
