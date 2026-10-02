@@ -32,6 +32,11 @@ import {
   classifyMessageDeliveryFailure,
   type MessageDeliveryFailure,
 } from "./message-delivery.ts";
+import { createOutgoingRecovery } from "./outgoing-recovery.ts";
+import {
+  newOutgoingIntentId,
+  type OutgoingJournalRecord,
+} from "./outgoing-journal.ts";
 
 /**
  * A chat message plus local delivery state: `pending` while an optimistic
@@ -201,7 +206,11 @@ export type ChatContextValue = {
   partnerLastReadAt: Accessor<string | null>;
   /** Per-member read positions for the open group chat (local members only). */
   readStates: Accessor<CommunityReadState[]>;
-  send: (content: string, attachments?: MediaAttachment[]) => Promise<boolean>;
+  send: (
+    content: string,
+    attachments?: MediaAttachment[],
+    onJournaled?: () => void,
+  ) => Promise<boolean>;
   /**
    * Forward a message's text (and any media refs) to another talk via the same
    * DM/community send path. The target need not be the open conversation; when
@@ -238,8 +247,6 @@ export function useChat(): ChatContextValue {
   return ctx;
 }
 
-let tempSeq = 0;
-
 export function ChatProvider(props: { children: JSX.Element }) {
   const app = useApp();
   const location = useLocation();
@@ -259,6 +266,42 @@ export function ChatProvider(props: { children: JSX.Element }) {
   const [readStates, setReadStates] = createSignal<CommunityReadState[]>([]);
   const [isTyping, setIsTyping] = createSignal(false);
   const [didAutoSelect, setDidAutoSelect] = createSignal(false);
+  const recoveries = new Map<
+    string,
+    ReturnType<typeof createOutgoingRecovery>
+  >();
+  const scopeKey = () => JSON.stringify([app.origin(), app.actor().ap_id]);
+  const recovery = () => {
+    const key = scopeKey();
+    let value = recoveries.get(key);
+    if (!value) {
+      value = createOutgoingRecovery({
+        serverOrigin: app.origin(),
+        principalApId: app.actor().ap_id,
+      });
+      recoveries.set(key, value);
+      if (value.restorationFailed)
+        app.toast("送信履歴を復元できません。履歴を確認してください", "error");
+    }
+    return value;
+  };
+  const sender = () => {
+    const actor = app.actor();
+    return {
+      ap_id: actor.ap_id,
+      username: actor.username,
+      preferred_username: actor.preferred_username,
+      name: actor.name,
+      icon_url: actor.icon_url,
+    };
+  };
+  const mergeOutgoing = (
+    contact: DMContact,
+    rows: ChatMessage[],
+    fetchedAtRevision?: number,
+    observedIds?: ReadonlySet<string>,
+  ) =>
+    recovery().merge(contact, rows, sender(), fetchedAtRevision, observedIds);
 
   // The 20s contacts refetch can re-sort the rows; applying that while a
   // finger is down makes the tap land on the wrong row. Hold the refreshed
@@ -417,15 +460,21 @@ export function ChatProvider(props: { children: JSX.Element }) {
   let messageLoadGeneration = 0;
   const loadConversation = async (contact: DMContact) => {
     const generation = ++messageLoadGeneration;
-    setMessages([]);
+    const principal = scopeKey();
+    const fetchedAtRevision = recovery().revision();
+    setMessages(mergeOutgoing(contact, []));
     setMessagesLoading(true);
     setMessagesError(false);
     try {
       const page = await loadMessagesPage(contact);
-      if (generation !== messageLoadGeneration || !isSelectedContact(contact)) {
+      if (
+        generation !== messageLoadGeneration ||
+        !isSelectedContact(contact) ||
+        principal !== scopeKey()
+      ) {
         return;
       }
-      setMessages(page.messages);
+      setMessages(mergeOutgoing(contact, page.messages, fetchedAtRevision));
       setMessagesHasMore(page.hasMore);
       setPartnerLastReadAt(page.partnerLastReadAt);
       setReadStates(page.readStates);
@@ -444,21 +493,24 @@ export function ChatProvider(props: { children: JSX.Element }) {
   };
 
   createEffect(
-    on(selected, (contact) => {
-      messageLoadGeneration++; // invalidate any in-flight load
-      setIsTyping(false);
-      setMessagesHasMore(false);
-      setLoadingOlder(false);
-      setPartnerLastReadAt(null);
-      setReadStates([]);
-      setMessagesError(false);
-      if (!contact) {
-        setMessages([]);
-        setMessagesLoading(false);
-        return;
-      }
-      void loadConversation(contact);
-    }),
+    on(
+      () => [selected(), scopeKey()] as const,
+      ([contact]) => {
+        messageLoadGeneration++; // invalidate any in-flight load
+        setIsTyping(false);
+        setMessagesHasMore(false);
+        setLoadingOlder(false);
+        setPartnerLastReadAt(null);
+        setReadStates([]);
+        setMessagesError(false);
+        if (!contact) {
+          setMessages([]);
+          setMessagesLoading(false);
+          return;
+        }
+        void loadConversation(contact);
+      },
+    ),
   );
 
   const reloadMessages = () => {
@@ -474,16 +526,24 @@ export function ChatProvider(props: { children: JSX.Element }) {
     const cursor = olderCursor(messages());
     if (!cursor) return;
     const generation = messageLoadGeneration;
+    const principal = scopeKey();
     setLoadingOlder(true);
     try {
       const page = await loadMessagesPage(contact, cursor);
-      if (generation !== messageLoadGeneration || !isSelectedContact(contact)) {
+      if (
+        generation !== messageLoadGeneration ||
+        !isSelectedContact(contact) ||
+        principal !== scopeKey()
+      ) {
         return;
       }
       setMessages((prev) => {
         const known = new Set(prev.map((m) => m.id));
         const older = page.messages.filter((m) => !known.has(m.id));
-        return older.length === 0 ? prev : [...older, ...prev];
+        return mergeOutgoing(
+          contact,
+          older.length === 0 ? prev : [...older, ...prev],
+        );
       });
       setMessagesHasMore(page.hasMore);
     } catch {
@@ -507,9 +567,11 @@ export function ChatProvider(props: { children: JSX.Element }) {
         pollInFlight = true;
         void (async () => {
           try {
+            const principal = scopeKey();
+            const fetchedAtRevision = recovery().revision();
             const page = await loadMessagesPage(contact);
             notePollSuccess();
-            if (!isSelectedContact(contact)) return;
+            if (!isSelectedContact(contact) || principal !== scopeKey()) return;
             // A failed initial load left the thread empty with paging
             // disabled — the first successful poll is the recovery path.
             if (messagesError()) {
@@ -524,7 +586,12 @@ export function ChatProvider(props: { children: JSX.Element }) {
                   !known.has(message.id) &&
                   message.sender.ap_id !== app.actor().ap_id,
               );
-              return reconcileFetchedWindow(prev, page.messages);
+              return mergeOutgoing(
+                contact,
+                reconcileFetchedWindow(prev, page.messages),
+                fetchedAtRevision,
+                new Set(page.messages.map((message) => message.id)),
+              );
             });
             // Keep the read receipts fresh: the partner/member read positions
             // advance while the thread is open.
@@ -594,128 +661,154 @@ export function ChatProvider(props: { children: JSX.Element }) {
     void sendUserDMTyping(contact.ap_id).catch(() => {});
   };
 
+  const storageWarning = () =>
+    app.toast("送信内容を保存できません。入力を残しています", "error");
+
   const deliverMessage = async (
     contact: DMContact,
-    temp: ChatMessage,
+    record: OutgoingJournalRecord,
+    store: ReturnType<typeof createOutgoingRecovery>,
+    principal: string,
   ): Promise<boolean> => {
+    const refresh = () => {
+      if (principal === scopeKey() && isSelectedContact(contact)) {
+        setMessages((current) => store.merge(contact, current, sender()));
+      }
+    };
     try {
       const sent: ChatMessage =
         contact.type === "community"
           ? await sendCommunityMessage(
               contact.ap_id,
-              temp.content,
-              temp.attachments,
+              record.content,
+              record.attachments,
             )
           : (
               await sendUserDMMessage(
                 contact.ap_id,
-                temp.content,
-                temp.attachments,
+                record.content,
+                record.attachments,
               )
             ).message;
-      if (isSelectedContact(contact)) {
-        // Replace the optimistic placeholder with the server's copy at the
-        // SAME index, so a partner message polled in mid-flight doesn't end
-        // up rendered before this earlier send.
-        setMessages((current) => {
-          if (current.some((m) => m.id === sent.id)) {
-            return current.filter((m) => m.id !== temp.id);
-          }
-          const at = current.findIndex((m) => m.id === temp.id);
-          if (at < 0) return [...current, sent];
-          const next = [...current];
-          next[at] = sent;
-          return next;
-        });
+      const saved = store.confirm(record.id, sent);
+      refresh();
+      if (principal === scopeKey()) {
+        if (!saved)
+          app.toast(
+            "送信済みですが復旧履歴を更新できません。再読込後は履歴を確認してください",
+            "error",
+          );
+        void refetchContacts();
       }
-      void refetchContacts();
       return true;
     } catch (error) {
       const deliveryFailure = classifyMessageDeliveryFailure(error);
-      if (isSelectedContact(contact)) {
-        setMessages((current) =>
-          current.map((m) =>
-            m.id === temp.id
-              ? { ...m, pending: false, failed: true, deliveryFailure }
-              : m,
-          ),
+      store.fail(record.id, deliveryFailure);
+      refresh();
+      if (principal === scopeKey())
+        app.toast(
+          deliveryFailure === "rejected"
+            ? "送信を受け付けられませんでした"
+            : "送信結果を確認できません",
+          "error",
         );
-      }
-      app.toast(
-        deliveryFailure === "rejected"
-          ? "送信を受け付けられませんでした"
-          : "送信結果を確認できません",
-        "error",
-      );
       return false;
     }
   };
 
-  const buildOutgoing = (
+  const queueMessage = async (
+    target: DMContact,
     content: string,
     attachments?: MediaAttachment[],
-  ): ChatMessage => {
-    const actor = app.actor();
-    return {
-      id: `temp-${++tempSeq}`,
-      sender: {
-        ap_id: actor.ap_id,
-        username: actor.username,
-        preferred_username: actor.preferred_username,
-        name: actor.name,
-        icon_url: actor.icon_url,
-      },
+    onJournaled?: () => void,
+  ): Promise<boolean> => {
+    content = content.trim();
+    if (!content && (attachments?.length ?? 0) === 0) return false;
+    const contact = { ...target };
+    const principal = scopeKey();
+    const store = recovery();
+    const record: OutgoingJournalRecord = {
+      version: 1,
+      id: newOutgoingIntentId(),
+      target: { type: contact.type, ap_id: contact.ap_id },
       content,
-      ...(attachments && attachments.length > 0 ? { attachments } : {}),
+      ...(attachments?.length
+        ? {
+            attachments: attachments.map(
+              ({ url, r2_key, content_type, name }) => ({
+                url,
+                r2_key,
+                content_type,
+                ...(name !== undefined ? { name } : {}),
+              }),
+            ),
+          }
+        : {}),
       created_at: new Date().toISOString(),
-      pending: true,
+      state: "pending",
     };
+    if (!store.queue(record)) {
+      storageWarning();
+      return false;
+    }
+    if (isSelectedContact(contact))
+      setMessages((current) => store.merge(contact, current, sender()));
+    try {
+      // Saved locally, not acknowledged by the server. Run exactly once.
+      onJournaled?.();
+    } catch {
+      store.fail(record.id, "unconfirmed");
+      if (isSelectedContact(contact))
+        setMessages((current) => store.merge(contact, current, sender()));
+      app.toast(
+        "送信を開始できませんでした。入力と履歴を確認してください",
+        "error",
+      );
+      return false;
+    }
+    return deliverMessage(contact, record, store, principal);
   };
 
   const send = async (
     content: string,
     attachments?: MediaAttachment[],
+    onJournaled?: () => void,
   ): Promise<boolean> => {
     const contact = selected();
-    if (!contact) return false;
-    if (!content && (attachments?.length ?? 0) === 0) return false;
-    const temp = buildOutgoing(content, attachments);
-    setMessages((prev) => [...prev, temp]);
-    return deliverMessage(contact, temp);
+    return contact
+      ? queueMessage(contact, content, attachments, onJournaled)
+      : false;
   };
 
   const forwardMessage = async (
     target: DMContact,
     content: string,
     attachments?: MediaAttachment[],
-  ): Promise<boolean> => {
-    if (!content && (attachments?.length ?? 0) === 0) return false;
-    const temp = buildOutgoing(content, attachments);
-    // Only paint the optimistic bubble when the forward target is the open
-    // conversation; forwarding to a different talk must not inject a message
-    // into the thread currently on screen.
-    if (isSelectedContact(target)) setMessages((prev) => [...prev, temp]);
-    return deliverMessage(target, temp);
-  };
+  ): Promise<boolean> => queueMessage(target, content, attachments);
 
   const resendMessage = async (messageId: string): Promise<boolean> => {
-    const contact = selected();
-    if (!contact) return false;
-    const target = messages().find((m) => m.id === messageId && m.failed);
-    if (!target) return false;
-    const retry: ChatMessage = {
-      ...target,
-      failed: false,
-      pending: true,
-      deliveryFailure: undefined,
-      created_at: new Date().toISOString(),
-    };
-    setMessages((prev) => prev.map((m) => (m.id === messageId ? retry : m)));
-    return deliverMessage(contact, retry);
+    const current = selected();
+    if (!current) return false;
+    const contact = { ...current };
+    const principal = scopeKey();
+    const store = recovery();
+    const retry = store.retry(contact, messageId);
+    if (!retry) {
+      storageWarning();
+      return false;
+    }
+    setMessages((rows) => store.merge(contact, rows, sender()));
+    return deliverMessage(contact, retry, store, principal);
   };
 
   const discardMessage = (messageId: string) => {
-    setMessages((prev) => prev.filter((m) => m.id !== messageId));
+    const contact = selected();
+    if (!contact) return;
+    if (!recovery().discard(contact, messageId)) {
+      app.toast("復旧履歴を消せませんでした。表示を残しています", "error");
+      return;
+    }
+    setMessages((rows) => mergeOutgoing(contact, rows));
   };
 
   const deleteMessage = async (messageId: string): Promise<boolean> => {

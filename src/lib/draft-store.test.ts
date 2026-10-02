@@ -76,6 +76,14 @@ describe("draft-store", () => {
   });
 
   test("keys are namespaced per talk", () => {
-    expect(draftKey(AP_A)).toBe(`yurume:draft:${AP_A}`);
+    expect(draftKey(AP_A)).toBe(`yurume:draft:v2:${AP_A}`);
+  });
+  test("legacy contact-only drafts are not imported or removed", () => {
+    const store = memoryStore();
+    const legacy = `yurume:draft:${AP_A}`;
+    store.map.set(legacy, "unknown author");
+    expect(readDraft(AP_A, store)).toBe("");
+    clearDraft(AP_A, store);
+    expect(store.map.get(legacy)).toBe("unknown author");
   });
 });

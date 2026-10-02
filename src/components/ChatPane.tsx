@@ -14,6 +14,7 @@ import { useApp } from "../lib/app-context.tsx";
 import { type ChatMessage, useChat } from "../lib/chat-context.tsx";
 import { createEscapeClose, DialogA11y } from "../lib/dialog.tsx";
 import { clearDraft, readDraft, writeDraft } from "../lib/draft-store.ts";
+import { createScopedDraftIdentity } from "../lib/outgoing-journal.ts";
 import { searchMessages } from "../lib/message-search.ts";
 import {
   attachmentSrc,
@@ -91,33 +92,39 @@ export function ChatPane() {
   // is persisted per-talk and restored on return (staged media is not — object
   // URLs can't survive and mis-sending a stale upload would be worse).
   let stagedGeneration = 0;
+  const draftIdentity = () => {
+    const contact = chat.selected();
+    return contact
+      ? createScopedDraftIdentity(
+          { serverOrigin: app.origin(), principalApId: app.actor().ap_id },
+          { type: contact.type, ap_id: contact.ap_id },
+        )
+      : "";
+  };
   createEffect(
-    on(
-      () => chat.selected()?.ap_id,
-      (apId, prevApId) => {
-        if (prevApId) writeDraft(prevApId, draft());
-        stagedGeneration++;
-        setStaged((prev) => {
-          prev.forEach((item) => URL.revokeObjectURL(item.preview));
-          return [];
-        });
-        setUploading(false);
-        setMenuFor(null);
-        setLightbox(null);
-        setSearchOpen(false);
-        setSearchQuery("");
-        messageEls.clear();
-        setDraft(apId ? readDraft(apId) : "");
-      },
-    ),
+    on(draftIdentity, (identity, previousIdentity) => {
+      if (previousIdentity) writeDraft(previousIdentity, draft());
+      stagedGeneration++;
+      setStaged((prev) => {
+        prev.forEach((item) => URL.revokeObjectURL(item.preview));
+        return [];
+      });
+      setUploading(false);
+      setMenuFor(null);
+      setLightbox(null);
+      setSearchOpen(false);
+      setSearchQuery("");
+      messageEls.clear();
+      setDraft(identity ? readDraft(identity) : "");
+    }),
   );
 
   // Save the open talk's draft when the tab is backgrounded or closed, so a
   // reload/close without a conversation switch still restores it.
   if (typeof window !== "undefined") {
     const flushDraft = () => {
-      const apId = chat.selected()?.ap_id;
-      if (apId) writeDraft(apId, draft());
+      const identity = draftIdentity();
+      if (identity) writeDraft(identity, draft());
     };
     const onHidden = () => {
       if (document.visibilityState === "hidden") flushDraft();
@@ -350,11 +357,8 @@ export function ChatPane() {
     const content = draft().trim();
     const attachments = staged();
     if ((!content && attachments.length === 0) || uploading()) return;
-    const apId = chat.selected()?.ap_id;
-    if (apId) clearDraft(apId);
-    setDraft("");
-    setStaged([]);
-    attachments.forEach((item) => URL.revokeObjectURL(item.preview));
+    const identity = draftIdentity();
+    const generation = stagedGeneration;
     void chat.send(
       content,
       attachments.map(({ url, r2_key, content_type, name }) => ({
@@ -363,6 +367,14 @@ export function ChatPane() {
         content_type,
         ...(name ? { name } : {}),
       })),
+      () => {
+        if (generation !== stagedGeneration || identity !== draftIdentity())
+          return;
+        clearDraft(identity);
+        setDraft("");
+        setStaged([]);
+        attachments.forEach((item) => URL.revokeObjectURL(item.preview));
+      },
     );
   };
 
