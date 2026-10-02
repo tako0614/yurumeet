@@ -34,7 +34,7 @@ type DeleteSuppression = {
 type DeleteHandle = {
   /** True only when no other same-message delete can still mask restoration. */
   rollback: () => { mayRestore: boolean };
-  /** Returns whether matching journal cleanup is complete; masking remains active either way. */
+  /** True when matching entries are removed or durably marked deleted; masking remains active either way. */
   commit: () => boolean;
 };
 
@@ -88,11 +88,21 @@ export function createOutgoingRecovery(
   const journal = createOutgoingJournal(scope, storage);
   const entries = new Map<string, Entry>();
   // Session masks have no TTL/LRU: expiring one could resurrect a confirmed
-  // message that this client successfully deleted. Memory grows only for IDs
-  // deleted during this mounted recovery session.
+  // message that this client successfully deleted. Memory includes restored
+  // deleted markers and IDs deleted during this mounted recovery session.
   const deleteSuppressions = new Map<string, DeleteSuppression>();
+  const deleteKey = (target: JournalTarget, serverId: string) =>
+    JSON.stringify([target.type, target.ap_id, serverId]);
   let revision = 0;
   const restored = journal.read();
+  for (const deleted of restored.deletedRecords) {
+    // A verified previous DELETE is not an outgoing intent. Restore the mask
+    // before exposing any surviving confirmed sibling with the same server ID.
+    deleteSuppressions.set(deleteKey(deleted.target, deleted.serverId), {
+      pending: new Set(),
+      committed: true,
+    });
+  }
   for (const saved of restored.records) {
     // The previous page's pending request has an unknown outcome after reload.
     const record: OutgoingJournalRecord =
@@ -189,9 +199,6 @@ export function createOutgoingRecovery(
     return true;
   };
 
-  const deleteKey = (target: JournalTarget, serverId: string) =>
-    JSON.stringify([target.type, target.ap_id, serverId]);
-
   const cleanupDeletedAcknowledgements = (
     target: JournalTarget,
     serverId: string,
@@ -205,7 +212,9 @@ export function createOutgoingRecovery(
       ) {
         continue;
       }
-      if (journal.remove(entry.record)) {
+      if (journal.remove(entry.record) || journal.markDeleted(entry.record)) {
+        // The same key may now hold a deletion marker; retire its old entry
+        // immediately so a later merge cannot remove that marker by old ID.
         entries.delete(id);
         revision++;
       } else {
@@ -241,7 +250,8 @@ export function createOutgoingRecovery(
         tokenState = "committed";
         revision++;
       }
-      // Keep the mask even when storage removal fails; a later merge retries.
+      // Keep the mask when neither removal nor marker persistence can be
+      // verified; a later merge may retire those still-renderable entries.
       return cleanupDeletedAcknowledgements(scopedTarget, serverId);
     };
 
