@@ -13,6 +13,7 @@ import { qualifyBrowserTalk } from "./release-browser-talk.mjs";
 import { qualifyBrowserCommunityDeletePreview } from "./release-browser-community-delete-preview.mjs";
 import { qualifyBrowserAuthMethodRecovery } from "./release-browser-auth-method-recovery.mjs";
 import { qualifyBrowserDraftStorage } from "./release-browser-draft-storage.mjs";
+import { qualifyBrowserCommunityDeleteRecovery } from "./release-browser-community-delete-recovery.mjs";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const password = " browser-smoke-only ";
@@ -429,6 +430,25 @@ async function smoke(artifact, digest) {
       serverErrors.length === 0,
       "draft storage artifact returned HTTP 5xx",
     );
+    const communityDeleteRecovery = await qualifyBrowserCommunityDeleteRecovery(
+      {
+        page,
+        db,
+        origin,
+        actorApId: ownerId,
+        checks,
+      },
+    );
+
+    check(
+      pageErrors.length === 0,
+      "delete recovery browser raised a runtime error",
+    );
+    check(
+      serverErrors.length === 0,
+      "delete recovery artifact returned HTTP 5xx",
+    );
+
     result = {
       kind: "yurumeet.release-browser-smoke@v1",
       artifact: basename(artifact),
@@ -443,6 +463,7 @@ async function smoke(artifact, digest) {
       authMethodRecovery,
       draftStorage,
       checks,
+      communityDeleteRecovery,
       status: "PASSED",
     };
   } catch (error) {

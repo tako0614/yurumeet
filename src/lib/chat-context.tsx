@@ -33,6 +33,7 @@ import {
   type MessageDeliveryFailure,
 } from "./message-delivery.ts";
 import { createOutgoingRecovery } from "./outgoing-recovery.ts";
+import { restoreDeletedMessage } from "./restore-deleted-message.ts";
 import {
   newOutgoingIntentId,
   type OutgoingJournalRecord,
@@ -814,6 +815,8 @@ export function ChatProvider(props: { children: JSX.Element }) {
   const deleteMessage = async (messageId: string): Promise<boolean> => {
     const contact = selected();
     if (!contact || contact.type !== "community") return false;
+    const generation = messageLoadGeneration;
+    const principal = scopeKey();
     const before = messages();
     setMessages((prev) => prev.filter((m) => m.id !== messageId));
     try {
@@ -821,8 +824,16 @@ export function ChatProvider(props: { children: JSX.Element }) {
       void refetchContacts();
       return true;
     } catch {
-      if (isSelectedContact(contact)) setMessages(before);
-      app.toast("削除に失敗しました", "error");
+      const stillCurrent =
+        generation === messageLoadGeneration &&
+        isSelectedContact(contact) &&
+        principal === scopeKey();
+      if (stillCurrent) {
+        setMessages((current) =>
+          restoreDeletedMessage(current, before, messageId),
+        );
+        app.toast("削除に失敗しました", "error");
+      }
       return false;
     }
   };
