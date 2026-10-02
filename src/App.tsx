@@ -40,6 +40,7 @@ import {
   unlikeStory,
 } from "@takosjp/yurucommu-api";
 import { uploadProductMedia } from "./lib/media-upload.ts";
+import { submitStoryDraft } from "./lib/story-submission.ts";
 import { createTimelineFeed } from "./lib/timeline-feed.ts";
 import { useApp } from "./lib/app-context.tsx";
 import { useChat } from "./lib/chat-context.tsx";
@@ -1690,6 +1691,12 @@ function StoryComposerModal(props: {
   const [saving, setSaving] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
 
+  let submissionStatus: HTMLParagraphElement | undefined;
+  let mounted = true;
+  onCleanup(() => {
+    mounted = false;
+  });
+
   const reset = () => {
     setFile(null);
     setCaption("");
@@ -1706,30 +1713,50 @@ function StoryComposerModal(props: {
   const submit = async () => {
     const selected = file();
     if (!selected || saving()) return;
+    const draft = { file: selected, caption: caption() };
+    const previousFocus =
+      document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
     setSaving(true);
     setError(null);
+    queueMicrotask(() => {
+      if (mounted && props.open && saving() && submissionStatus?.isConnected) {
+        submissionStatus.focus();
+      }
+    });
     try {
-      const uploaded = await uploadProductMedia(selected);
-      await createStory({
-        attachment: {
-          url: uploaded.url,
-          r2_key: uploaded.r2_key,
-          content_type: uploaded.content_type,
-        },
-        displayDuration: selected.type.startsWith("video/") ? "PT10S" : "PT5S",
-        caption: caption().trim() || undefined,
+      await submitStoryDraft(draft, {
+        upload: uploadProductMedia,
+        create: createStory,
       });
     } catch (err) {
+      if (!mounted) return;
       console.error("Failed to create story:", err);
       setError("ストーリーの作成に失敗しました");
       setSaving(false);
+      queueMicrotask(() => {
+        if (
+          mounted &&
+          props.open &&
+          previousFocus?.isConnected &&
+          !previousFocus.matches(":disabled")
+        ) {
+          previousFocus.focus();
+        }
+      });
       return;
     }
+    if (!mounted) return;
     // The story exists now; a failed story-bar refresh must not roll the form
     // back into an error state and invite a duplicate re-submit.
     reset();
     props.onClose();
-    void Promise.resolve(props.onSuccess()).catch(() => undefined);
+    void Promise.resolve()
+      .then(() => {
+        if (mounted) return props.onSuccess();
+      })
+      .catch(() => undefined);
   };
 
   let dialogRoot: HTMLDivElement | undefined;
@@ -1747,6 +1774,7 @@ function StoryComposerModal(props: {
           type="button"
           class="p-story-composer-dismiss"
           aria-label="閉じる"
+          disabled={saving()}
           onClick={close}
         />
         <form
@@ -1758,44 +1786,65 @@ function StoryComposerModal(props: {
         >
           <div class="p-story-composer-head">
             <h2>ストーリー作成</h2>
-            <button type="button" onClick={close} aria-label="閉じる">
+            <button
+              type="button"
+              onClick={close}
+              aria-label="閉じる"
+              disabled={saving()}
+            >
               <CloseIcon />
             </button>
           </div>
-          <label class="p-story-file">
-            <span>{file()?.name ?? "写真・動画を選択"}</span>
-            <input
-              type="file"
-              accept="image/jpeg,image/png,image/gif,image/webp,video/mp4,video/webm"
+          <Show when={saving()}>
+            <p
+              role="status"
+              tabIndex={0}
+              ref={(element) => (submissionStatus = element)}
+            >
+              ストーリーを投稿しています
+            </p>
+          </Show>
+          <div aria-busy={saving()}>
+            <label class="p-story-file">
+              <span>{file()?.name ?? "写真・動画を選択"}</span>
+              <input
+                type="file"
+                accept="image/jpeg,image/png,image/gif,image/webp,video/mp4,video/webm"
+                disabled={saving()}
+                onInput={(event) => {
+                  if (saving()) return;
+                  const selected = event.currentTarget.files?.[0] ?? null;
+                  // Mirror the server-side media cap up front instead of
+                  // surfacing a generic upload failure later.
+                  if (selected && selected.size > MAX_STORY_MEDIA_SIZE) {
+                    event.currentTarget.value = "";
+                    setFile(null);
+                    setError("ファイルは 20MB までです");
+                    return;
+                  }
+                  setFile(selected);
+                  setError(null);
+                }}
+              />
+            </label>
+            <textarea
+              value={caption()}
+              maxLength={120}
+              placeholder="キャプション"
+              disabled={saving()}
               onInput={(event) => {
-                const selected = event.currentTarget.files?.[0] ?? null;
-                // Mirror the server-side media cap up front instead of
-                // surfacing a generic upload failure later.
-                if (selected && selected.size > MAX_STORY_MEDIA_SIZE) {
-                  event.currentTarget.value = "";
-                  setFile(null);
-                  setError("ファイルは 20MB までです");
-                  return;
-                }
-                setFile(selected);
-                setError(null);
+                if (!saving()) setCaption(event.currentTarget.value);
               }}
             />
-          </label>
-          <textarea
-            value={caption()}
-            maxLength={120}
-            placeholder="キャプション"
-            onInput={(event) => setCaption(event.currentTarget.value)}
-          />
-          <Show when={error()}>
-            {(message) => <p class="p-story-composer-error">{message()}</p>}
-          </Show>
-          <div class="p-story-composer-actions">
-            <span>{caption().trim().length} / 120</span>
-            <button type="submit" disabled={!file() || saving()}>
-              {saving() ? "投稿中" : "投稿"}
-            </button>
+            <Show when={error()}>
+              {(message) => <p class="p-story-composer-error">{message()}</p>}
+            </Show>
+            <div class="p-story-composer-actions">
+              <span>{caption().trim().length} / 120</span>
+              <button type="submit" disabled={!file() || saving()}>
+                {saving() ? "投稿中" : "投稿"}
+              </button>
+            </div>
           </div>
         </form>
       </div>
