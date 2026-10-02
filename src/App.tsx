@@ -40,6 +40,7 @@ import {
   unlikeStory,
 } from "@takosjp/yurucommu-api";
 import { uploadProductMedia } from "./lib/media-upload.ts";
+import { createTimelineFeed } from "./lib/timeline-feed.ts";
 import { useApp } from "./lib/app-context.tsx";
 import { useChat } from "./lib/chat-context.tsx";
 import { DialogA11y } from "./lib/dialog.tsx";
@@ -1308,7 +1309,7 @@ function TimelineView(props: {
               <div class="p-timeline-more" ref={(el) => (sentinel = el)}>
                 <button
                   type="button"
-                  disabled={props.loadingMore}
+                  disabled={props.postsLoading || props.loadingMore}
                   onClick={() => props.onLoadMore()}
                 >
                   {props.loadingMore ? "読み込み中…" : "もっと見る"}
@@ -1809,61 +1810,33 @@ export default function App() {
   const [searchParams, setSearchParams] = useSearchParams();
   const tab = (): AppTab => normalizeTab(searchParams.tab);
 
-  const [feedPosts, setFeedPosts] = createSignal<Post[]>([]);
-  const [feedLoading, setFeedLoading] = createSignal(true);
-  const [feedError, setFeedError] = createSignal(false);
-  const [feedCursor, setFeedCursor] = createSignal<string | null>(null);
-  const [feedHasMore, setFeedHasMore] = createSignal(false);
-  const [loadingMore, setLoadingMore] = createSignal(false);
-  let feedLoadedAt = 0;
-
-  const loadFeed = async () => {
-    setFeedLoading(true);
-    setFeedError(false);
-    try {
-      const page = await fetchTimeline({ limit: 30 });
-      setFeedPosts(page.posts);
-      setFeedCursor(page.nextCursor);
-      setFeedHasMore(page.hasMore);
-    } catch {
-      setFeedError(true);
-      // With posts already on screen the full-page error state stays hidden,
-      // so a failed manual "最新に更新" / stale-return refresh would otherwise
-      // give no feedback at all.
-      if (feedPosts().length > 0) app.toast("更新できませんでした", "error");
-    } finally {
-      feedLoadedAt = Date.now();
-      setFeedLoading(false);
-    }
-  };
+  const feed = createTimelineFeed({
+    fetchPage: fetchTimeline,
+    onError: (kind) =>
+      app.toast(
+        kind === "refresh" ? "更新できませんでした" : "読み込みに失敗しました",
+        "error",
+      ),
+  });
+  const {
+    posts: feedPosts,
+    setPosts: setFeedPosts,
+    loading: feedLoading,
+    error: feedError,
+    hasMore: feedHasMore,
+    loadingMore,
+    refresh: loadFeed,
+    loadMore: loadMoreFeed,
+  } = feed;
+  onCleanup(feed.dispose);
 
   // The feed otherwise only loads once per session: refresh it when the user
   // returns to the timeline tab after it has gone stale.
   const FEED_STALE_MS = 60_000;
   createEffect(() => {
     if (tab() !== "timeline" || feedLoading()) return;
-    if (Date.now() - feedLoadedAt > FEED_STALE_MS) void loadFeed();
+    if (Date.now() - feed.loadedAt() > FEED_STALE_MS) void loadFeed();
   });
-
-  const loadMoreFeed = async () => {
-    const cursor = feedCursor();
-    if (loadingMore() || !feedHasMore() || !cursor) return;
-    setLoadingMore(true);
-    try {
-      const page = await fetchTimeline({ limit: 30, before: cursor });
-      const seen = new Set(feedPosts().map((p) => p.ap_id));
-      setFeedPosts((prev) => [
-        ...prev,
-        ...page.posts.filter((p) => !seen.has(p.ap_id)),
-      ]);
-      setFeedCursor(page.nextCursor);
-      setFeedHasMore(page.hasMore);
-    } catch {
-      app.toast("読み込みに失敗しました", "error");
-    } finally {
-      setLoadingMore(false);
-    }
-  };
 
   createEffect(on(app.origin, () => void loadFeed()));
 
