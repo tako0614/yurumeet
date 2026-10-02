@@ -44,6 +44,19 @@ The prior ABA test now verifies pending M1 stays hidden after re-entry, the stal
 failure applies no snapshot/toast, then a fresh current poll restores native M1.
 Run full owning `bun run check`, complete real browser suite, and exact commit
 CI independently. Source/local/native/synthetic/CI do not establish live GA.
+
+The first full CI browser run reached a bootstrap failure before the bridge
+oracle. A source-unchanged local composition probe reproduced native auth GET
+429 and the global error screen, while contacts still returned200. Root badge
+effects read the throwing actor resource before the intended connection-error
+branch. Guard those reads and the retry-time actor branch by resource state.
+A separate one-shot synthetic current-actor503 must show connection error,
+allow an explicit retry and retain the same principal/actor/session counts.
+The bridge fixture observes actual bootstrap responses and honors a bounded
+native429 Retry-After before one UI retry. No auth quota, room-list deadline or
+product permission is changed. The synthetic503 and native429 evidence are
+distinct; neither proves a real issuer/token or live service.
+
 No deployment/publication/new cloud resources/billing/auth permission/live D1
 apply/real-data deletion. Heavy local work waits for fresh vacancy; pure focused
 unit tests can run independently and no foreign process is terminated.

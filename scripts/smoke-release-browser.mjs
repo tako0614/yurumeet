@@ -14,7 +14,10 @@ import { qualifyBrowserCommunityDeletePreview } from "./release-browser-communit
 import { qualifyBrowserAuthMethodRecovery } from "./release-browser-auth-method-recovery.mjs";
 import { qualifyBrowserDraftStorage } from "./release-browser-draft-storage.mjs";
 import { qualifyBrowserCommunityDeleteRecovery } from "./release-browser-community-delete-recovery.mjs";
-import { qualifyBrowserCommunityDeleteBridge } from "./release-browser-community-delete-bridge.mjs";
+import {
+  qualifyBrowserCommunityDeleteBridge,
+  qualifyBrowserCurrentActorRecovery,
+} from "./release-browser-community-delete-bridge.mjs";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const password = " browser-smoke-only ";
@@ -448,16 +451,32 @@ async function smoke(artifact, digest) {
       actorApId: ownerId,
       checks,
     });
+    check(
+      serverErrors.length === 0,
+      "community delete artifact returned HTTP 5xx before the auth control",
+    );
+    const currentActorRecovery = await qualifyBrowserCurrentActorRecovery({
+      page,
+      db,
+      origin,
+      actorApId: ownerId,
+      checks,
+    });
+    // This exact 503 is fulfilled by the one-shot browser route, before Core.
+    // Keep recording all responses and reject any additional server error.
+    check(
+      serverErrors.length === 1 &&
+        serverErrors[0].path === "/api/auth/me" &&
+        serverErrors[0].status === 503 &&
+        currentActorRecovery.refused === 1,
+      "current-actor control returned an unexpected HTTP 5xx response",
+    );
+    currentActorRecovery.syntheticServerErrors = serverErrors.slice();
 
     check(
       pageErrors.length === 0,
       "community delete browser raised a runtime error",
     );
-    check(
-      serverErrors.length === 0,
-      "community delete artifact returned HTTP 5xx",
-    );
-
     result = {
       kind: "yurumeet.release-browser-smoke@v1",
       artifact: basename(artifact),
@@ -474,6 +493,7 @@ async function smoke(artifact, digest) {
       checks,
       communityDeleteRecovery,
       communityDeleteBridge,
+      currentActorRecovery,
       status: "PASSED",
     };
   } catch (error) {

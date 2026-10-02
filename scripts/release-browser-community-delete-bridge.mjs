@@ -85,16 +85,167 @@ function deletePath(origin, communityApId, messageId) {
   return `${messagesPath(origin, communityApId)}/${encodeURIComponent(messageId)}`;
 }
 
-async function openTalk(page, origin) {
+async function openTalk(page, origin, actorApId, expectedFailure = null) {
+  const sessionCookie = () =>
+    page
+      .context()
+      .cookies(origin)
+      .then((cookies) => cookies.find((cookie) => cookie.name === "session"));
+  const beforeCookie = await sessionCookie();
+  requireDeleteBridge(
+    beforeCookie?.value,
+    "authenticated session cookie is required",
+  );
   await page.setViewportSize({ width: 1280, height: 900 });
+  const observeAuth = () => {
+    const response = page.waitForResponse(
+      (response) =>
+        new URL(response.url()).origin === origin &&
+        new URL(response.url()).pathname === "/api/auth/me" &&
+        response.request().method() === "GET",
+      { timeout: 15_000 },
+    );
+    response.catch(() => {});
+    return response;
+  };
+  const initialAuth = observeAuth();
   await page.goto(`${origin}/?tab=talk`, {
     waitUntil: "domcontentloaded",
     timeout: 20_000,
   });
+  let auth = await initialAuth;
+  const attempts = [{ status: auth.status(), explicitRetry: false }];
+  if (expectedFailure !== null) {
+    requireDeleteBridge(
+      auth.status() === expectedFailure,
+      `bootstrap refusal did not return ${expectedFailure}`,
+    );
+  }
+  // The full suite can exhaust the native auth quota through real reloads.
+  // Exercise the product's connection-error retry; do not bypass the quota or
+  // lengthen the room-list deadline to hide a failed bootstrap.
+  for (let retry = 0; auth.status() !== 200 && retry < 2; retry += 1) {
+    const status = auth.status();
+    requireDeleteBridge(
+      status === 429 || (retry === 0 && status === expectedFailure),
+      `unexpected bootstrap authentication response (${status})`,
+    );
+    await page
+      .getByRole("heading", { name: "接続エラー", exact: true })
+      .waitFor({
+        state: "visible",
+        timeout: 5_000,
+      });
+    requireDeleteBridge(
+      !(await page
+        .getByRole("heading", { name: "問題が発生しました", exact: true })
+        .count()) && !(await page.locator('input[type="password"]').count()),
+      "failed current-actor lookup reached the global error or sign-in screen",
+    );
+    let retryAfterSeconds = null;
+    if (status === 429) {
+      const retryAfter = auth.headers()["retry-after"];
+      requireDeleteBridge(
+        /^\d+$/.test(retryAfter ?? "") &&
+          Number(retryAfter) >= 1 &&
+          Number(retryAfter) <= 60,
+        "native auth quota returned an invalid or excessive Retry-After",
+      );
+      retryAfterSeconds = Number(retryAfter);
+      process.stderr.write(
+        `community-delete-bridge auth HTTP 429; waiting ${retryAfterSeconds}s before one explicit UI retry\n`,
+      );
+      await page.waitForTimeout(retryAfterSeconds * 1000);
+    }
+    const retryResponse = observeAuth();
+    await page.getByRole("button", { name: "再試行", exact: true }).click();
+    auth = await retryResponse;
+    attempts.push({
+      status: auth.status(),
+      explicitRetry: true,
+      retryAfterSeconds,
+    });
+    requireDeleteBridge(
+      status !== 429 || auth.status() === 200,
+      "one explicit retry after the declared quota wait did not recover",
+    );
+  }
+  const body = await auth.json().catch(() => null);
+  requireDeleteBridge(
+    auth.status() === 200 && body?.actor?.ap_id === actorApId,
+    "bootstrap recovery did not restore the same authenticated principal",
+  );
+  requireDeleteBridge(
+    JSON.stringify(await sessionCookie()) === JSON.stringify(beforeCookie),
+    "bootstrap recovery replaced or changed the session cookie",
+  );
   await page.locator("li.c-talk-rooms").first().waitFor({
     state: "visible",
     timeout: 15_000,
   });
+  return {
+    attempts,
+    actorApId: body.actor.ap_id,
+    sessionCookieUnchanged: true,
+  };
+}
+
+export async function qualifyBrowserCurrentActorRecovery({
+  page,
+  db,
+  origin,
+  actorApId,
+  checks,
+}) {
+  requireDeleteBridge(
+    ["127.0.0.1", "localhost"].includes(new URL(origin).hostname) &&
+      new URL(actorApId).origin === origin,
+    "current-actor recovery is limited to the authenticated local fixture",
+  );
+  const counts = () =>
+    first(
+      db,
+      "SELECT (SELECT COUNT(*) FROM actors) AS actors, (SELECT COUNT(*) FROM sessions) AS sessions",
+    );
+  const before = await counts();
+  const exactPath = `${origin}/api/auth/me`;
+  let refused = 0;
+  const refuseOnce = async (route) => {
+    if (route.request().method() !== "GET" || refused > 0) {
+      await route.fallback();
+      return;
+    }
+    refused += 1;
+    await route.fulfill({
+      status: 503,
+      contentType: "application/json",
+      body: JSON.stringify({ error: "local current-actor refusal fixture" }),
+    });
+  };
+  await page.route(exactPath, refuseOnce);
+  try {
+    const authentication = await openTalk(page, origin, actorApId, 503);
+    const after = await counts();
+    requireDeleteBridge(
+      refused === 1 &&
+        authentication.attempts[0].status === 503 &&
+        authentication.attempts[1]?.explicitRetry &&
+        JSON.stringify(before) === JSON.stringify(after),
+      "current-actor refusal changed sessions/actors or skipped explicit recovery",
+    );
+    checks.push("browser-current-actor-refusal-keeps-connection-error-retry");
+    checks.push(
+      "browser-current-actor-explicit-retry-keeps-principal-and-native-sessions",
+    );
+    return {
+      syntheticControl: "one GET /api/auth/me returns 503 before Worker/Core",
+      refused,
+      authentication,
+      nativeCounts: { before, after },
+    };
+  } finally {
+    await page.unroute(exactPath, refuseOnce);
+  }
 }
 
 async function selectCommunity(page, community) {
@@ -833,7 +984,7 @@ export async function qualifyBrowserCommunityDeleteBridge({
   const suffix = crypto.randomUUID().replaceAll("-", "").slice(0, 8);
   const firstCommunity = await createCommunity(page, `a_${suffix}`);
   const secondCommunity = await createCommunity(page, `b_${suffix}`);
-  await openTalk(page, origin);
+  const authentication = await openTalk(page, origin, actorApId);
   const failure = await runAbortCase({
     page,
     db,
@@ -851,6 +1002,7 @@ export async function qualifyBrowserCommunityDeleteBridge({
         "disposable local native Worker only; no live data, federation, or external URLs",
       syntheticControls:
         "history response scheduling and DELETE abort before route.fetch/Core",
+      authentication,
       failure,
     };
   }
@@ -870,6 +1022,7 @@ export async function qualifyBrowserCommunityDeleteBridge({
     syntheticControls:
       "history response scheduling; success DELETE forwarded through route.fetch",
     communities: [firstCommunity.apId, secondCommunity.apId],
+    authentication,
     failure,
     success,
   };
