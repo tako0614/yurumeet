@@ -123,6 +123,34 @@ function ack(id = "https://meet.example/ap/objects/note-1"): DMMessage {
 }
 
 const tempId = "temp-123e4567-e89b-42d3-a456-426614174000";
+const tempId2 = "temp-123e4567-e89b-42d3-a456-426614174001";
+
+function confirmedCommunityMessage(storage: JournalStorage = memoryStorage()) {
+  const recovery = createOutgoingRecovery(SCOPE_A, storage);
+  const intent = record({ target: COMMUNITY });
+  const message = ack();
+  expect(recovery.queue(intent)).toBe(true);
+  expect(recovery.confirm(intent.id, message)).toBe(true);
+  return { recovery, intent, message, storage };
+}
+
+function queueConfirmedSecondMessage(
+  recovery: ReturnType<typeof createOutgoingRecovery>,
+) {
+  const intent = record({
+    id: tempId2,
+    target: COMMUNITY,
+    content: "2つ目の本文",
+  });
+  const message: DMMessage = {
+    ...ack("https://meet.example/ap/objects/note-2"),
+    content: intent.content,
+    created_at: "2026-10-02T10:00:02.000Z",
+  };
+  expect(recovery.queue(intent)).toBe(true);
+  expect(recovery.confirm(intent.id, message)).toBe(true);
+  return { intent, message };
+}
 
 describe("outgoing-recovery", () => {
   test("restores a pending record as unconfirmed and waits for explicit retry", () => {
@@ -258,6 +286,131 @@ describe("outgoing-recovery", () => {
         .merge(USER, [], SENDER, afterAck, new Set())
         .map((row) => row.id),
     ).toEqual([]);
+  });
+
+  test("suppresses a confirmed ACK during delete while a second send merges", () => {
+    const { recovery, message } = confirmedCommunityMessage();
+    const deletion = recovery.beginDelete(COMMUNITY, message.id);
+
+    // A poll page that still contains M1 must not undo the optimistic delete.
+    expect(
+      recovery.merge(COMMUNITY, [message], SENDER).map((row) => row.id),
+    ).toEqual([]);
+
+    const second = queueConfirmedSecondMessage(recovery);
+    expect(recovery.merge(COMMUNITY, [], SENDER).map((row) => row.id)).toEqual([
+      second.message.id,
+    ]);
+    expect(deletion.commit()).toBe(true);
+  });
+
+  test("rollback restores a pending ACK bridge without dropping a second send", () => {
+    const { recovery, message } = confirmedCommunityMessage();
+    const deletion = recovery.beginDelete(COMMUNITY, message.id);
+    const second = queueConfirmedSecondMessage(recovery);
+
+    expect(deletion.rollback()).toEqual({ mayRestore: true });
+    expect(recovery.merge(COMMUNITY, [], SENDER).map((row) => row.id)).toEqual([
+      message.id,
+      second.message.id,
+    ]);
+  });
+
+  test("committed delete suppresses a stale fetched ACK and keeps another message", () => {
+    const { recovery, message } = confirmedCommunityMessage();
+    const deletion = recovery.beginDelete(COMMUNITY, message.id);
+    const second = queueConfirmedSecondMessage(recovery);
+    expect(deletion.commit()).toBe(true);
+
+    expect(
+      recovery.merge(COMMUNITY, [message], SENDER).map((row) => row.id),
+    ).toEqual([second.message.id]);
+  });
+
+  test("delete suppression is scoped to the exact target and principal", () => {
+    const storage = memoryStorage();
+    const { recovery, message } = confirmedCommunityMessage(storage);
+    const deletion = recovery.beginDelete(COMMUNITY, message.id);
+    const otherCommunity: JournalTarget = {
+      type: "community",
+      ap_id: "https://meet.example/ap/groups/other",
+    };
+
+    expect(
+      recovery.merge(USER, [message], SENDER).map((row) => row.id),
+    ).toEqual([message.id]);
+    expect(
+      recovery.merge(otherCommunity, [message], SENDER).map((row) => row.id),
+    ).toEqual([message.id]);
+    expect(
+      createOutgoingRecovery(SCOPE_B, storage)
+        .merge(COMMUNITY, [message], SENDER)
+        .map((row) => row.id),
+    ).toEqual([message.id]);
+    expect(deletion.rollback()).toEqual({ mayRestore: true });
+  });
+
+  test("delete handle snapshots its target identity before later cleanup", () => {
+    const controlled = controlledStorage();
+    const recovery = createOutgoingRecovery(SCOPE_A, controlled.storage);
+    const intent = record({ target: COMMUNITY });
+    const message = ack();
+    expect(recovery.queue(intent)).toBe(true);
+    expect(recovery.confirm(intent.id, message)).toBe(true);
+    const mutableTarget: JournalTarget = { ...COMMUNITY };
+    const deletion = recovery.beginDelete(mutableTarget, message.id);
+    mutableTarget.ap_id = "https://meet.example/ap/groups/changed";
+    controlled.denyRemovals(true);
+
+    expect(deletion.commit()).toBe(false);
+    expect(recovery.merge(COMMUNITY, [message], SENDER)).toEqual([]);
+    controlled.denyRemovals(false);
+    expect(recovery.merge(COMMUNITY, [message], SENDER)).toEqual([]);
+  });
+
+  test("overlapping delete handles cannot undo another handle's commit", () => {
+    const { recovery, message } = confirmedCommunityMessage();
+    const first = recovery.beginDelete(COMMUNITY, message.id);
+    const second = recovery.beginDelete(COMMUNITY, message.id);
+
+    expect(first.commit()).toBe(true);
+    expect(second.rollback()).toEqual({ mayRestore: false });
+    expect(first.rollback()).toEqual({ mayRestore: false });
+    expect(recovery.merge(COMMUNITY, [], SENDER)).toEqual([]);
+  });
+
+  test("only the last pending rollback may restore the bridge", () => {
+    const { recovery, message } = confirmedCommunityMessage();
+    const first = recovery.beginDelete(COMMUNITY, message.id);
+    const second = recovery.beginDelete(COMMUNITY, message.id);
+
+    expect(first.rollback()).toEqual({ mayRestore: false });
+    expect(recovery.merge(COMMUNITY, [], SENDER)).toEqual([]);
+    expect(second.rollback()).toEqual({ mayRestore: true });
+    expect(recovery.merge(COMMUNITY, [], SENDER).map((row) => row.id)).toEqual([
+      message.id,
+    ]);
+  });
+
+  test("committed delete masks same-session rows and retries failed journal cleanup", () => {
+    const controlled = controlledStorage();
+    const recovery = createOutgoingRecovery(SCOPE_A, controlled.storage);
+    const intent = record({ target: COMMUNITY });
+    const message = ack();
+    expect(recovery.queue(intent)).toBe(true);
+    controlled.denyRemovals(true);
+    expect(recovery.confirm(intent.id, message)).toBe(false);
+
+    const deletion = recovery.beginDelete(COMMUNITY, message.id);
+    expect(deletion.commit()).toBe(false);
+    expect(
+      recovery.merge(COMMUNITY, [message], SENDER).map((row) => row.id),
+    ).toEqual([]);
+    expect(controlled.base.values.size).toBe(1);
+
+    controlled.denyRemovals(false);
+    expect(recovery.merge(COMMUNITY, [message], SENDER)).toEqual([]);
+    expect(controlled.base.values.size).toBe(0);
   });
 
   test("retains cautious reload state when saving a confirmed ACK fails", () => {

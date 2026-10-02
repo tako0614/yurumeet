@@ -14,6 +14,7 @@ import { qualifyBrowserCommunityDeletePreview } from "./release-browser-communit
 import { qualifyBrowserAuthMethodRecovery } from "./release-browser-auth-method-recovery.mjs";
 import { qualifyBrowserDraftStorage } from "./release-browser-draft-storage.mjs";
 import { qualifyBrowserCommunityDeleteRecovery } from "./release-browser-community-delete-recovery.mjs";
+import { qualifyBrowserCommunityDeleteBridge } from "./release-browser-community-delete-bridge.mjs";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const password = " browser-smoke-only ";
@@ -440,13 +441,21 @@ async function smoke(artifact, digest) {
       },
     );
 
+    const communityDeleteBridge = await qualifyBrowserCommunityDeleteBridge({
+      page,
+      db,
+      origin,
+      actorApId: ownerId,
+      checks,
+    });
+
     check(
       pageErrors.length === 0,
-      "delete recovery browser raised a runtime error",
+      "community delete browser raised a runtime error",
     );
     check(
       serverErrors.length === 0,
-      "delete recovery artifact returned HTTP 5xx",
+      "community delete artifact returned HTTP 5xx",
     );
 
     result = {
@@ -464,6 +473,7 @@ async function smoke(artifact, digest) {
       draftStorage,
       checks,
       communityDeleteRecovery,
+      communityDeleteBridge,
       status: "PASSED",
     };
   } catch (error) {

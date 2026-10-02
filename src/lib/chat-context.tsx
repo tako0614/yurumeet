@@ -813,22 +813,37 @@ export function ChatProvider(props: { children: JSX.Element }) {
   };
 
   const deleteMessage = async (messageId: string): Promise<boolean> => {
-    const contact = selected();
-    if (!contact || contact.type !== "community") return false;
+    const selectedContact = selected();
+    if (!selectedContact || selectedContact.type !== "community") return false;
+    const contact = { ...selectedContact };
+    const before = messages();
+    // The first operation removes the row synchronously. A duplicate call
+    // cannot capture an empty restore snapshot and start another DELETE.
+    if (!before.some((message) => message.id === messageId)) return false;
     const generation = messageLoadGeneration;
     const principal = scopeKey();
-    const before = messages();
+    const stillCurrent = () =>
+      generation === messageLoadGeneration &&
+      isSelectedContact(contact) &&
+      principal === scopeKey();
+    const store = recovery();
+    const deletion = store.beginDelete(contact, messageId);
     setMessages((prev) => prev.filter((m) => m.id !== messageId));
     try {
       await deleteCommunityMessage(contact.ap_id, messageId);
-      void refetchContacts();
+      const cleaned = deletion.commit();
+      if (principal === scopeKey()) {
+        if (!cleaned && stillCurrent())
+          app.toast(
+            "削除済みですが復旧履歴を更新できません。再読込後は履歴を確認してください",
+            "error",
+          );
+        void refetchContacts();
+      }
       return true;
     } catch {
-      const stillCurrent =
-        generation === messageLoadGeneration &&
-        isSelectedContact(contact) &&
-        principal === scopeKey();
-      if (stillCurrent) {
+      const { mayRestore } = deletion.rollback();
+      if (mayRestore && stillCurrent()) {
         setMessages((current) =>
           restoreDeletedMessage(current, before, messageId),
         );
