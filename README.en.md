@@ -2,6 +2,14 @@
 
 # Yurumeet
 
+Unsent text drafts are scoped by server origin, signed-in account and conversation.
+Failed storage reads or writes retain the current input across conversation switches
+in the same mounted app and show save/reload and text-selection actions. A changed
+stored value is preserved until an explicit reload. Unstored input can be lost on
+reload or close; this does not promise atomic cross-tab updates or cross-device delivery.
+Legacy contact-only drafts remain stored and are not automatically imported because
+their author cannot be determined.
+
 Production Workers require a high-entropy `YURUCOMMU_SESSION_HASH_SALT` secret.
 The direct OpenTofu adapter requires the sensitive `session_hash_salt` input
 when it publishes a Worker and rejects that key in plaintext `env`. Generate
