@@ -79,7 +79,7 @@ describe("Takosumi OIDC auto-start breaker", () => {
     expect(claimTakosumiOidcAutoStart(storage)).toBe(false);
   });
 
-  test("a browser that refuses sessionStorage still reaches sign-in", () => {
+  test("refused or absent sessionStorage keeps the manual sign-in path", () => {
     const refusing = {
       getItem: () => {
         throw new Error("denied");
@@ -88,8 +88,8 @@ describe("Takosumi OIDC auto-start breaker", () => {
         throw new Error("denied");
       },
     } as unknown as Storage;
-    expect(claimTakosumiOidcAutoStart(refusing)).toBe(true);
+    expect(claimTakosumiOidcAutoStart(refusing)).toBe(false);
     expect(() => suppressTakosumiOidcAutoStart(refusing)).not.toThrow();
-    expect(claimTakosumiOidcAutoStart(undefined)).toBe(true);
+    expect(claimTakosumiOidcAutoStart(undefined)).toBe(false);
   });
 });

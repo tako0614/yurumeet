@@ -80,13 +80,15 @@ function sessionStorageOrUndefined(): Storage | undefined {
 export function claimTakosumiOidcAutoStart(
   storage: Storage | undefined = sessionStorageOrUndefined(),
 ): boolean {
-  if (!storage) return true;
+  // Without durable tab state, a failed callback could restart on each load.
+  // Leave the provider link available for an explicit retry.
+  if (!storage) return false;
   try {
     if (storage.getItem(AUTO_START_KEY) !== null) return false;
     storage.setItem(AUTO_START_KEY, "1");
     return true;
   } catch {
-    return true;
+    return false;
   }
 }
 
@@ -97,6 +99,6 @@ export function suppressTakosumiOidcAutoStart(
   try {
     storage?.setItem(AUTO_START_KEY, "1");
   } catch {
-    // sessionStorage unavailable; the one-shot claim above is the fallback.
+    // Auto-start is disabled when sessionStorage is unavailable.
   }
 }

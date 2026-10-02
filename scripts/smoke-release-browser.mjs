@@ -11,6 +11,7 @@ import { Miniflare } from "miniflare";
 import { unstable_readConfig, unstable_splitSqlQuery } from "wrangler";
 import { qualifyBrowserTalk } from "./release-browser-talk.mjs";
 import { qualifyBrowserCommunityDeletePreview } from "./release-browser-community-delete-preview.mjs";
+import { qualifyBrowserAuthMethodRecovery } from "./release-browser-auth-method-recovery.mjs";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const password = " browser-smoke-only ";
@@ -405,6 +406,13 @@ async function smoke(artifact, digest) {
       "artifact returned an unexpected HTTP 5xx response",
     );
     checks.push("browser-page-errors-and-http-5xx-absent");
+    const authMethodRecovery = await qualifyBrowserAuthMethodRecovery({
+      artifactPath: artifact,
+      artifactDigest: digest,
+      browser,
+      config,
+    });
+    checks.push(...authMethodRecovery.checks);
     result = {
       kind: "yurumeet.release-browser-smoke@v1",
       artifact: basename(artifact),
@@ -416,6 +424,7 @@ async function smoke(artifact, digest) {
       migrationCount,
       talk,
       communityDeletePreview,
+      authMethodRecovery,
       checks,
       status: "PASSED",
     };
