@@ -245,7 +245,12 @@ async function expectUnknownDelivery(page, content) {
   return row;
 }
 
-async function addLocalMemberPeer(db, peerApId) {
+async function addLocalMemberPeer(
+  db,
+  peerApId,
+  preferredUsername = "ga-talk-peer",
+  peerName = "GA talk peer",
+) {
   await db
     .prepare(
       `INSERT INTO actors (
@@ -256,8 +261,8 @@ async function addLocalMemberPeer(db, peerApId) {
     )
     .bind(
       peerApId,
-      "ga-talk-peer",
-      "GA talk peer",
+      preferredUsername,
+      peerName,
       `${peerApId}/inbox`,
       `${peerApId}/outbox`,
       `${peerApId}/followers`,
@@ -279,6 +284,226 @@ async function addLocalMemberPeer(db, peerApId) {
       owners?.count === 1,
     "contact fixture added an owner or lost its member boundary",
   );
+}
+
+async function seedUnreadIncomingDm(
+  db,
+  { actorApId, peerApId, conversationId, content, readAfter },
+) {
+  const published = new Date(
+    Math.max(Date.now(), Date.parse(readAfter ?? "1970-01-01T00:00:00Z") + 1),
+  ).toISOString();
+  const objectApId = `${peerApId}/ap/objects/${crypto.randomUUID()}`;
+  const activityApId = `${peerApId}/ap/activities/${crypto.randomUUID()}`;
+  const note = {
+    id: objectApId,
+    type: "Note",
+    attributedTo: peerApId,
+    content,
+    published,
+    to: [actorApId],
+  };
+  const activity = {
+    id: activityApId,
+    type: "Create",
+    actor: peerApId,
+    object: note,
+    published,
+  };
+  await db
+    .prepare(
+      `INSERT INTO objects (
+         ap_id, type, attributed_to, content, attachments_json, conversation,
+         visibility, to_json, cc_json, audience_json, published, is_local,
+         raw_json
+       ) VALUES (?, 'Note', ?, ?, '[]', ?, 'direct', ?, '[]', '[]', ?, 0, ?)`,
+    )
+    .bind(
+      objectApId,
+      peerApId,
+      content,
+      conversationId,
+      JSON.stringify([actorApId]),
+      published,
+      JSON.stringify(note),
+    )
+    .run();
+  await db
+    .prepare(
+      "INSERT INTO object_recipients (object_ap_id, recipient_ap_id, type) VALUES (?, ?, 'to')",
+    )
+    .bind(objectApId, actorApId)
+    .run();
+  await db
+    .prepare(
+      `INSERT INTO activities (
+         ap_id, type, actor_ap_id, object_ap_id, object_json, raw_json,
+         direction, processed
+       ) VALUES (?, 'Create', ?, ?, ?, ?, 'inbound', 1)`,
+    )
+    .bind(
+      activityApId,
+      peerApId,
+      objectApId,
+      JSON.stringify(note),
+      JSON.stringify(activity),
+    )
+    .run();
+  await db
+    .prepare(
+      "INSERT INTO inbox (actor_ap_id, activity_ap_id, read) VALUES (?, ?, 0)",
+    )
+    .bind(actorApId, activityApId)
+    .run();
+  return { objectApId, activityApId, published };
+}
+
+async function archiveUnreadDiagnostics({
+  page,
+  db,
+  origin,
+  actorApId,
+  peerApId,
+  conversationId,
+  objectApId,
+}) {
+  const api = await page.evaluate(
+    async ({ peerApId }) => {
+      async function read(path, project) {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 3_000);
+        try {
+          const response = await fetch(path, {
+            credentials: "include",
+            signal: controller.signal,
+          });
+          let body;
+          try {
+            body = await response.json();
+          } catch {
+            return { status: response.status, json: false };
+          }
+          return { status: response.status, json: true, ...project(body) };
+        } catch (error) {
+          return {
+            status: null,
+            json: false,
+            error: error instanceof Error ? error.name : "fetch-error",
+          };
+        } finally {
+          clearTimeout(timeout);
+        }
+      }
+
+      const [unread, contacts] = await Promise.all([
+        read("/api/dm/unread/count", (body) => ({
+          total: body?.total,
+          dm: body?.dm,
+          community: body?.community,
+        })),
+        read("/api/dm/contacts", (body) => {
+          const contact = Array.isArray(body?.mutual_followers)
+            ? body.mutual_followers.find((row) => row?.ap_id === peerApId)
+            : undefined;
+          return {
+            contact: contact
+              ? {
+                  conversation_id: contact.conversation_id,
+                  unread_count: contact.unread_count,
+                }
+              : null,
+          };
+        }),
+      ]);
+      const header = document.querySelector(".l-header");
+      const links = Array.from(document.querySelectorAll(".l-header a")).map(
+        (link) => {
+          const badge = link.querySelector(".l-header__badge");
+          return {
+            ariaLabel: link.getAttribute("aria-label"),
+            text: (link.textContent ?? "").trim().slice(0, 80),
+            badgeText: badge?.textContent?.trim() ?? null,
+            href: link.getAttribute("href"),
+            visible: link.getClientRects().length > 0,
+          };
+        },
+      );
+      const contactButtons = Array.from(
+        document.querySelectorAll("li.c-talk-rooms > button"),
+      ).map((button) => ({
+        ariaLabel: button.getAttribute("aria-label"),
+        visible: button.getClientRects().length > 0,
+      }));
+      return {
+        unread,
+        contacts,
+        page: {
+          viewport: { width: window.innerWidth, height: window.innerHeight },
+          header: header
+            ? {
+                className: header.className,
+                visible: header.getClientRects().length > 0,
+              }
+            : null,
+          navLinks: links,
+          contactButtons,
+          selectedThread: Boolean(
+            document.querySelector(".p-talk-chat .p-talk-chat-title"),
+          ),
+          emptyThreadPrompt: Boolean(
+            document.querySelector(".p-talk-chat-empty"),
+          ),
+        },
+      };
+    },
+    { peerApId },
+  );
+
+  const [readStatus, object, recipient, archive] = await Promise.all([
+    first(
+      db,
+      "SELECT last_read_at FROM dm_read_status WHERE actor_ap_id = ? AND conversation_id = ?",
+      actorApId,
+      conversationId,
+    ),
+    first(
+      db,
+      "SELECT ap_id, attributed_to, conversation, visibility, published FROM objects WHERE ap_id = ?",
+      objectApId,
+    ),
+    first(
+      db,
+      "SELECT type FROM object_recipients WHERE object_ap_id = ? AND recipient_ap_id = ?",
+      objectApId,
+      actorApId,
+    ),
+    first(
+      db,
+      "SELECT COUNT(*) AS count FROM dm_archived_conversations WHERE actor_ap_id = ? AND conversation_id = ?",
+      actorApId,
+      conversationId,
+    ),
+  ]);
+
+  return {
+    api,
+    d1: {
+      readStatus: readStatus ? { last_read_at: readStatus.last_read_at } : null,
+      object: object
+        ? {
+            ap_id: object.ap_id,
+            attributed_to: object.attributed_to,
+            conversation: object.conversation,
+            visibility: object.visibility,
+            published: object.published,
+          }
+        : null,
+      recipient: recipient ? { type: recipient.type } : null,
+      archiveRows: archive?.count ?? null,
+      archived: (archive?.count ?? 0) > 0,
+    },
+    page: api.page,
+  };
 }
 
 export async function qualifyBrowserTalk({
@@ -355,6 +580,304 @@ export async function qualifyBrowserTalk({
   );
   requireTalk(!archived, "opening the contact unexpectedly archived the DM");
   checks.push("browser-talk-contact-opened-and-read-state-persisted");
+
+  const unreadPeerApId = `${origin}/ap/users/ga-unread-peer`;
+  const unreadPeerName = "GA unread peer";
+  await addLocalMemberPeer(
+    db,
+    unreadPeerApId,
+    "ga-unread-peer",
+    unreadPeerName,
+  );
+  const unreadOpenerText = `unread thread opener ${crypto.randomUUID()}`;
+  const unreadOpener = await postFromPage(
+    page,
+    `/api/dm/user/${encodeURIComponent(unreadPeerApId)}/messages`,
+    { content: unreadOpenerText },
+  );
+  requireTalk(
+    unreadOpener.status === 201 &&
+      typeof unreadOpener.body.conversation_id === "string" &&
+      typeof unreadOpener.body.message?.id === "string",
+    "native API did not create the unread-restore contact conversation",
+  );
+  const unreadOpenerRow = await assertDmPersistence(db, {
+    apId: unreadOpener.body.message.id,
+    actorApId,
+    peerApId: unreadPeerApId,
+    content: unreadOpenerText,
+  });
+  requireTalk(
+    unreadOpenerRow.conversation === unreadOpener.body.conversation_id,
+    "unread-restore opener response and D1 conversation identity differ",
+  );
+  checks.push("browser-talk-unread-restore-thread-opened-by-native-api");
+
+  // Navigate through the actual talk route. At desktop width the chat context
+  // may auto-select the most recent contact and advance its read position.
+  await page.goto(`${origin}/?tab=talk`, {
+    waitUntil: "domcontentloaded",
+    timeout: 20_000,
+  });
+  const badgePath = "/api/dm/unread/count";
+  const badgeRequests = [];
+  const onBadgeRequest = (request) => {
+    if (new URL(request.url()).pathname === badgePath) {
+      badgeRequests.push(Date.now());
+    }
+  };
+  page.on("request", onBadgeRequest);
+  try {
+    const badgeJourneyStartedAt = Date.now();
+    const initialBadgeResponse = page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === badgePath &&
+        response.request().method() === "GET",
+      { timeout: 10_000 },
+    );
+    initialBadgeResponse.catch(() => {});
+    // Restart before archiving and arm the waiter first: domcontentloaded can
+    // precede AppRoot's asynchronous actor load and initial badge request.
+    await page.goto(`${origin}/?tab=talk`, {
+      waitUntil: "domcontentloaded",
+      timeout: 20_000,
+    });
+    const initialBadge = await initialBadgeResponse;
+    const initialBadgeBody = await jsonResponse(
+      initialBadge,
+      "initial unread badge refresh",
+    );
+    requireTalk(
+      initialBadge.status() === 200 &&
+        initialBadgeBody.total === 0 &&
+        initialBadgeBody.dm === 0 &&
+        badgeRequests.length > 0 &&
+        Date.now() - badgeJourneyStartedAt < 10_000,
+      `talk route initial badge response was not a timely native zero: status=${initialBadge.status()}, body=${JSON.stringify(initialBadgeBody)}, elapsedMs=${Date.now() - badgeJourneyStartedAt}`,
+    );
+    const unreadContactRow = page
+      .locator("li.c-talk-rooms")
+      .filter({ hasText: unreadPeerName });
+    await unreadContactRow.waitFor({ state: "visible", timeout: 10_000 });
+    await waitForRow(
+      db,
+      "SELECT last_read_at FROM dm_read_status WHERE actor_ap_id = ? AND conversation_id = ?",
+      [actorApId, unreadOpener.body.conversation_id],
+      (row) => Boolean(row?.last_read_at),
+      "opening the unread-restore contact did not persist its initial read state",
+    );
+    const archiveBadgeResponse = page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === badgePath &&
+        response.request().method() === "GET",
+      { timeout: 5_000 },
+    );
+    archiveBadgeResponse.catch(() => {});
+    await unreadContactRow
+      .getByRole("button", { name: "アーカイブ", exact: true })
+      .click();
+    const archivedBadge = await archiveBadgeResponse;
+    const archivedBadgeBody = await jsonResponse(
+      archivedBadge,
+      "archive unread badge refresh",
+    );
+    requireTalk(
+      archivedBadgeBody.total === 0,
+      "archiving unread DM did not clear the native unread count",
+    );
+    const archivedRow = await first(
+      db,
+      "SELECT conversation_id FROM dm_archived_conversations WHERE actor_ap_id = ? AND conversation_id = ?",
+      actorApId,
+      unreadOpener.body.conversation_id,
+    );
+    requireTalk(
+      !!archivedRow,
+      "archive click did not persist the conversation",
+    );
+    await page
+      .getByRole("link", { name: "トーク", exact: true })
+      .waitFor({ state: "visible", timeout: 5_000 });
+    await unreadContactRow.waitFor({ state: "detached", timeout: 5_000 });
+    requireTalk(
+      Date.now() - badgeJourneyStartedAt < 10_000,
+      "archive/restore fixture no longer excludes the 20-second badge poll",
+    );
+
+    await page
+      .locator(".p-talk-chips")
+      .getByRole("button", { name: "アーカイブ", exact: true })
+      .click();
+    const archivedContactRow = page
+      .locator("li.c-talk-rooms")
+      .filter({ hasText: unreadPeerName });
+    await archivedContactRow.waitFor({ state: "visible", timeout: 5_000 });
+    const restoreButton = archivedContactRow.getByRole("button", {
+      name: "アーカイブから戻す",
+      exact: true,
+    });
+    await restoreButton.waitFor({ state: "visible", timeout: 5_000 });
+
+    // Create the unread Note only after the conversation is durably archived.
+    // Desktop auto-selection may mark a recently opened conversation read, so
+    // this incoming activity must arrive after the read position is established
+    // and while the archived thread cannot be auto-selected from the inbox.
+    const readStateBeforeIncoming = await first(
+      db,
+      "SELECT last_read_at FROM dm_read_status WHERE actor_ap_id = ? AND conversation_id = ?",
+      actorApId,
+      unreadOpener.body.conversation_id,
+    );
+    requireTalk(
+      !!readStateBeforeIncoming?.last_read_at,
+      "archive fixture has no persisted read baseline",
+    );
+    const unreadText = `archived unread ${crypto.randomUUID()}`;
+    const unreadMessage = await seedUnreadIncomingDm(db, {
+      actorApId,
+      peerApId: unreadPeerApId,
+      conversationId: unreadOpener.body.conversation_id,
+      content: unreadText,
+      readAfter: readStateBeforeIncoming.last_read_at,
+    });
+    const archivedUnreadDiagnostics = await archiveUnreadDiagnostics({
+      page,
+      db,
+      origin,
+      actorApId,
+      peerApId: unreadPeerApId,
+      conversationId: unreadOpener.body.conversation_id,
+      objectApId: unreadMessage.objectApId,
+    });
+    requireTalk(
+      archivedUnreadDiagnostics.api.unread.status === 200 &&
+        archivedUnreadDiagnostics.api.unread.total === 0 &&
+        archivedUnreadDiagnostics.api.unread.dm === 0 &&
+        archivedUnreadDiagnostics.api.contacts.contact === null &&
+        archivedUnreadDiagnostics.d1.archiveRows === 1 &&
+        archivedUnreadDiagnostics.d1.object?.attributed_to === unreadPeerApId &&
+        archivedUnreadDiagnostics.d1.object?.conversation ===
+          unreadOpener.body.conversation_id &&
+        archivedUnreadDiagnostics.d1.object?.visibility === "direct" &&
+        archivedUnreadDiagnostics.d1.recipient?.type === "to" &&
+        archivedUnreadDiagnostics.d1.object.published >
+          archivedUnreadDiagnostics.d1.readStatus?.last_read_at,
+      `incoming archived Note is not durably unread while archived: ${JSON.stringify(archivedUnreadDiagnostics)}`,
+    );
+
+    const restoreBadgeResponse = page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === badgePath &&
+        response.request().method() === "GET",
+      { timeout: 3_000 },
+    );
+    restoreBadgeResponse.catch(() => {});
+    requireTalk(
+      Date.now() - badgeJourneyStartedAt < 17_000,
+      "unread restore is too close to the 20-second badge poll window",
+    );
+    await restoreButton.click();
+    let restoredBadge;
+    try {
+      restoredBadge = await restoreBadgeResponse;
+    } catch {
+      const postClickDiagnostics = await archiveUnreadDiagnostics({
+        page,
+        db,
+        origin,
+        actorApId,
+        peerApId: unreadPeerApId,
+        conversationId: unreadOpener.body.conversation_id,
+        objectApId: unreadMessage.objectApId,
+      });
+      const talkNav = postClickDiagnostics.page.navLinks.find(
+        (link) => link.href === "/?tab=talk" || link.href === "?tab=talk",
+      );
+      const contactButton = postClickDiagnostics.page.contactButtons.find(
+        (contact) =>
+          contact.ariaLabel?.startsWith(`${unreadPeerName}、未読 1件`),
+      );
+      const elapsedMs = Date.now() - badgeJourneyStartedAt;
+      throw new Error(
+        `unarchive badge refresh was absent after click; elapsedMs=${elapsedMs}; postClickState=${JSON.stringify(
+          {
+            ...postClickDiagnostics,
+            assertions: {
+              nativeUnreadTotalIsOne:
+                postClickDiagnostics.api.unread.total === 1 &&
+                postClickDiagnostics.api.unread.dm === 1,
+              archiveRowsAreZero: postClickDiagnostics.d1.archiveRows === 0,
+              contactRestoredInApi:
+                postClickDiagnostics.api.contacts.contact?.conversation_id ===
+                  unreadOpener.body.conversation_id &&
+                postClickDiagnostics.api.contacts.contact?.unread_count === 1,
+              contactRestoredInDom: Boolean(contactButton),
+              navLabel: talkNav?.ariaLabel ?? null,
+              navBadgeText: talkNav?.badgeText ?? null,
+              navBadgeValue: Number(talkNav?.badgeText ?? 0),
+              completedWithin20Seconds: elapsedMs < 20_000,
+            },
+          },
+        )}`,
+      );
+    }
+    const restoredBadgeBody = await jsonResponse(
+      restoredBadge,
+      "unarchive unread badge refresh",
+    );
+    requireTalk(
+      restoredBadgeBody.total === 1,
+      "unarchive badge request did not return the restored unread DM",
+    );
+    const removedArchive = await first(
+      db,
+      "SELECT COUNT(*) AS count FROM dm_archived_conversations WHERE actor_ap_id = ? AND conversation_id = ?",
+      actorApId,
+      unreadOpener.body.conversation_id,
+    );
+    requireTalk(
+      removedArchive?.count === 0,
+      "unarchive did not delete durable archive state",
+    );
+    await archivedContactRow.waitFor({ state: "detached", timeout: 5_000 });
+    await page
+      .getByRole("link", { name: "トーク、未読 1件", exact: true })
+      .waitFor({ state: "visible", timeout: 3_000 });
+
+    await page.getByRole("button", { name: "アーカイブ済み" }).click();
+    await unreadContactRow.waitFor({ state: "visible", timeout: 5_000 });
+    await page
+      .getByRole("button", {
+        name: `${unreadPeerName}、未読 1件`,
+        exact: true,
+      })
+      .waitFor({ state: "visible", timeout: 5_000 });
+    requireTalk(
+      (await first(
+        db,
+        "SELECT ap_id FROM objects WHERE ap_id = ? AND attributed_to = ? AND content = ? AND published = ?",
+        unreadMessage.objectApId,
+        unreadPeerApId,
+        unreadText,
+        unreadMessage.published,
+      )) !== null,
+      "restore journey lost the native inbound unread Note",
+    );
+    checks.push(
+      "browser-talk-unarchive-restores-native-contact-and-unread-badge-before-poll",
+    );
+
+    await page
+      .locator("li.c-talk-rooms > button")
+      .filter({ hasText: peerName })
+      .click();
+    await page.getByText(openerText, { exact: true }).waitFor({
+      state: "visible",
+      timeout: 10_000,
+    });
+  } finally {
+    page.off("request", onBadgeRequest);
+  }
 
   const textarea = page.locator('textarea[name="message"]');
   const sendButton = page.getByRole("button", { name: "送信" });
