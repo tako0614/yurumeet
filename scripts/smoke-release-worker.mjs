@@ -12,12 +12,14 @@ import {
   PRODUCT_CLIENT_KEY,
   PRODUCT_WIRE_IDENTITY,
 } from "../src/product-identity.ts";
+import { qualifyProductJourneys } from "./release-product-journeys.mjs";
 
 const MAX_RESPONSE_BYTES = 1024 * 1024;
 const APP_ORIGIN = "https://release-smoke.yurumeet.invalid";
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const DELIVERY_QUEUE = "yurumeet-delivery";
 const DELIVERY_DLQ = "yurumeet-delivery-dlq";
+const SESSION_HASH_SALT = "release-smoke-session-salt-not-a-credential";
 
 async function qualifyBackgroundEvents(worker) {
   const schemaBytes = readFileSync(
@@ -289,6 +291,7 @@ async function smokeNativeWorker(artifactPath, artifactDigest) {
       DELIVERY_QUEUE_NAME: DELIVERY_QUEUE,
       DELIVERY_DLQ_NAME: DELIVERY_DLQ,
       ENCRYPTION_KEY: "00".repeat(32),
+      YURUCOMMU_SESSION_HASH_SALT: SESSION_HASH_SALT,
     },
     d1Databases: ["DB"],
     kvNamespaces: ["KV"],
@@ -365,6 +368,11 @@ async function smokeNativeWorker(artifactPath, artifactDigest) {
       throw new Error("embedded Yurumeet UI did not boot from the artifact");
     }
 
+    const journeys = await qualifyProductJourneys(worker, {
+      origin: APP_ORIGIN,
+      sessionSalt: SESSION_HASH_SALT,
+      readJson: requireJson,
+    });
     return {
       kind: "yurumeet.release-worker-smoke@v1",
       artifact: basename(artifactPath),
@@ -382,6 +390,7 @@ async function smokeNativeWorker(artifactPath, artifactDigest) {
         "dlq-exhaustion",
         "scheduled-story-retention",
         "scheduled-story-retention-idempotence",
+        ...journeys.checks,
       ],
       status: "PASSED",
     };
