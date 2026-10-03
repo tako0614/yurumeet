@@ -199,6 +199,39 @@ function assertMetadataRows(rows) {
   }
 }
 
+export function validateMediaDeletionQueryResults(result) {
+  const query =
+    Array.isArray(result) && result.length === 1 ? result[0] : undefined;
+  if (
+    !query ||
+    typeof query !== "object" ||
+    Array.isArray(query) ||
+    Object.keys(query).some(
+      (key) => !["results", "success", "meta"].includes(key),
+    ) ||
+    !Object.hasOwn(query, "results") ||
+    query.success !== true ||
+    (query.meta !== undefined &&
+      (!query.meta ||
+        typeof query.meta !== "object" ||
+        Array.isArray(query.meta)))
+  ) {
+    fail("provider returned an unexpected or unsuccessful D1 query response");
+  }
+  for (const field of ["changes", "rows_written"]) {
+    if (query.meta?.[field] !== undefined && query.meta[field] !== 0) {
+      fail("read-only D1 metadata query reported writes");
+    }
+  }
+  assertMetadataRows(result[0].results);
+  return {
+    kind: "yurumeet.core-media-deletion-schema@v1",
+    table: "media_blob_deletion_jobs",
+    index: "media_blob_deletion_jobs_due_idx",
+    scope: "migration-0030-only",
+  };
+}
+
 function parseQueryResponse(stdout) {
   let result;
   try {
@@ -206,18 +239,7 @@ function parseQueryResponse(stdout) {
   } catch (error) {
     fail(`Wrangler returned invalid JSON: ${error.message}`);
   }
-  if (
-    !Array.isArray(result) ||
-    result.length !== 1 ||
-    !exactKeys(result[0], ["results", "success", "meta"]) ||
-    result[0].success !== true ||
-    !result[0].meta ||
-    typeof result[0].meta !== "object" ||
-    Array.isArray(result[0].meta)
-  ) {
-    fail("Wrangler returned an unexpected or unsuccessful D1 query response");
-  }
-  assertMetadataRows(result[0].results);
+  validateMediaDeletionQueryResults(result);
 }
 
 export function checkMediaDeletionSchema({

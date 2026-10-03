@@ -93,7 +93,7 @@ describe("deploy contract", () => {
       "strict secret inheritance",
     );
     expect(worker?.obligations["independent-review"]).toContain(
-      "not the secret value or active Worker binding",
+      "not the secret value or entropy",
     );
     expect(worker?.covers).toContain("scripts/deploy.mjs");
     expect(worker?.covers).toContain("scripts/yurumeet-worker-bindings.ts");
@@ -112,7 +112,9 @@ describe("deploy contract", () => {
       "complete version/percentage traffic map",
     );
     expect(worker?.obligations.reversal).toContain("versions deploy");
-    expect(worker?.obligations.reversal).toContain("--env-file");
+    expect(worker?.obligations.reversal).toContain(
+      "manual POST Deployment API",
+    );
     expect(worker?.obligations.reversal).toContain(
       "not an atomic compare-and-swap",
     );

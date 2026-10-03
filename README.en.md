@@ -17,9 +17,9 @@ before Core effects, preserving every accepted byte. The code-only publishing
 entrypoint requires exactly one `YURUCOMMU_SESSION_HASH_SALT` name in the root
 `secrets.required` array of the strict JSON config selected by
 `YURUMEET_WRANGLER_CONFIG`, before the gate, D1 check or publication. A plaintext
-`vars` entry with that name is refused. Wrangler then inherits required secrets
-and refuses publication if the existing Worker lacks one. This validates the
-declaration, not its value, entropy or active-serving-Version custody.
+`vars` entry with that name is refused. The publisher checks required Secret metadata on the actual serving Version
+and inherits every binding from that explicit Version ID. Metadata does not
+prove a secret value, entropy or custody.
 
 The checked-in `wrangler.jsonc` remains a local development template without a
 blanket required-secret list: once such a list exists, Wrangler loads only those
@@ -43,14 +43,28 @@ It does not select the target or credentials implicitly from `.env`/`.env.local`
 authentication comes from the operator's parent process or existing Wrangler
 authentication. Any content added to the empty file is refused.
 
-The publisher captures the actual serving Deployment ID and complete
-version/percentage map, then rechecks them immediately before publication. It
-does not use the first version-inventory UUID as a rollback point. Result and
-failure diagnostics preserve exact rollback arguments, including split traffic;
-rollback and retry remain explicit operator actions. The recheck detects changes
-but is not an atomic conditional update, so operators must serialize updates to
-the same target. Live secret/binding preservation, rollback and post-publication
-user journeys require separate evidence from source and command-mock tests.
+The publisher captures the actual serving Deployment ID and complete traffic map.
+Only one Version serving 100% is admitted: split traffic cannot establish one
+safe hidden-Secret predecessor and refuses before the gate or upload. Declared
+binding names, specified DB/KV/R2 identifiers and jurisdiction, Queue producers,
+variables and runtime settings must match actual serving metadata. Optional KV/R2
+identifiers may be omitted; actual Version metadata remains their authority.
+Newer unserved Versions never become the inheritance source.
+
+Wrangler is used only for `auth token --json`; authentication output is never
+printed or saved. The fixed Cloudflare Version and Deployment APIs replace code,
+without Secret/resource/settings/route/Cron/Queue-consumer writes. Every binding
+uses strict inheritance with an explicit predecessor `version_id`. Version code
+is downloaded and its raw module SHA256 compared with reviewed bytes, alongside
+full non-code closure/settings readbacks before and after promotion and smoke.
+The version-specific content query follows pinned official Wrangler source;
+its live API behavior and existing permission scope remain unqualified.
+
+Results retain a credential-free manual Deployment API request restoring the
+captured traffic map. Wrangler rollback commands can patch settings and are not
+used. Lost write acknowledgements remain indeterminate, without automatic retries
+or rollback. Reads are not atomic conditional writes; operators must serialize
+updates. Live custody, recovery and user journeys require separate evidence.
 
 The sensitive root `main.tf` input `auth_password_hash` projects a canonical
 PBKDF2 hash or unambiguous bootstrap token into the `AUTH_PASSWORD_HASH` Secret.

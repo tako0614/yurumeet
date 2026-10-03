@@ -129,8 +129,8 @@ Worker は未設定・空白だけの salt と公開された開発用 fallback 
 `YURUMEET_WRANGLER_CONFIG` で選んだ実環境の strict JSON config の root
 `secrets.required` に `YURUCOMMU_SESSION_HASH_SALT` が一つ含まれることを、
 gate・D1 確認・公開の前に要求します。同名の plaintext `vars` は拒否します。
-宣言後は Wrangler が既存 Worker の必須 Secret を継承し、欠けていれば公開を拒否します。
-宣言は実値・エントロピー・現在配信中の Version の custody を証明しません。
+公開入口は実配信 Version の必須 Secret metadata を確認し、全 binding をその Version ID
+から明示的に継承します。metadata は秘密の実値・エントロピー・custody を証明しません。
 
 repo の `wrangler.jsonc` は開発用の template のため、全環境共通の必須 Secret 一覧を
 追加しません。Wrangler は一覧を定義するとローカルの秘密入力もその一覧だけに限定します。
@@ -150,11 +150,25 @@ repo の `bun run deploy -- yurumeet-worker` は maintainer の既存 Worker 更
 repo の `.env` / `.env.local` から公開対象や認証を暗黙に選ばず、認証は operator が
 親プロセスへ渡す設定または既存の Wrangler 認証を使います。空ファイルへの追記は拒否します。
 
-更新前の実配信 Deployment ID と全 version/percentage を捕捉し、公開直前に再確認します。
-version 一覧の先頭を復帰先にせず、split 配信も全割合を保持した rollback argv を結果と
-失敗診断に残します。自動 rollback や再試行は行いません。再確認は競合の検出であって
-原子的な条件付き更新ではないため、operator は同じ対象の更新を直列に実行してください。
-実環境の secret/binding 保持・復帰・公開後の利用者経路は、source/mock 検証とは別です。
+更新前の実配信 Deployment ID と全 version/percentage を捕捉します。Secret の実値は
+metadata から比較できないため、一つの Version が100%配信されている場合だけ更新でき、
+split 配信は gate・公開前に拒否します。config の binding 名、明示した DB/KV/R2 の
+識別子・jurisdiction、Queue producer・変数・runtime 設定が実配信 metadata と違う場合も
+拒否します。任意の KV/R2 識別子を省略した場合は実配信 Version を正本とします。
+未配信の新しい Version を継承元にしません。
+
+Wrangler は `auth token --json` で既存認証を読むためだけに使い、その出力を保存・表示
+しません。code は固定 Cloudflare API の Version upload と Deployment promotion で
+差し替え、Secret・resource・Queue consumer・Cron・route・settings を書き換えません。
+全 binding は `version_id` を固定した strict inheritance です。正確な Version のコードを
+再取得して成果物 SHA256 と比較し、non-code closure と設定も公開前後・smoke後に再確認します。
+content read の Version query は固定 Wrangler source に基づき、live API の確認とは別です。
+
+結果と失敗診断には元の全配信割合を戻す、credential を含まない手動 Deployment API request
+を残します。Wrangler の rollback command は設定も変更し得るため使いません。応答を失った
+write は不確定として扱い、自動再試行・rollback はしません。再確認は原子的な条件付き更新
+ではないため、operator は同じ対象の更新を直列に実行してください。実環境の Secret 保全・
+復旧・公開後の利用者経路は source/mock 検証とは別です。
 
 root `main.tf` の機密入力 `auth_password_hash` は、正規の PBKDF2 hash または
 bootstrap token を `AUTH_PASSWORD_HASH` Secret に渡します。非空値は OpenTofu が
@@ -201,7 +215,8 @@ bun run deploy -- yurumeet-site --environment=integration|production
 `bun run check` でも毎回検査します。
 
 `yurumeet-worker` は公開前に、`YURUMEET_WRANGLER_CONFIG` の実現済み strict JSON
-config で選ばれる DB の metadata を、既存の Wrangler credential で読み取ります。
+config と実配信 Version の DB が一致することを確認し、その Version の実 DB ID の
+metadata を既存認証による read-only REST query で読み取ります。
 Core 4.1.11 の追加 migration `0030` が必要とする media deletion table の column・
 primary key・due index を検査し、不足・不整合・読取拒否・不正な応答なら公開を止めます。
 schema 全体や migration 台帳を検証するものではなく、schema 適用や権限追加は行いません。
