@@ -1128,6 +1128,35 @@ ul {
   padding: 0 18px calc(12px + env(safe-area-inset-bottom, 0px));
 }
 
+.p-talk-draft-warning {
+  margin-bottom: 10px;
+  padding: 10px 12px;
+  border: 1px solid #c18a3b;
+  border-radius: 8px;
+  background: #fff8e9;
+  color: #674312;
+  font-size: 12px;
+}
+
+.p-talk-draft-warning p {
+  margin: 0 0 8px;
+}
+
+.p-talk-draft-warning-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.p-talk-draft-warning button {
+  border: 1px solid currentColor;
+  border-radius: 5px;
+  padding: 5px 8px;
+  background: #fff;
+  color: inherit;
+  cursor: pointer;
+}
+
 /* Staged (already uploaded) images waiting to be sent. */
 .p-talk-chat-attach-strip {
   display: flex;

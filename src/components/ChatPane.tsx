@@ -13,7 +13,7 @@ import { uploadProductMedia } from "../lib/media-upload.ts";
 import { useApp } from "../lib/app-context.tsx";
 import { type ChatMessage, useChat } from "../lib/chat-context.tsx";
 import { createEscapeClose, DialogA11y } from "../lib/dialog.tsx";
-import { clearDraft, readDraft, writeDraft } from "../lib/draft-store.ts";
+import { createDraftSession, type DraftState } from "../lib/draft-store.ts";
 import { createScopedDraftIdentity } from "../lib/outgoing-journal.ts";
 import { searchMessages } from "../lib/message-search.ts";
 import {
@@ -45,6 +45,10 @@ export function ChatPane() {
   const app = useApp();
   const chat = useChat();
   const [draft, setDraft] = createSignal("");
+  const draftSession = createDraftSession();
+  const [draftStorageStatus, setDraftStorageStatus] =
+    createSignal<DraftState["status"]>("saved");
+  let draftInput: HTMLTextAreaElement | undefined;
   const [menuFor, setMenuFor] = createSignal<string | null>(null);
   const [newBelow, setNewBelow] = createSignal(0);
   // Announced to screen readers when a message from the OTHER side arrives, so
@@ -101,9 +105,37 @@ export function ChatPane() {
         )
       : "";
   };
+  const applyDraft = (state: DraftState) => {
+    setDraft(state.text);
+    setDraftStorageStatus(state.status);
+  };
+  const saveCurrentDraft = () => {
+    const identity = draftIdentity();
+    if (identity) applyDraft(draftSession.save(identity));
+  };
+  const reloadStoredDraft = async () => {
+    const identity = draftIdentity();
+    const text = draft();
+    if (!identity) return;
+    if (
+      text.length > 0 &&
+      !(await app.confirm({
+        title: "保存済みの下書きを読み込みますか？",
+        message:
+          "現在の入力を保存済みの内容に置き換えます。必要な内容は先にコピーしてください。",
+        confirmLabel: "読み込む",
+        cancelLabel: "キャンセル",
+      }))
+    )
+      return;
+    // A different conversation or new input during the confirmation must stay.
+    if (identity !== draftIdentity() || text !== draft()) return;
+    applyDraft(draftSession.reload(identity));
+    queueMicrotask(() => draftInput?.focus());
+  };
   createEffect(
     on(draftIdentity, (identity, previousIdentity) => {
-      if (previousIdentity) writeDraft(previousIdentity, draft());
+      if (previousIdentity) draftSession.save(previousIdentity);
       stagedGeneration++;
       setStaged((prev) => {
         prev.forEach((item) => URL.revokeObjectURL(item.preview));
@@ -115,7 +147,9 @@ export function ChatPane() {
       setSearchOpen(false);
       setSearchQuery("");
       messageEls.clear();
-      setDraft(identity ? readDraft(identity) : "");
+      applyDraft(
+        identity ? draftSession.enter(identity) : { text: "", status: "saved" },
+      );
     }),
   );
 
@@ -123,17 +157,24 @@ export function ChatPane() {
   // reload/close without a conversation switch still restores it.
   if (typeof window !== "undefined") {
     const flushDraft = () => {
-      const identity = draftIdentity();
-      if (identity) writeDraft(identity, draft());
+      saveCurrentDraft();
     };
     const onHidden = () => {
       if (document.visibilityState === "hidden") flushDraft();
     };
     window.addEventListener("pagehide", flushDraft);
     document.addEventListener("visibilitychange", onHidden);
+    const onBeforeUnload = (event: BeforeUnloadEvent) => {
+      flushDraft();
+      if (!draftSession.hasUnstoredChanges()) return;
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", onBeforeUnload);
     onCleanup(() => {
       window.removeEventListener("pagehide", flushDraft);
       document.removeEventListener("visibilitychange", onHidden);
+      window.removeEventListener("beforeunload", onBeforeUnload);
     });
   }
 
@@ -370,8 +411,7 @@ export function ChatPane() {
       () => {
         if (generation !== stagedGeneration || identity !== draftIdentity())
           return;
-        clearDraft(identity);
-        setDraft("");
+        applyDraft(draftSession.clear(identity));
         setStaged([]);
         attachments.forEach((item) => URL.revokeObjectURL(item.preview));
       },
@@ -922,6 +962,44 @@ export function ChatPane() {
                 </button>
               </Show>
               <div class="p-talk-chat-send">
+                <Show when={draftStorageStatus() !== "saved"}>
+                  <div
+                    id="talk-draft-storage-warning"
+                    class="p-talk-draft-warning"
+                    role="alert"
+                    data-draft-storage-warning
+                    data-draft-storage-status={draftStorageStatus()}
+                  >
+                    <p>
+                      {draftStorageStatus() === "conflict"
+                        ? "保存済みの下書きが変わっています。現在の入力と保存済みの内容を残しています。"
+                        : draftStorageStatus() === "read-error"
+                          ? "下書きを読み込めません。保存済みの内容は確認できず、現在の入力を残しています。"
+                          : "下書きを保存できません。現在の入力はこの画面に残しています。"}
+                      再読込や画面を閉じると未保存の入力を失うことがあります。必要な内容をコピーしてください。
+                    </p>
+                    <div class="p-talk-draft-warning-actions">
+                      <button type="button" onClick={saveCurrentDraft}>
+                        下書きを保存
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void reloadStoredDraft()}
+                      >
+                        保存済みの下書きを読み込む
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          draftInput?.focus();
+                          draftInput?.select();
+                        }}
+                      >
+                        入力を選択
+                      </button>
+                    </div>
+                  </div>
+                </Show>
                 <Show when={staged().length > 0 || uploading()}>
                   <div class="p-talk-chat-attach-strip">
                     <For each={staged()}>
@@ -1001,12 +1079,23 @@ export function ChatPane() {
                     </div>
                     <label>
                       <textarea
+                        ref={draftInput}
                         class="p-talk-chat-send__textarea"
                         name="message"
+                        aria-describedby={
+                          draftStorageStatus() !== "saved"
+                            ? "talk-draft-storage-warning"
+                            : undefined
+                        }
                         placeholder="メッセージを入力"
                         value={draft()}
                         onInput={(event) => {
-                          setDraft(event.currentTarget.value);
+                          const text = event.currentTarget.value;
+                          const identity = draftIdentity();
+                          if (identity) {
+                            draftSession.edit(identity, text);
+                            applyDraft(draftSession.save(identity));
+                          } else setDraft(text);
                           chat.notifyTyping();
                         }}
                         onKeyDown={(event) => {

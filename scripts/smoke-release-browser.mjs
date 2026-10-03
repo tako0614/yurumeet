@@ -12,6 +12,7 @@ import { unstable_readConfig, unstable_splitSqlQuery } from "wrangler";
 import { qualifyBrowserTalk } from "./release-browser-talk.mjs";
 import { qualifyBrowserCommunityDeletePreview } from "./release-browser-community-delete-preview.mjs";
 import { qualifyBrowserAuthMethodRecovery } from "./release-browser-auth-method-recovery.mjs";
+import { qualifyBrowserDraftStorage } from "./release-browser-draft-storage.mjs";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const password = " browser-smoke-only ";
@@ -413,6 +414,21 @@ async function smoke(artifact, digest) {
       config,
     });
     checks.push(...authMethodRecovery.checks);
+    const draftStorage = await qualifyBrowserDraftStorage({
+      page,
+      db,
+      origin,
+      actorApId: ownerId,
+      checks,
+    });
+    check(
+      pageErrors.length === 0,
+      "draft storage browser raised a runtime error",
+    );
+    check(
+      serverErrors.length === 0,
+      "draft storage artifact returned HTTP 5xx",
+    );
     result = {
       kind: "yurumeet.release-browser-smoke@v1",
       artifact: basename(artifact),
@@ -425,6 +441,7 @@ async function smoke(artifact, digest) {
       talk,
       communityDeletePreview,
       authMethodRecovery,
+      draftStorage,
       checks,
       status: "PASSED",
     };
