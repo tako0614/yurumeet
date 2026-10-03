@@ -475,6 +475,6 @@ describe("repository-owned Takosumi install UX", () => {
   // module and offering it are different acts.
   test("still keeps the public managed CTA closed", () => {
     expect(site).not.toContain("https://app.takosumi.com/install?");
-    expect(site).toContain("Takosumi 導入は検証中");
+    expect(site.replace(/\s+/g, " ")).toContain("Takosumi 導入は検証中");
   });
 });

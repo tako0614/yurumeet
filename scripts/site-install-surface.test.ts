@@ -9,18 +9,26 @@ const smoke = await readFile(
   new URL("./post-deploy-smoke.ts", import.meta.url),
   "utf8",
 );
+const readme = await readFile(new URL("../README.md", import.meta.url), "utf8");
+const siteText = site.replace(/\s+/g, " ");
 
 describe("public install surface", () => {
   test("does not link to an unverified managed installation", () => {
     expect(site).not.toContain("https://app.takosumi.com/install?");
     expect(site).not.toContain("data-takosumi-add");
-    expect(site).toContain("Takosumi 導入は検証中");
+    expect(siteText).toContain("Takosumi 導入は検証中");
   });
 
-  test("documents the canonical future managed module precisely", () => {
+  test("keeps the future managed source in the repository instructions", () => {
     expect(site).not.toContain("ref=main");
-    expect(site).toContain("ref=&lt;verified-release-tag&gt;");
-    expect(site).toContain("path=deploy/takoform");
+    // The landing links to the repository; the unavailable installation's
+    // precise source tuple is documented there, without becoming a live CTA.
+    expect(site).toContain('href="https://github.com/tako0614/yurumeet"');
+    expect(readme).toContain(
+      '"url": "https://github.com/tako0614/yurumeet.git"',
+    );
+    expect(readme).toContain('"ref": "<verified-release-tag>"');
+    expect(readme).toContain('"path": "deploy/takoform"');
   });
 });
 
