@@ -503,8 +503,8 @@ async function runABADeleteFailureCase({
       .filter({ hasText: m1Content })
       .count();
     requireCommunityDeleteRecovery(
-      oldM1 === 1,
-      "A re-entry did not reload the original M1 while DELETE remained pending",
+      oldM1 === (mode === "navigation-red" ? 1 : 0),
+      "A re-entry did not preserve pending DELETE suppression",
     );
     const errorToast = page
       .getByRole("alert")
@@ -522,7 +522,7 @@ async function runABADeleteFailureCase({
 
     const nativeM1 = await nativeMessage(db, m1.id, communityA.apId);
     const nativeAfterM2 = await nativeMessage(db, m2.id, communityA.apId);
-    const visibleM1 = await page
+    let visibleM1 = await page
       .locator("li.c-talk-chat")
       .filter({ hasText: m1Content })
       .isVisible()
@@ -556,6 +556,24 @@ async function runABADeleteFailureCase({
         staleErrorVisible,
       };
     }
+    requireCommunityDeleteRecovery(
+      !visibleM1 && visibleM2 && !staleErrorVisible,
+      "stale failure restored its old snapshot or showed an obsolete toast",
+    );
+    // A changed generation does not apply the old rollback snapshot. Once its
+    // token releases, a fresh native poll is allowed to observe retained M1.
+    await page.evaluate(() =>
+      document.dispatchEvent(new Event("visibilitychange")),
+    );
+    await assertVisibleMessage(
+      page,
+      m1Content,
+      "retained M1 after fresh current poll",
+    );
+    visibleM1 = await page
+      .locator("li.c-talk-chat")
+      .filter({ hasText: m1Content })
+      .isVisible();
     requireCommunityDeleteRecovery(
       deletion.intercepted() === 1 &&
         nativeM1?.ap_id === m1.id &&

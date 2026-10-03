@@ -26,6 +26,18 @@ type Entry = {
   acknowledgementSaved?: boolean;
 };
 
+type DeleteSuppression = {
+  pending: Set<symbol>;
+  committed: boolean;
+};
+
+type DeleteHandle = {
+  /** True only when no other same-message delete can still mask restoration. */
+  rollback: () => { mayRestore: boolean };
+  /** Returns whether matching journal cleanup is complete; masking remains active either way. */
+  commit: () => boolean;
+};
+
 /** Correlate a real acknowledgement; never infer success from history text. */
 export function matchesOutgoingAcknowledgement(
   record: OutgoingJournalRecord,
@@ -75,6 +87,10 @@ export function createOutgoingRecovery(
 ) {
   const journal = createOutgoingJournal(scope, storage);
   const entries = new Map<string, Entry>();
+  // Session masks have no TTL/LRU: expiring one could resurrect a confirmed
+  // message that this client successfully deleted. Memory grows only for IDs
+  // deleted during this mounted recovery session.
+  const deleteSuppressions = new Map<string, DeleteSuppression>();
   let revision = 0;
   const restored = journal.read();
   for (const saved of restored.records) {
@@ -173,6 +189,76 @@ export function createOutgoingRecovery(
     return true;
   };
 
+  const deleteKey = (target: JournalTarget, serverId: string) =>
+    JSON.stringify([target.type, target.ap_id, serverId]);
+
+  const cleanupDeletedAcknowledgements = (
+    target: JournalTarget,
+    serverId: string,
+  ): boolean => {
+    let complete = true;
+    for (const [id, entry] of entries) {
+      if (
+        entry.record.state !== "confirmed" ||
+        entry.record.serverId !== serverId ||
+        !sameTarget(entry.record.target, target)
+      ) {
+        continue;
+      }
+      if (journal.remove(entry.record)) {
+        entries.delete(id);
+        revision++;
+      } else {
+        complete = false;
+      }
+    }
+    return complete;
+  };
+
+  const beginDelete = (
+    target: JournalTarget,
+    serverId: string,
+  ): DeleteHandle => {
+    const scopedTarget: JournalTarget = {
+      type: target.type,
+      ap_id: target.ap_id,
+    };
+    const key = deleteKey(scopedTarget, serverId);
+    let suppression = deleteSuppressions.get(key);
+    if (!suppression) {
+      suppression = { pending: new Set(), committed: false };
+      deleteSuppressions.set(key, suppression);
+    }
+    const token = Symbol("delete");
+    suppression.pending.add(token);
+    let tokenState: "pending" | "rolled-back" | "committed" = "pending";
+
+    const commit = (): boolean => {
+      if (tokenState === "rolled-back") return false;
+      if (tokenState === "pending") {
+        suppression!.pending.delete(token);
+        suppression!.committed = true;
+        tokenState = "committed";
+        revision++;
+      }
+      // Keep the mask even when storage removal fails; a later merge retries.
+      return cleanupDeletedAcknowledgements(scopedTarget, serverId);
+    };
+
+    const rollback = (): { mayRestore: boolean } => {
+      if (tokenState !== "pending") return { mayRestore: false };
+      suppression!.pending.delete(token);
+      tokenState = "rolled-back";
+      const mayRestore =
+        !suppression!.committed && suppression!.pending.size === 0;
+      if (mayRestore) deleteSuppressions.delete(key);
+      revision++;
+      return { mayRestore };
+    };
+
+    return { rollback, commit };
+  };
+
   const merge = (
     target: JournalTarget,
     fetched: RecoveryMessage[],
@@ -182,14 +268,24 @@ export function createOutgoingRecovery(
   ): RecoveryMessage[] => {
     // Local rows are always rebuilt from the latest keyed entries, never a
     // selected-thread snapshot captured before an asynchronous fetch/send.
-    const rows = new Map(
-      fetched.filter((m) => !m.id.startsWith("temp-")).map((m) => [m.id, m]),
-    );
+    const rows = new Map<string, RecoveryMessage>();
+    for (const message of fetched) {
+      if (message.id.startsWith("temp-")) continue;
+      const suppression = deleteSuppressions.get(deleteKey(target, message.id));
+      if (suppression) continue;
+      rows.set(message.id, message);
+    }
     for (const [id, entry] of entries) {
       const record = entry.record;
       if (!sameTarget(record.target, target)) continue;
       if (record.state === "confirmed") {
         const serverId = record.serverId!;
+        const suppression = deleteSuppressions.get(deleteKey(target, serverId));
+        if (suppression) {
+          if (suppression.committed)
+            cleanupDeletedAcknowledgements(target, serverId);
+          continue;
+        }
         if (rows.has(serverId)) {
           // Retire the bridge only after history fetched AFTER this ACK
           // contains its actual ID. Older in-flight snapshots cannot erase it.
@@ -248,6 +344,7 @@ export function createOutgoingRecovery(
     fail,
     confirm,
     discard,
+    beginDelete,
     merge,
     revision: () => revision,
     restorationFailed: restored.failed,

@@ -82,7 +82,7 @@ function AppRoot(props: { children?: JSX.Element }) {
   };
 
   const refreshBadges = () => {
-    if (!actor()) return;
+    if (actor.error || actor.loading || !actor()) return;
     fetchDMUnreadCount()
       .then((r) => setUnreadTalk(r.total ?? 0))
       .catch(() => {});
@@ -105,7 +105,7 @@ function AppRoot(props: { children?: JSX.Element }) {
     });
   });
   createEffect(() => {
-    if (!actor()) return;
+    if (actor.error || actor.loading || !actor()) return;
     refreshBadges();
     void resolveYurumeBrowserPushConfig()
       .then((config) =>
@@ -179,7 +179,7 @@ function AppRoot(props: { children?: JSX.Element }) {
           fallback={<ConnectionError onRetry={() => void refetchActor()} />}
         >
           <Show
-            when={actor()}
+            when={!actor.error && actor()}
             fallback={
               <Show when={!actor.loading} fallback={<div class="yc-boot" />}>
                 <SignedOut origin={origin()} />
