@@ -4,6 +4,61 @@ const fail = (message) => new Error(`history-scroll ${message}`);
 const expect = (value, message) => {
   if (!value) throw fail(message);
 };
+const RATE_WAIT_MAX = 60_000;
+
+async function authCapacity(page, origin) {
+  const deadline = Date.now() + RATE_WAIT_MAX;
+  let firstStatus;
+  let waitMs = 0;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    // This is the public read-only capacity signal. No login, KV reset, or
+    // adjustment of the auth limiter is part of fixture setup.
+    const response = await page.request.get(`${origin}/api/auth/providers`, {
+      timeout: 20_000,
+    });
+    const status = response.status();
+    firstStatus ??= status;
+    const headers = response.headers();
+    const limit = Number(headers["x-ratelimit-limit"]);
+    const remaining = Number(headers["x-ratelimit-remaining"]);
+    const reset = Number(headers["x-ratelimit-reset"]);
+    expect(
+      limit === 20 &&
+        Number.isFinite(remaining) &&
+        remaining >= 0 &&
+        remaining <= limit &&
+        Number.isFinite(reset) &&
+        reset > 0,
+      `public auth capacity header shape (${status})`,
+    );
+    expect(
+      status === 200 || status === 429,
+      `public auth capacity read returned ${status}`,
+    );
+    if (status === 200 && remaining >= 19) {
+      return { firstStatus, status, remaining, resetAt: reset, waitMs };
+    }
+    expect(
+      attempt === 0,
+      `public auth capacity still insufficient after one read-only retry (${status}, remaining ${remaining})`,
+    );
+    const now = Date.now();
+    const untilReset = Math.max(1, reset * 1000 - now);
+    // Core rounds resetAt up to an integer second; allow that rounding in
+    // the shape check, while the actual wait remains capped at 60 seconds.
+    expect(
+      untilReset <= RATE_WAIT_MAX + 1_000 && deadline > now,
+      `public auth reset exceeds one window (${status}, remaining ${remaining})`,
+    );
+    waitMs = Math.min(untilReset, deadline - now);
+    expect(
+      waitMs > 0 && waitMs <= RATE_WAIT_MAX,
+      `public auth reset wait invalid (${waitMs}ms)`,
+    );
+    await new Promise((resolve) => setTimeout(resolve, waitMs));
+  }
+  throw fail("public auth capacity retry did not complete");
+}
 
 async function rows(db, sql, ...args) {
   return (
@@ -424,6 +479,7 @@ export async function qualifyBrowserHistoryScroll({
   };
   await page.route("**/*", blockOutbound);
   try {
+    const capacity = await authCapacity(page, origin);
     await page.setViewportSize({ width: 1280, height: 900 });
     await page.goto(`${origin}/?tab=talk`, {
       waitUntil: "domcontentloaded",
@@ -432,7 +488,7 @@ export async function qualifyBrowserHistoryScroll({
     const me = await api(page, "GET", "/api/auth/me");
     expect(
       me.status === 200 && me.body?.actor?.ap_id === actorApId,
-      "browser page lacks authenticated owner session",
+      `browser page lacks authenticated owner session (${me.status})`,
     );
     const source = await seedCommunity(
       page,
@@ -533,7 +589,7 @@ export async function qualifyBrowserHistoryScroll({
     const afterMe = await api(page, "GET", "/api/auth/me");
     expect(
       afterMe.status === 200 && afterMe.body?.actor?.ap_id === actorApId,
-      "scroll journey lost owner session",
+      `scroll journey lost owner session (${afterMe.status})`,
     );
     expect(
       JSON.stringify(await snapshot(db)) === JSON.stringify(before),
@@ -561,6 +617,7 @@ export async function qualifyBrowserHistoryScroll({
     return {
       status: "PASSED",
       fixtureScope: "disposable local native D1 and Worker",
+      authCapacity: capacity,
       checks: checks.slice(-4),
       sourceCount: 51,
       destinationCount: 50,

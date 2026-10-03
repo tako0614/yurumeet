@@ -440,28 +440,6 @@ async function smoke(artifact, digest) {
       actorApId: ownerId,
       checks,
     });
-    const scrollPage = await context.newPage();
-    let historyScroll;
-    const scrollPageErrors = [];
-    try {
-      scrollPage.on("pageerror", (error) =>
-        scrollPageErrors.push(String(error)),
-      );
-      historyScroll = await qualifyBrowserHistoryScroll({
-        page: scrollPage,
-        db,
-        origin,
-        actorApId: ownerId,
-        checks,
-      });
-      check(
-        scrollPageErrors.length === 0,
-        "history scroll raised a page error",
-      );
-      historyScroll.pageErrors = scrollPageErrors;
-    } finally {
-      await scrollPage.close();
-    }
 
     check(
       pageErrors.length === 0,
@@ -854,6 +832,29 @@ async function smoke(artifact, digest) {
       };
     } finally {
       await paginationPage.close();
+    }
+
+    const scrollPage = await context.newPage();
+    let historyScroll;
+    const scrollPageErrors = [];
+    try {
+      scrollPage.on("pageerror", (error) =>
+        scrollPageErrors.push(String(error)),
+      );
+      historyScroll = await qualifyBrowserHistoryScroll({
+        page: scrollPage,
+        db,
+        origin,
+        actorApId: ownerId,
+        checks,
+      });
+      check(
+        scrollPageErrors.length === 0,
+        "history scroll raised a page error",
+      );
+      historyScroll.pageErrors = scrollPageErrors;
+    } finally {
+      await scrollPage.close();
     }
 
     check(
