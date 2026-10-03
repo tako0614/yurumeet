@@ -104,6 +104,19 @@ async function readAuth(page, origin) {
 }
 
 function observe(page, origin) {
+  const startedAt = Date.now();
+  const authPath = (value) => {
+    const url = new URL(value);
+    return url.origin === origin &&
+      [
+        "/api/auth/me",
+        "/api/auth/providers",
+        "/api/auth/login",
+        "/api/auth/logout",
+      ].includes(url.pathname)
+      ? url.pathname
+      : null;
+  };
   const events = {
     logoutPosts: 0,
     oidcStarts: 0,
@@ -112,6 +125,9 @@ function observe(page, origin) {
     documents: [],
     expectedLogout503: 0,
     unexpectedFiveHundreds: [],
+    authRequests: [],
+    authResponses: [],
+    authFailures: [],
   };
   page.on("request", (request) => {
     let url;
@@ -121,6 +137,13 @@ function observe(page, origin) {
       return;
     }
     if (url.origin !== origin) return;
+    const path = authPath(request.url());
+    if (path)
+      events.authRequests.push({
+        path,
+        method: request.method(),
+        elapsedMs: Date.now() - startedAt,
+      });
     if (request.method() === "POST" && url.pathname === "/api/auth/logout")
       events.logoutPosts += 1;
     if (
@@ -133,12 +156,38 @@ function observe(page, origin) {
     if (request.isNavigationRequest() && request.resourceType() === "document")
       events.documents.push(url.pathname);
   });
+  page.on("requestfailed", (request) => {
+    const path = authPath(request.url());
+    if (path)
+      events.authFailures.push({
+        path,
+        method: request.method(),
+        error: request.failure()?.errorText ?? null,
+        elapsedMs: Date.now() - startedAt,
+      });
+  });
   page.on("pageerror", () => {
     events.pageErrors += 1;
   });
   page.on("response", (response) => {
     try {
       const url = new URL(response.url());
+      const path = authPath(response.url());
+      if (path) {
+        const headers = response.headers();
+        events.authResponses.push({
+          path,
+          method: response.request().method(),
+          status: response.status(),
+          elapsedMs: Date.now() - startedAt,
+          rate: {
+            limit: headers["x-ratelimit-limit"] ?? null,
+            remaining: headers["x-ratelimit-remaining"] ?? null,
+            resetAt: headers["x-ratelimit-reset"] ?? null,
+            retryAfter: headers["retry-after"] ?? null,
+          },
+        });
+      }
       if (url.origin === origin && response.status() >= 500) {
         if (url.pathname === "/api/auth/logout" && response.status() === 503)
           events.expectedLogout503 += 1;
@@ -151,6 +200,45 @@ function observe(page, origin) {
     } catch {}
   });
   return events;
+}
+
+async function waitForSignedOut(fixture, caller) {
+  try {
+    await fixture.page
+      .getByRole("heading", { name: "サインイン" })
+      .waitFor({ state: "visible", timeout: TIMEOUT });
+  } catch (error) {
+    // Keep the original deadline and verdict. Diagnose only fixed UI flags and
+    // auth path/status/rate metadata; never log cookies, headers or body text.
+    let ui = null;
+    try {
+      ui = await bounded(
+        fixture.page.evaluate(() => ({
+          visibility: document.visibilityState,
+          signedOut: [...document.querySelectorAll("h1")].some(
+            (item) => item.textContent === "サインイン",
+          ),
+          boot: Boolean(document.querySelector(".yc-boot")),
+          logoutBusy: Boolean(
+            document.querySelector('.yc-logout-status[role="status"]'),
+          ),
+          connectionError:
+            document.body.textContent.includes(
+              "認証状態を確認できませんでした",
+            ),
+          retryError:
+            document.body.textContent.includes(
+              "ログアウトできませんでした。現在も",
+            ),
+        })),
+        "failed-ui-diagnostic",
+      );
+    } catch {}
+    process.stderr.write(
+      `${JSON.stringify({ kind: "yurumeet.logout-ui-timeout@v1", caller, ui, observations: fixture.events })}\n`,
+    );
+    throw error;
+  }
 }
 
 async function loginFreshOwner({
@@ -177,7 +265,7 @@ async function loginFreshOwner({
   });
   const page = await context.newPage();
   const events = observe(page, origin);
-  const rateWindow = await rateCapacity(page, origin);
+  const anonymousRateWindow = await rateCapacity(page, origin);
   await page.goto(origin, { waitUntil: "domcontentloaded", timeout: TIMEOUT });
   const passwordInput = page.locator('input[type="password"]');
   await passwordInput.waitFor({ state: "visible", timeout: TIMEOUT });
@@ -200,13 +288,29 @@ async function loginFreshOwner({
     `${caller}-single-password-login-succeeded`,
   );
   await passwordInput.waitFor({ state: "hidden", timeout: TIMEOUT });
+  const jar = await context.cookies(origin);
+  const cookie = jar.find((item) => item.name === "session");
+  need(Boolean(cookie?.value), `${caller}-session-cookie-issued`);
+  const expectedId = await sessionKey(cookie.value, sessionSalt);
+  const issuedSession = await db
+    .prepare("SELECT member_id FROM sessions WHERE id = ?")
+    .bind(expectedId)
+    .first();
+  need(
+    typeof issuedSession?.member_id === "string",
+    `${caller}-issued-cookie-native-principal`,
+  );
+  // Core keys authenticated auth requests by actor, not the anonymous IP.
+  // Earlier full-smoke lanes share this owner bucket. Prove capacity using
+  // the issued cookie before navigation/current-user reads can consume it.
+  const authenticatedRateWindow = await rateCapacity(page, origin);
   await page.goto(`${origin}/settings`, {
     waitUntil: "domcontentloaded",
     timeout: TIMEOUT,
   });
   const me = await readAuth(page, origin);
   need(
-    me.status === 200 && typeof me.actorApId === "string",
+    me.status === 200 && me.actorApId === issuedSession.member_id,
     `${caller}-authenticated-same-owner-read`,
   );
   const actorRow = await db
@@ -219,10 +323,6 @@ async function loginFreshOwner({
       actorRow.deleted_at == null,
     `${caller}-root-owner-row`,
   );
-  const jar = await context.cookies(origin);
-  const cookie = jar.find((item) => item.name === "session");
-  need(Boolean(cookie?.value), `${caller}-session-cookie-issued`);
-  const expectedId = await sessionKey(cookie.value, sessionSalt);
   const ownSession = await db
     .prepare(
       "SELECT id, member_id, access_token, refresh_token, expires_at, created_at, provider, provider_access_token, provider_refresh_token, provider_token_expires_at FROM sessions WHERE id = ? AND member_id = ?",
@@ -242,7 +342,10 @@ async function loginFreshOwner({
     expectedId,
     ownSession,
     initialRows: rows,
-    rateWindow,
+    rateWindow: {
+      anonymous: anonymousRateWindow,
+      authenticated: authenticatedRateWindow,
+    },
   };
 }
 
@@ -447,9 +550,7 @@ async function runFailedThenRetry({
   need(ack.status() === 200, `${caller}-explicit-retry-real-worker-ack`);
   // The product intentionally cancels the inconclusive ACK body. Chrome may
   // discard its CDP buffer; revocation is proved by UI, auth401 and native SQL.
-  await fixture.page
-    .getByRole("heading", { name: "サインイン" })
-    .waitFor({ state: "visible", timeout: TIMEOUT });
+  await waitForSignedOut(fixture, caller);
   const staleCookie = await fixture.page.request.get(`${origin}/api/auth/me`, {
     headers: { cookie: `session=${fixture.cookie}` },
     timeout: TIMEOUT,
@@ -534,9 +635,7 @@ async function runAckLoss({
     const initialDocuments = fixture.events.documents.length;
     const operation = await initiateSettingsLogout(fixture, "ack-loss");
     await bounded(operation.routeEntered, "ack-loss-worker-commit");
-    await fixture.page
-      .getByRole("heading", { name: "サインイン" })
-      .waitFor({ state: "visible", timeout: TIMEOUT });
+    await waitForSignedOut(fixture, "ack-loss");
     need(
       fixture.committed?.status === 200 && fixture.committed.ownSessionAbsent,
       "real-logout-commit-before-browser-response-drop",
