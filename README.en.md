@@ -33,6 +33,25 @@ password or OIDC method. Preserve its encryption key, data and the new salt
 through later updates and code rollback; do not convert/delete old sessions to
 disguise the required re-login. Local proof does not qualify public custody.
 
+The repository's `bun run deploy -- yurumeet-worker` updates the maintainer's
+existing Worker. Its realized strict JSON config must declare root
+`name: "yurumeet"` and a lowercase 32-hex-character `account_id`. Self-host users
+with other names follow their own deployment runbook. This entrypoint refuses
+parent `CLOUDFLARE_ENV` and nonstandard API endpoint overrides, and passes the
+empty `scripts/worker-publish-empty.env.example` to every Wrangler invocation.
+It does not select the target or credentials implicitly from `.env`/`.env.local`;
+authentication comes from the operator's parent process or existing Wrangler
+authentication. Any content added to the empty file is refused.
+
+The publisher captures the actual serving Deployment ID and complete
+version/percentage map, then rechecks them immediately before publication. It
+does not use the first version-inventory UUID as a rollback point. Result and
+failure diagnostics preserve exact rollback arguments, including split traffic;
+rollback and retry remain explicit operator actions. The recheck detects changes
+but is not an atomic conditional update, so operators must serialize updates to
+the same target. Live secret/binding preservation, rollback and post-publication
+user journeys require separate evidence from source and command-mock tests.
+
 The sensitive root `main.tf` input `auth_password_hash` projects a canonical
 PBKDF2 hash or unambiguous bootstrap token into the `AUTH_PASSWORD_HASH` Secret.
 Nonblank values retain the string OpenTofu receives. Values considered blank

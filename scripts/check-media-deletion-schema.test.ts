@@ -20,8 +20,15 @@ import {
 
 const repo = new URL("../", import.meta.url);
 const dbId = "00000000-0000-4000-8000-000000000001";
+const accountId = "a1234567890123456789012345678901";
+const defaultApiBaseUrl = "https://api.cloudflare.com/client/v4";
+const deploymentId = "00000000-0000-4000-8000-000000000010";
+const firstVersionId = "00000000-0000-4000-8000-000000000011";
+const secondVersionId = "00000000-0000-4000-8000-000000000012";
+const thirdVersionId = "00000000-0000-4000-8000-000000000013";
 const config = JSON.stringify({
-  name: "yurumeet-preflight-test",
+  name: "yurumeet",
+  account_id: accountId,
   secrets: {
     required: [
       "ENCRYPTION_KEY",
@@ -109,6 +116,15 @@ const indexRows = [
 
 const responseFor = (rows: unknown) =>
   JSON.stringify([{ results: rows, success: true, meta: { duration: 1 } }]);
+
+function parseDeployResult(stdout: string) {
+  const marker = '\n{\n  "kind": "takos.deploy-result@v1"';
+  const start = stdout.lastIndexOf(marker);
+  if (start < 0) throw new Error("deploy result JSON was not printed");
+  const end = stdout.indexOf("\n}\n", start + 1);
+  if (end < 0) throw new Error("deploy result JSON was not terminated");
+  return JSON.parse(stdout.slice(start + 1, end + 2));
+}
 
 function fixtureRun(stdout: string) {
   const calls: Array<{ command: string; args: string[] }> = [];
@@ -395,8 +411,27 @@ async function createIsolatedDeployFixture(options: {
   queryMode?: "valid" | "denied" | "invalid-json" | "missing-schema";
   environment?: string;
   mutateConfigOnVersions?: boolean;
+  deploymentFirst?: unknown;
+  deploymentSecond?: unknown;
+  deploymentError?: boolean;
+  deploymentMalformed?: boolean;
+  deploymentSecondError?: boolean;
+  deploymentSecondMalformed?: boolean;
+  publishError?: boolean;
+  smokeError?: boolean;
+  pathWithShellChars?: boolean;
+  emptyEnvFile?: "missing" | "nonempty";
+  mutateEmptyEnvAfterD1?: boolean;
+  apiBaseUrl?: string;
+  cfApiBaseUrl?: string;
+  wranglerApiEnvironment?: string;
+  complianceEnvironment?: string;
+  poisonDefaultEnvFiles?: boolean;
 }) {
-  const root = await mkdtemp(join(tmpdir(), "yurumeet-schema-preflight-"));
+  const tempPrefix = options.pathWithShellChars
+    ? "yurumeet active's fixture-"
+    : "yurumeet-schema-preflight-";
+  const root = await mkdtemp(join(tmpdir(), tempPrefix));
   tempRoots.push(root);
   const scripts = join(root, "scripts");
   const bin = join(root, "mock-bin");
@@ -411,16 +446,57 @@ async function createIsolatedDeployFixture(options: {
     "check-media-deletion-schema.mjs",
     "release-artifact-manifest.mjs",
     "release-identity.mjs",
+    "worker-publish-empty.env.example",
   ]) {
     await copyFile(new URL(`./${file}`, import.meta.url), join(scripts, file));
+  }
+  const emptyEnvPath = join(scripts, "worker-publish-empty.env.example");
+  if (options.emptyEnvFile === "missing") await rm(emptyEnvPath);
+  if (options.emptyEnvFile === "nonempty") {
+    await writeFile(emptyEnvPath, "CLOUDFLARE_ENV=production\n", "utf8");
   }
 
   const configPath = join(root, "realized-wrangler.jsonc");
   await writeFile(configPath, options.configText ?? config, "utf8");
   const callLog = join(root, "calls.log");
   await writeFile(callLog, "", "utf8");
+  const statusCounter = join(root, "status-count");
+  await writeFile(statusCounter, "0", "utf8");
+  if (options.poisonDefaultEnvFiles) {
+    await writeFile(
+      join(root, ".env"),
+      "CLOUDFLARE_ENV=production\nCF_API_BASE_URL=https://poison.invalid\n",
+      "utf8",
+    );
+    await writeFile(
+      join(root, ".env.local"),
+      "CLOUDFLARE_API_BASE_URL=https://poison.local.invalid\n",
+      "utf8",
+    );
+  }
+  const firstDeployment = options.deploymentFirst ?? {
+    id: deploymentId,
+    strategy: "percentage",
+    versions: [{ version_id: firstVersionId, percentage: 100 }],
+  };
+  const secondDeployment = options.deploymentSecond ?? firstDeployment;
   const wranglerStub = `#!/bin/sh
 printf 'wrangler %s\\n' "$*" >> "$CALL_LOG"
+ENV_FILE=
+PREVIOUS=
+CONFIG_ARG=
+WORKER_NAME=
+for ARG in "$@"; do
+  if [ "$PREVIOUS" = "--env-file" ]; then ENV_FILE=$ARG; fi
+  if [ "$PREVIOUS" = "--config" ]; then CONFIG_ARG=$ARG; fi
+  if [ "$PREVIOUS" = "--name" ]; then WORKER_NAME=$ARG; fi
+  PREVIOUS=$ARG
+done
+if [ "$CONFIG_ARG" != "$CONFIG_PATH" ]; then echo 'unexpected config target' >&2; exit 84; fi
+if ! grep -F '"account_id":"'$EXPECTED_ACCOUNT'"' "$CONFIG_ARG" >/dev/null; then echo 'unexpected account target' >&2; exit 83; fi
+if { [ "$1" = "versions" ] || [ "$1" = "deploy" ]; } && [ "$WORKER_NAME" != "yurumeet" ]; then echo 'unexpected Worker target' >&2; exit 82; fi
+if [ -z "$ENV_FILE" ] || [ ! -f "$ENV_FILE" ]; then echo 'missing explicit env file' >&2; exit 89; fi
+if [ "$(wc -c < "$ENV_FILE")" -ne 0 ]; then echo 'explicit env file is not empty' >&2; exit 88; fi
 if [ "$1" = "d1" ] && [ "$2" = "execute" ]; then
   case "$PREFLIGHT_MODE" in
     denied) echo 'raw D1 response'; echo 'D1 access denied' >&2; exit 1 ;;
@@ -428,13 +504,29 @@ if [ "$1" = "d1" ] && [ "$2" = "execute" ]; then
     missing-schema) printf '%s' "$MISSING_SCHEMA_RESPONSE" ;;
     *) printf '%s' "$READY_SCHEMA_RESPONSE" ;;
   esac
+  if [ "$MUTATE_CONFIG_ON_VERSIONS" = "yes" ]; then printf '{"name":"changed","d1_databases":[]}\\n' > "$CONFIG_PATH"; fi
+  if [ "$MUTATE_EMPTY_ENV_AFTER_D1" = "yes" ]; then printf 'CLOUDFLARE_ENV=production\\n' > "$ENV_FILE"; fi
   exit 0
 fi
 if [ "$1" = "versions" ]; then
-  if [ "$MUTATE_CONFIG_ON_VERSIONS" = "yes" ]; then printf '{"name":"changed","d1_databases":[]}\\n' > "$CONFIG_PATH"; fi
-  echo 'previous-version 00000000-0000-4000-8000-000000000002'; exit 0
+    if [ "$2" = "deployments" ] && [ "$3" = "status" ]; then
+    STATUS_COUNT=$(cat "$STATUS_COUNTER")
+    STATUS_COUNT=$((STATUS_COUNT + 1)); printf '%s' "$STATUS_COUNT" > "$STATUS_COUNTER"
+    if [ "$STATUS_COUNT" -eq 1 ] && [ "$DEPLOYMENT_ERROR" = "yes" ]; then echo 'no active deployment' >&2; exit 87; fi
+    if [ "$STATUS_COUNT" -gt 1 ] && [ "$DEPLOYMENT_SECOND_ERROR" = "yes" ]; then echo 'deployment status denied' >&2; exit 86; fi
+    if [ "$STATUS_COUNT" -eq 1 ] && [ "$DEPLOYMENT_MALFORMED" = "yes" ]; then printf '{malformed'; exit 0; fi
+    if [ "$STATUS_COUNT" -gt 1 ] && [ "$DEPLOYMENT_SECOND_MALFORMED" = "yes" ]; then printf '{second-malformed'; exit 0; fi
+    if [ "$STATUS_COUNT" -eq 1 ]; then printf '%s' "$DEPLOYMENT_FIRST"; else printf '%s' "$DEPLOYMENT_SECOND"; fi
+    printf '\\n'
+    exit 0
+  fi
+  if [ "$2" = "deploy" ]; then echo 'mock rollback completed'; exit 0; fi
+  echo "unexpected versions command: $*" >&2; exit 86
 fi
-if [ "$1" = "deploy" ]; then echo 'worker-published'; exit 0; fi
+if [ "$1" = "deploy" ]; then
+  if [ "$PUBLISH_ERROR" = "yes" ]; then echo 'publish response stdout'; echo 'publish response stderr' >&2; exit 1; fi
+  echo 'worker-published'; exit 0
+fi
 echo "unexpected wrangler command: $*" >&2
 exit 90
 `;
@@ -444,6 +536,7 @@ if [ "$1" = "run" ] && [ "$2" = "build:takos-worker" ]; then
   mkdir -p dist
   printf 'worker-fixture' > dist/takos-worker.js
 fi
+if [ "$1" = "run" ] && [ "$2" = "smoke:postdeploy" ] && [ "$SMOKE_ERROR" = "yes" ]; then echo 'postdeploy smoke response'; exit 1; fi
 exit 0
 `;
   const gitStub = `#!/bin/sh
@@ -473,11 +566,28 @@ esac
     CALL_LOG: callLog,
     YURUMEET_WRANGLER_CONFIG: options.configEnv ?? configPath,
     CONFIG_PATH: configPath,
+    EXPECTED_ACCOUNT: accountId,
+    STATUS_COUNTER: statusCounter,
     MUTATE_CONFIG_ON_VERSIONS: options.mutateConfigOnVersions ? "yes" : "no",
+    MUTATE_EMPTY_ENV_AFTER_D1: options.mutateEmptyEnvAfterD1 ? "yes" : "no",
     CLOUDFLARE_ENV: options.environment ?? "",
+    CLOUDFLARE_API_BASE_URL: options.apiBaseUrl ?? defaultApiBaseUrl,
+    CF_API_BASE_URL: options.cfApiBaseUrl ?? defaultApiBaseUrl,
+    WRANGLER_API_ENVIRONMENT: options.wranglerApiEnvironment ?? "production",
+    CLOUDFLARE_COMPLIANCE_REGION: options.complianceEnvironment ?? "public",
     PREFLIGHT_MODE: options.queryMode ?? "valid",
     READY_SCHEMA_RESPONSE: responseFor([...columnRows, ...indexRows]),
     MISSING_SCHEMA_RESPONSE: responseFor(missingRows),
+    DEPLOYMENT_FIRST: JSON.stringify(firstDeployment),
+    DEPLOYMENT_SECOND: JSON.stringify(secondDeployment),
+    DEPLOYMENT_ERROR: options.deploymentError ? "yes" : "no",
+    DEPLOYMENT_MALFORMED: options.deploymentMalformed ? "yes" : "no",
+    DEPLOYMENT_SECOND_ERROR: options.deploymentSecondError ? "yes" : "no",
+    DEPLOYMENT_SECOND_MALFORMED: options.deploymentSecondMalformed
+      ? "yes"
+      : "no",
+    PUBLISH_ERROR: options.publishError ? "yes" : "no",
+    SMOKE_ERROR: options.smokeError ? "yes" : "no",
   };
   const processResult = Bun.spawnSync(
     [process.execPath, join(scripts, "deploy.mjs"), "yurumeet-worker"],
@@ -486,6 +596,8 @@ esac
   const calls = await readFile(callLog, "utf8");
   return {
     root,
+    bin,
+    callLog,
     exitCode: processResult.exitCode,
     stdout: processResult.stdout.toString(),
     stderr: processResult.stderr.toString(),
@@ -646,6 +758,69 @@ describe("actual Worker deploy entrypoint schema barrier with isolated command m
         queryMode: "valid" as const,
         environment: "production",
       },
+      {
+        label: "wrong Worker name",
+        configText: JSON.stringify({
+          ...JSON.parse(config),
+          name: "another-worker",
+        }),
+      },
+      {
+        label: "missing pinned account ID",
+        configText: JSON.stringify({
+          ...JSON.parse(config),
+          account_id: undefined,
+        }),
+      },
+      {
+        label: "malformed pinned account ID",
+        configText: JSON.stringify({
+          ...JSON.parse(config),
+          account_id: "not-an-account-id",
+        }),
+      },
+      {
+        label: "Cloudflare API endpoint override",
+        configText: config,
+        apiBaseUrl: "https://override.invalid/client/v4",
+      },
+      {
+        label: "Cloudflare API endpoint alias override",
+        configText: config,
+        cfApiBaseUrl: "https://override.invalid/client/v4",
+      },
+      {
+        label: "empty Cloudflare API endpoint override",
+        configText: config,
+        apiBaseUrl: "",
+      },
+      {
+        label: "Wrangler staging API environment",
+        configText: config,
+        wranglerApiEnvironment: "staging",
+      },
+      {
+        label: "FedRAMP compliance environment",
+        configText: config,
+        complianceEnvironment: "fedramp_high",
+      },
+      {
+        label: "FedRAMP config region",
+        configText: JSON.stringify({
+          ...JSON.parse(config),
+          compliance_region: "fedramp_high",
+        }),
+      },
+      {
+        label: "missing explicit empty env-file",
+        configText: config,
+        emptyEnvFile: "missing" as const,
+      },
+      {
+        label: "nonempty explicit env-file",
+        configText: config,
+        emptyEnvFile: "nonempty" as const,
+      },
     ];
     for (const scenario of scenarios) {
       const result = await createIsolatedDeployFixture(scenario);
@@ -657,6 +832,9 @@ describe("actual Worker deploy entrypoint schema barrier with isolated command m
       expect(result.stderr, scenario.label).toContain(
         "publication was not attempted",
       );
+      if (scenario.label === "malformed status JSON") {
+        expect(result.stderr).toContain("{malformed");
+      }
       if (
         scenario.label === "invalid JSON" ||
         scenario.label === "missing salt declaration" ||
@@ -670,7 +848,18 @@ describe("actual Worker deploy entrypoint schema barrier with isolated command m
         scenario.label === "required has duplicate salt declarations" ||
         scenario.label === "environment-only salt declaration" ||
         scenario.label.startsWith("plaintext salt var") ||
-        scenario.label === "environment plaintext salt var"
+        scenario.label === "environment plaintext salt var" ||
+        scenario.label === "wrong Worker name" ||
+        scenario.label === "missing pinned account ID" ||
+        scenario.label === "malformed pinned account ID" ||
+        scenario.label === "Cloudflare API endpoint override" ||
+        scenario.label === "Cloudflare API endpoint alias override" ||
+        scenario.label === "empty Cloudflare API endpoint override" ||
+        scenario.label === "Wrangler staging API environment" ||
+        scenario.label === "FedRAMP compliance environment" ||
+        scenario.label === "FedRAMP config region" ||
+        scenario.label === "missing explicit empty env-file" ||
+        scenario.label === "nonempty explicit env-file"
       ) {
         expect(result.calls, scenario.label).toBe("");
       }
@@ -687,6 +876,13 @@ describe("actual Worker deploy entrypoint schema barrier with isolated command m
       if (scenario.label === "environment plaintext salt var") {
         expect(result.stderr).not.toContain("must-not-echo");
       }
+      if (
+        scenario.label === "Cloudflare API endpoint override" ||
+        scenario.label === "Cloudflare API endpoint alias override" ||
+        scenario.label === "empty Cloudflare API endpoint override"
+      ) {
+        expect(result.stderr).not.toContain("override.invalid");
+      }
       if (scenario.label === "plaintext salt var value") {
         expect(result.stderr).not.toContain("do-not-echo");
       }
@@ -699,7 +895,8 @@ describe("actual Worker deploy entrypoint schema barrier with isolated command m
       queryMode: "valid",
     });
     const oidcConfig = JSON.stringify({
-      name: "yurumeet-oidc-test",
+      name: "yurumeet",
+      account_id: accountId,
       secrets: {
         required: ["ENCRYPTION_KEY", "YURUCOMMU_SESSION_HASH_SALT"],
       },
@@ -726,28 +923,45 @@ describe("actual Worker deploy entrypoint schema barrier with isolated command m
     expect(oidc.calls).not.toContain("AUTH_PASSWORD_HASH");
   });
 
-  test("valid metadata uses the same config path and preserves build, version, publish, and smoke order", async () => {
+  test("valid metadata uses the same config and empty env-file, captures the active Deployment, and preserves gate/build/publish/smoke order", async () => {
     const result = await createIsolatedDeployFixture({
       configText: config,
       configEnv: "realized-wrangler.jsonc",
       queryMode: "valid",
+      poisonDefaultEnvFiles: true,
     });
     expect(result.exitCode).toBe(0);
     const events = result.calls.split("\n").filter(Boolean);
     const indexOf = (fragment: string) =>
       events.findIndex((event) => event.includes(fragment));
+    expect(indexOf("git status --porcelain")).toBeLessThan(
+      indexOf("wrangler versions deployments status"),
+    );
+    expect(indexOf("wrangler versions deployments status")).toBeLessThan(
+      indexOf("bun run check"),
+    );
     expect(indexOf("bun run check")).toBeLessThan(
       indexOf("bun run build:takos-worker"),
     );
     expect(indexOf("bun run build:takos-worker")).toBeLessThan(
       indexOf("wrangler d1 execute DB --remote --json --config"),
     );
-    expect(
-      indexOf("wrangler d1 execute DB --remote --json --config"),
-    ).toBeLessThan(indexOf("wrangler versions list"));
-    expect(indexOf("wrangler versions list")).toBeLessThan(
-      indexOf("wrangler deploy"),
+    const statusEvents = events.filter((event) =>
+      event.startsWith("wrangler versions deployments status"),
     );
+    expect(statusEvents).toHaveLength(2);
+    const d1Index = indexOf("wrangler d1 execute DB --remote --json --config");
+    const secondStatusIndex = events.findIndex(
+      (event, index) =>
+        index > d1Index &&
+        event.startsWith("wrangler versions deployments status"),
+    );
+    expect(indexOf("wrangler versions deployments status")).toBeLessThan(
+      indexOf("bun run check"),
+    );
+    expect(indexOf("bun run build:takos-worker")).toBeLessThan(d1Index);
+    expect(d1Index).toBeLessThan(secondStatusIndex);
+    expect(secondStatusIndex).toBeLessThan(indexOf("wrangler deploy"));
     expect(indexOf("wrangler deploy")).toBeLessThan(
       indexOf("bun run smoke:postdeploy"),
     );
@@ -756,13 +970,380 @@ describe("actual Worker deploy entrypoint schema barrier with isolated command m
     );
     const publish = events.find((event) => event.startsWith("wrangler deploy"));
     const sameConfigPath = join(result.root, "realized-wrangler.jsonc");
+    const sameEnvPath = join(
+      result.root,
+      "scripts",
+      "worker-publish-empty.env.example",
+    );
     expect(preflight).toContain("--config");
     expect(preflight).toContain(sameConfigPath);
     expect(publish).toContain("--config");
     expect(publish).toContain(sameConfigPath);
+    for (const event of [...statusEvents, publish]) {
+      expect(event).toContain("--name yurumeet");
+      expect(event).toContain("--config");
+      expect(event).toContain(sameConfigPath);
+      expect(event).toContain("--env-file");
+      expect(event).toContain(sameEnvPath);
+    }
+    expect(preflight).toContain("--config");
+    expect(preflight).toContain(sameConfigPath);
+    expect(preflight).toContain("--env-file");
+    expect(preflight).toContain(sameEnvPath);
+    expect(events.some((event) => event.includes("versions list"))).toBe(false);
+    expect(result.stdout).toContain(
+      `active Deployment {"id":"${deploymentId}","versions":[{"version_id":"${firstVersionId}","percentage":100}]}`,
+    );
+    const deployResult = parseDeployResult(result.stdout);
+    expect(deployResult.previousDeployment).toEqual({
+      id: deploymentId,
+      versions: [{ version_id: firstVersionId, percentage: 100 }],
+    });
+    expect(deployResult.accountId).toBe(accountId);
+    expect(deployResult.rollbackArgs).toEqual([
+      "versions",
+      "deploy",
+      `${firstVersionId}@100`,
+      "--name",
+      "yurumeet",
+      "--config",
+      sameConfigPath,
+      "--env-file",
+      sameEnvPath,
+      "--yes",
+    ]);
+    expect(result.stdout).toContain(
+      `wrangler 'versions' 'deploy' '${firstVersionId}@100'`,
+    );
     expect(result.stdout).toContain(
       "media_blob_deletion_jobs migration-0030-only",
     );
+  });
+
+  test("preserves an active split Deployment map and tolerates API array reordering", async () => {
+    const first = {
+      id: deploymentId,
+      strategy: "percentage",
+      versions: [
+        { version_id: secondVersionId, percentage: 75 },
+        { version_id: firstVersionId, percentage: 25 },
+      ],
+    };
+    const second = {
+      ...first,
+      versions: [...first.versions].reverse(),
+    };
+    const result = await createIsolatedDeployFixture({
+      configText: config,
+      deploymentFirst: first,
+      deploymentSecond: second,
+    });
+    expect(result.exitCode).toBe(0);
+    const deployResult = parseDeployResult(result.stdout);
+    expect(deployResult.previousDeployment).toEqual({
+      id: deploymentId,
+      versions: [
+        { version_id: firstVersionId, percentage: 25 },
+        { version_id: secondVersionId, percentage: 75 },
+      ],
+    });
+    expect(deployResult.rollbackArgs).toContain(`${firstVersionId}@25`);
+    expect(deployResult.rollbackArgs).toContain(`${secondVersionId}@75`);
+    expect(deployResult.rollbackCommand).toContain(
+      `wrangler 'versions' 'deploy' '${firstVersionId}@25' '${secondVersionId}@75'`,
+    );
+  });
+
+  test("fails closed before gate/build for missing, malformed, or invalid active Deployment state", async () => {
+    const invalidDeployment = (versions: unknown[]) => ({
+      id: deploymentId,
+      strategy: "percentage",
+      versions,
+    });
+    const cases = [
+      { label: "no deployment", deploymentError: true },
+      { label: "malformed status JSON", deploymentMalformed: true },
+      {
+        label: "missing deployment id",
+        deploymentFirst: {
+          strategy: "percentage",
+          versions: [{ version_id: firstVersionId, percentage: 100 }],
+        },
+      },
+      {
+        label: "bad deployment id",
+        deploymentFirst: {
+          id: "not-a-uuid",
+          strategy: "percentage",
+          versions: [{ version_id: firstVersionId, percentage: 100 }],
+        },
+      },
+      {
+        label: "wrong strategy",
+        deploymentFirst: {
+          id: deploymentId,
+          strategy: "rollback",
+          versions: [{ version_id: firstVersionId, percentage: 100 }],
+        },
+      },
+      { label: "empty traffic", deploymentFirst: invalidDeployment([]) },
+      {
+        label: "too many versions",
+        deploymentFirst: invalidDeployment([
+          { version_id: firstVersionId, percentage: 34 },
+          { version_id: secondVersionId, percentage: 33 },
+          { version_id: thirdVersionId, percentage: 33 },
+        ]),
+      },
+      {
+        label: "bad version id",
+        deploymentFirst: invalidDeployment([
+          { version_id: "bad", percentage: 100 },
+        ]),
+      },
+      {
+        label: "duplicate version id",
+        deploymentFirst: invalidDeployment([
+          { version_id: firstVersionId, percentage: 50 },
+          { version_id: firstVersionId.toUpperCase(), percentage: 50 },
+        ]),
+      },
+      {
+        label: "zero percentage",
+        deploymentFirst: invalidDeployment([
+          { version_id: firstVersionId, percentage: 0 },
+          { version_id: secondVersionId, percentage: 100 },
+        ]),
+      },
+      {
+        label: "percentage over one hundred",
+        deploymentFirst: invalidDeployment([
+          { version_id: firstVersionId, percentage: 101 },
+        ]),
+      },
+      {
+        label: "traffic total mismatch",
+        deploymentFirst: invalidDeployment([
+          { version_id: firstVersionId, percentage: 70 },
+          { version_id: secondVersionId, percentage: 29 },
+        ]),
+      },
+    ];
+    for (const scenario of cases) {
+      const result = await createIsolatedDeployFixture({
+        configText: config,
+        ...scenario,
+      });
+      expect(result.exitCode, scenario.label).not.toBe(0);
+      expect(result.calls, scenario.label).toContain(
+        "wrangler versions deployments status",
+      );
+      expect(result.calls, scenario.label).not.toContain("bun run check");
+      expect(result.calls, scenario.label).not.toContain("wrangler d1 execute");
+      expect(result.calls, scenario.label).not.toContain("wrangler deploy");
+      expect(result.stderr, scenario.label).toContain(
+        "publication was not attempted",
+      );
+    }
+  });
+
+  test("refuses a changed active Deployment id or map before publishing", async () => {
+    for (const deploymentSecond of [
+      {
+        id: thirdVersionId,
+        strategy: "percentage",
+        versions: [{ version_id: firstVersionId, percentage: 100 }],
+      },
+      {
+        id: deploymentId,
+        strategy: "percentage",
+        versions: [{ version_id: secondVersionId, percentage: 100 }],
+      },
+    ]) {
+      const result = await createIsolatedDeployFixture({
+        configText: config,
+        deploymentSecond,
+      });
+      expect(result.exitCode).not.toBe(0);
+      expect(result.calls).toContain("wrangler d1 execute");
+      expect(
+        result.calls.match(/wrangler versions deployments status/g),
+      ).toHaveLength(2);
+      expect(result.calls).not.toContain("wrangler deploy");
+      expect(result.stderr).toContain("Deployment changed during preflight");
+    }
+  });
+
+  test("keeps provider diagnostics and refuses an invalid or denied pre-publication Deployment re-read", async () => {
+    for (const options of [
+      { deploymentSecondMalformed: true },
+      { deploymentSecondError: true },
+      {
+        deploymentSecond: {
+          id: deploymentId,
+          strategy: "percentage",
+          versions: [{ version_id: firstVersionId, percentage: 99 }],
+        },
+      },
+    ]) {
+      const result = await createIsolatedDeployFixture({
+        configText: config,
+        ...options,
+      });
+      expect(result.exitCode).not.toBe(0);
+      expect(result.calls).toContain("wrangler d1 execute");
+      expect(
+        result.calls.match(/wrangler versions deployments status/g),
+      ).toHaveLength(2);
+      expect(result.calls).not.toContain("wrangler deploy");
+      expect(result.stderr).toContain("publication was not attempted");
+      if (options.deploymentSecondMalformed) {
+        expect(result.stderr).toContain("{second-malformed");
+      }
+      if (options.deploymentSecondError) {
+        expect(result.stderr).toContain("deployment status denied");
+      }
+    }
+  });
+
+  test("rechecks the explicit empty env-file before every later Wrangler invocation", async () => {
+    const result = await createIsolatedDeployFixture({
+      configText: config,
+      mutateEmptyEnvAfterD1: true,
+    });
+    expect(result.exitCode).not.toBe(0);
+    expect(result.calls).toContain("wrangler d1 execute");
+    expect(
+      result.calls.match(/wrangler versions deployments status/g),
+    ).toHaveLength(1);
+    expect(result.calls).not.toContain("wrangler deploy");
+    expect(result.stderr).toContain(
+      "zero bytes before pre-publication active Deployment recheck",
+    );
+    expect(result.stderr).toContain("publication was not attempted");
+  });
+
+  test("prints a structured full-map recovery record after a publish command failure without retrying", async () => {
+    const result = await createIsolatedDeployFixture({
+      configText: config,
+      deploymentFirst: {
+        id: deploymentId,
+        strategy: "percentage",
+        versions: [
+          { version_id: firstVersionId, percentage: 40 },
+          { version_id: secondVersionId, percentage: 60 },
+        ],
+      },
+      publishError: true,
+    });
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stderr).toContain("publish response stdout");
+    expect(result.stderr).toContain("publish response stderr");
+    const recovery = parseDeployResult(result.stderr);
+    expect(recovery).toMatchObject({
+      kind: "takos.deploy-result@v1",
+      target: "cloudflare-worker:yurumeet",
+      accountId,
+      previousDeployment: {
+        id: deploymentId,
+        versions: [
+          { version_id: firstVersionId, percentage: 40 },
+          { version_id: secondVersionId, percentage: 60 },
+        ],
+      },
+      postConditions: "NOT_RUN",
+      status: "INDETERMINATE",
+    });
+    expect(recovery.rollbackArgs).toContain(`${firstVersionId}@40`);
+    expect(recovery.rollbackArgs).toContain(`${secondVersionId}@60`);
+    expect(recovery.rollbackArgs).toContain("--env-file");
+    expect(recovery.rollbackCommand).toContain("--yes");
+    expect(result.calls.match(/wrangler deploy/g)).toHaveLength(1);
+  });
+
+  test("reports post-smoke failure as indeterminate with full-map recovery and no automatic rollback", async () => {
+    const activeSplit = {
+      id: deploymentId,
+      strategy: "percentage",
+      versions: [
+        { version_id: firstVersionId, percentage: 40 },
+        { version_id: secondVersionId, percentage: 60 },
+      ],
+    };
+    const result = await createIsolatedDeployFixture({
+      configText: config,
+      deploymentFirst: activeSplit,
+      smokeError: true,
+    });
+    expect(result.exitCode).not.toBe(0);
+    const deployResult = parseDeployResult(result.stdout);
+    expect(deployResult).toMatchObject({
+      previousDeployment: {
+        id: deploymentId,
+        versions: activeSplit.versions,
+      },
+      postConditions: "FAILED",
+      status: "INDETERMINATE",
+    });
+    expect(deployResult.rollbackArgs).toContain(`${firstVersionId}@40`);
+    expect(deployResult.rollbackArgs).toContain(`${secondVersionId}@60`);
+    expect(result.stderr).toContain("serving Deployment has not been verified");
+    expect(result.stderr).toContain("versions deployments status");
+    expect(result.stderr).toContain("--env-file");
+    expect(result.stderr).toContain(deployResult.rollbackCommand);
+    expect(result.calls.match(/wrangler deploy /g)).toHaveLength(1);
+    expect(
+      result.calls
+        .split("\n")
+        .filter((event) => event.startsWith("wrangler versions deploy ")),
+    ).toHaveLength(0);
+  });
+
+  test("shell-quoted full-map rollback args round-trip paths with spaces and apostrophes through only the local mock", async () => {
+    const result = await createIsolatedDeployFixture({
+      configText: config,
+      pathWithShellChars: true,
+      deploymentFirst: {
+        id: deploymentId,
+        strategy: "percentage",
+        versions: [
+          { version_id: firstVersionId, percentage: 40 },
+          { version_id: secondVersionId, percentage: 60 },
+        ],
+      },
+    });
+    expect(result.exitCode).toBe(0);
+    const deployResult = parseDeployResult(result.stdout);
+    const configPath = join(result.root, "realized-wrangler.jsonc");
+    const envFilePath = join(
+      result.root,
+      "scripts",
+      "worker-publish-empty.env.example",
+    );
+    expect(configPath).toMatch(/ /u);
+    expect(configPath).toContain("'");
+    expect(deployResult.rollbackArgs).toContain(configPath);
+    expect(deployResult.rollbackArgs).toContain(envFilePath);
+    expect(deployResult.rollbackCommand).toContain("'\\''");
+
+    const replay = Bun.spawnSync(["sh", "-c", deployResult.rollbackCommand], {
+      cwd: result.root,
+      env: {
+        PATH: `${result.bin}:${process.env.PATH ?? ""}`,
+        CALL_LOG: result.callLog,
+        CONFIG_PATH: configPath,
+        EXPECTED_ACCOUNT: accountId,
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(replay.exitCode).toBe(0);
+    const events = (await readFile(result.callLog, "utf8")).trim().split("\n");
+    const rollback = events.at(-1);
+    expect(rollback).toContain(`--config ${configPath}`);
+    expect(rollback).toContain(`--env-file ${envFilePath}`);
+    expect(rollback).toContain(`${firstVersionId}@40`);
+    expect(rollback).toContain(`${secondVersionId}@60`);
   });
 
   test("does not publish if the realized config changes after schema verification", async () => {
@@ -773,9 +1354,14 @@ describe("actual Worker deploy entrypoint schema barrier with isolated command m
     });
     expect(result.exitCode).not.toBe(0);
     expect(result.calls).toContain("wrangler d1 execute");
-    expect(result.calls).toContain("wrangler versions list");
+    expect(result.calls).toContain("wrangler versions deployments status");
+    expect(
+      result.calls.match(/wrangler versions deployments status/g),
+    ).toHaveLength(1);
     expect(result.calls).not.toContain("wrangler deploy");
-    expect(result.stderr).toContain("config changed before Worker publication");
+    expect(result.stderr).toContain(
+      "config changed before pre-publication active Deployment recheck",
+    );
     expect(result.stderr).toContain("publication was not attempted");
   });
 });

@@ -63,6 +63,10 @@ const W = {
   url: "https://yurumeet.com",
   smoke: ["bun", "run", "smoke:postdeploy"],
 };
+const WORKER_EMPTY_ENV_FILE = resolve(
+  repo,
+  "scripts/worker-publish-empty.env.example",
+);
 
 // The published identity. `worker.js` is the asset name because
 // `release.lock.json` is append-only and its two existing entries name that
@@ -97,6 +101,7 @@ const CONTRACT = {
         "wrangler.jsonc",
         "scripts/deploy.mjs",
         "scripts/yurumeet-worker-bindings.ts",
+        "scripts/worker-publish-empty.env.example",
       ],
       requiresScripts: ["check", "build:takos-worker", "smoke:postdeploy"],
       requiresTools: ["git", "bun", "wrangler"],
@@ -106,18 +111,17 @@ const CONTRACT = {
         "YURUMEET_E2E_SESSION_COOKIE",
         "YURUMEET_WRANGLER_CONFIG",
       ],
-      // code だけを差し替えます。直前の version がそのまま戻し先として残るので
-      // irreversible は立ちません。durable store の schema を変える作業は
-      // この surface ではなく、別の deliberate な手順です。
+      // active Deployment と full traffic map を再確認してから code を差し替えます。
+      // re-read は CAS ではないため、同時 publisher を避ける operator 協調が必要です。
       triggers: ["authority"],
       obligations: {
-        provenance: `refuses a dirty worktree, requires the realized YURUMEET_WRANGLER_CONFIG to declare YURUCOMMU_SESSION_HASH_SALT in root secrets.required, runs \`${OWNER_GATE}\`, builds ${W.bundle} from that worktree with \`bun run build:takos-worker\`, records the commit and bundle sha256, then uses the same config for a read-only D1 metadata query requiring Core 4.1.11 migration 0030's media deletion table and index before publication.`,
+        provenance: `requires the realized YURUMEET_WRANGLER_CONFIG to declare YURUCOMMU_SESSION_HASH_SALT in root secrets.required and to pin name=${W.worker} plus an account_id; rejects selected Wrangler environments, non-public compliance regions, and non-default Cloudflare API endpoint overrides; passes the same config and a verified zero-byte explicit --env-file to every Wrangler query/publication call; refuses a dirty worktree, captures and validates the active Deployment traffic map before \`${OWNER_GATE}\`, builds ${W.bundle} from that worktree with \`bun run build:takos-worker\`, records the commit and bundle sha256, then uses the same config for a read-only D1 metadata query requiring Core 4.1.11 migration 0030's media deletion table and index before publication.`,
         "post-conditions": `runs \`bun run smoke:postdeploy\`, which exercises real request paths against the deployed Worker rather than a health endpoint; the smoke reads the public launch URL from the Capsule outputs file selected by TAKOSUMI_CAPSULE_OUTPUTS_FILE and authenticates with YURUMEET_E2E_SESSION_COOKIE for OIDC-only deployments or YURUMEET_E2E_PASSWORD where password auth is enabled`,
-        reversal: `the current version id is read and printed before publishing; restore it with \`wrangler versions list --name ${W.worker}\` and \`wrangler versions deploy <previous-id>@100%\``,
+        reversal: `the active Deployment id and complete version/percentage traffic map are read before the gate and checked again immediately before publication; restore that captured map with \`wrangler versions deploy <version-id>@<percentage> ... --name ${W.worker} --config <realized-config> --env-file <verified-empty-env-file> --yes\`. The re-read detects intervening changes but is not an atomic compare-and-swap; operator serialization is required.`,
         "failure-handling":
-          "prints the provider's own stdout and stderr; missing session-salt config blocks before any gate, and D1 query or schema mismatch blocks before publication; post-publication failures exit non-zero and name the previous version instead of retrying",
+          "prints provider stdout and stderr; invalid target/environment/endpoint/empty-env-file/session-salt config blocks before git/provider/gate work; invalid active Deployment or D1 query/schema mismatch blocks before publication; after publication begins, failures are indeterminate, never retried or rolled back automatically, and print a structured recovery record with account, target, source, full prior traffic map, exact rollback argv, and command",
         "independent-review":
-          "before publishing, independently review exact source, native artifact, and CI evidence for session-salt behavior plus the realized config admission and pinned Wrangler strict secret inheritance; these checks prove declaration and behavior only, not the secret value or active Worker binding, so the operator separately owns custody and must supply the exact existing secret without rotation",
+          "before publishing, independently review exact source, native artifact, and CI evidence for session-salt behavior, realized worker/account target admission, explicit empty env-file handling, active Deployment status parsing and recheck, the full-map rollback command, and Wrangler's pinned strict secret inheritance; these checks prove declaration and behavior only, not the secret value or active Worker binding, so the operator separately owns secret custody and must supply the exact existing secret without rotation",
       },
     },
     {
@@ -639,8 +643,64 @@ function requireSessionSaltConfig(text) {
       "the realized Wrangler config must declare YURUCOMMU_SESSION_HASH_SALT exactly once in root secrets.required and must not set it in plaintext vars; publication was not attempted",
     );
   }
+  return config;
 }
-requireSessionSaltConfig(configText);
+const realizedWorkerConfig = requireSessionSaltConfig(configText);
+if (realizedWorkerConfig.name !== W.worker) {
+  die(
+    `the realized Wrangler config must target Worker ${W.worker}; publication was not attempted`,
+  );
+}
+if (
+  typeof realizedWorkerConfig.account_id !== "string" ||
+  !/^[a-f0-9]{32}$/u.test(realizedWorkerConfig.account_id)
+) {
+  die(
+    "the realized Wrangler config must pin a 32-character lowercase account_id; publication was not attempted",
+  );
+}
+if (
+  typeof process.env.CLOUDFLARE_ENV === "string" &&
+  process.env.CLOUDFLARE_ENV !== ""
+) {
+  die(
+    "CLOUDFLARE_ENV selects an unpinned Wrangler environment; publication was not attempted",
+  );
+}
+if (
+  process.env.WRANGLER_API_ENVIRONMENT !== undefined &&
+  process.env.WRANGLER_API_ENVIRONMENT !== "production"
+) {
+  die(
+    "WRANGLER_API_ENVIRONMENT must be production; publication was not attempted",
+  );
+}
+if (
+  process.env.CLOUDFLARE_COMPLIANCE_REGION !== undefined &&
+  process.env.CLOUDFLARE_COMPLIANCE_REGION !== "public"
+) {
+  die(
+    "CLOUDFLARE_COMPLIANCE_REGION must be public; publication was not attempted",
+  );
+}
+if (
+  realizedWorkerConfig.compliance_region !== undefined &&
+  realizedWorkerConfig.compliance_region !== "public"
+) {
+  die(
+    "the realized Wrangler config compliance_region must be public; publication was not attempted",
+  );
+}
+const DEFAULT_CLOUDFLARE_API_BASE_URL = "https://api.cloudflare.com/client/v4";
+for (const variable of ["CLOUDFLARE_API_BASE_URL", "CF_API_BASE_URL"]) {
+  const value = process.env[variable];
+  if (value !== undefined && value !== DEFAULT_CLOUDFLARE_API_BASE_URL) {
+    die(
+      `${variable} selects a non-default Cloudflare API endpoint; publication was not attempted`,
+    );
+  }
+}
+requireEmptyWranglerEnvFile("Worker config admission");
 const configValues = configText
   .split("\n")
   .filter((line) => !/^\s*(?:#|\/\/)/u.test(line))
@@ -673,6 +733,163 @@ function requireStableDeployConfig(phase) {
   }
 }
 
+function requireEmptyWranglerEnvFile(phase) {
+  let bytes;
+  try {
+    bytes = readFileSync(WORKER_EMPTY_ENV_FILE);
+  } catch {
+    die(
+      `the explicit Wrangler env-file is missing before ${phase}; publication was not attempted`,
+    );
+  }
+  if (bytes.byteLength !== 0) {
+    die(
+      `the explicit Wrangler env-file must remain zero bytes before ${phase}; publication was not attempted`,
+    );
+  }
+}
+
+function runWorkerWrangler(args, phase) {
+  requireStableDeployConfig(phase);
+  requireEmptyWranglerEnvFile(phase);
+  const configIndex = args.indexOf("--config");
+  if (configIndex < 0 || args[configIndex + 1] !== resolvedConfig) {
+    die(
+      `Wrangler ${phase} must use the same realized config; publication was not attempted`,
+    );
+  }
+  if (args.includes("--env-file")) {
+    die(`Wrangler ${phase} supplied an unexpected env-file`);
+  }
+  const commandIndex = args.indexOf("--command");
+  const envFileArgs = ["--env-file", WORKER_EMPTY_ENV_FILE];
+  const fullArgs = [...args];
+  fullArgs.splice(
+    commandIndex < 0 ? fullArgs.length : commandIndex,
+    0,
+    ...envFileArgs,
+  );
+  return run("wrangler", fullArgs);
+}
+
+const DEPLOYMENT_UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
+
+function parseActiveDeployment(stdout) {
+  let deployment;
+  try {
+    deployment = JSON.parse(stdout);
+  } catch {
+    throw new Error("Wrangler returned malformed active Deployment JSON");
+  }
+  if (
+    !deployment ||
+    typeof deployment !== "object" ||
+    Array.isArray(deployment) ||
+    typeof deployment.id !== "string" ||
+    !DEPLOYMENT_UUID_RE.test(deployment.id) ||
+    deployment.strategy !== "percentage" ||
+    !Array.isArray(deployment.versions) ||
+    deployment.versions.length < 1 ||
+    deployment.versions.length > 2
+  ) {
+    throw new Error("Wrangler returned an invalid active Deployment");
+  }
+  const seen = new Set();
+  const versions = [];
+  let total = 0;
+  for (const entry of deployment.versions) {
+    if (
+      !entry ||
+      typeof entry !== "object" ||
+      Array.isArray(entry) ||
+      typeof entry.version_id !== "string" ||
+      !DEPLOYMENT_UUID_RE.test(entry.version_id) ||
+      typeof entry.percentage !== "number" ||
+      !Number.isFinite(entry.percentage) ||
+      entry.percentage < 0.01 ||
+      entry.percentage > 100
+    ) {
+      throw new Error(
+        "Wrangler returned an invalid active Deployment traffic entry",
+      );
+    }
+    const versionId = entry.version_id.toLowerCase();
+    if (seen.has(versionId)) {
+      throw new Error("Wrangler returned duplicate active Deployment versions");
+    }
+    seen.add(versionId);
+    total += entry.percentage;
+    versions.push({ version_id: versionId, percentage: entry.percentage });
+  }
+  if (Math.abs(total - 100) > 0.001) {
+    throw new Error("Wrangler active Deployment traffic does not total 100%");
+  }
+  versions.sort((left, right) =>
+    left.version_id.localeCompare(right.version_id),
+  );
+  return { id: deployment.id.toLowerCase(), versions };
+}
+
+function readActiveDeployment(phase) {
+  let stdout;
+  try {
+    stdout = runWorkerWrangler(
+      [
+        "versions",
+        "deployments",
+        "status",
+        "--name",
+        W.worker,
+        "--config",
+        resolvedConfig,
+        "--json",
+      ],
+      phase,
+    );
+    return parseActiveDeployment(stdout);
+  } catch (error) {
+    const providerStdout = error.stdout ?? stdout;
+    if (providerStdout !== undefined) {
+      process.stderr.write(`${providerStdout.toString()}`);
+      if (!String(providerStdout).endsWith("\n")) process.stderr.write("\n");
+    }
+    if (error.stderr !== undefined) {
+      process.stderr.write(`${error.stderr.toString()}`);
+      if (!String(error.stderr).endsWith("\n")) process.stderr.write("\n");
+    }
+    die(
+      `cannot read and validate the active Worker Deployment during ${phase}; publication was not attempted`,
+      [String(error.message)],
+    );
+  }
+}
+
+function rollbackArguments(deployment) {
+  return [
+    "versions",
+    "deploy",
+    ...deployment.versions.map(
+      ({ version_id, percentage }) => `${version_id}@${percentage}`,
+    ),
+    "--name",
+    W.worker,
+    "--config",
+    resolvedConfig,
+    "--env-file",
+    WORKER_EMPTY_ENV_FILE,
+    "--yes",
+  ];
+}
+
+function shellQuote(value) {
+  return `'${String(value).replaceAll("'", "'\\''")}'`;
+}
+
+function rollbackCommand(deployment) {
+  return `wrangler ${rollbackArguments(deployment).map(shellQuote).join(" ")}`;
+}
+
 // provenance
 const dirty = git("status", "--porcelain");
 if (dirty !== "") {
@@ -686,10 +903,19 @@ process.stdout.write(
   `source ${commit} (${git("rev-parse", "--abbrev-ref", "HEAD")})\n`,
 );
 
+// Capture actual serving state before the gate/build. Wrangler's version list
+// is inventory, not a Deployment traffic map; this full map is the rollback target.
+const previousDeployment = readActiveDeployment(
+  "initial active Deployment read",
+);
+process.stdout.write(
+  `active Deployment ${JSON.stringify(previousDeployment)}\n`,
+);
+
 process.stdout.write(`\n==> ${OWNER_GATE}\n`);
 execFileSync("bun", ["run", "check"], { cwd: repo, stdio: "inherit" });
 
-process.stdout.write(`\n==> bun run build\n`);
+process.stdout.write(`\n==> bun run build:takos-worker\n`);
 execFileSync(W.build[0], W.build.slice(1), { cwd: repo, stdio: "inherit" });
 
 const bundlePath = resolve(repo, W.bundle);
@@ -706,7 +932,12 @@ try {
     configText,
     configPath: resolvedConfig,
     cloudflareEnv: process.env.CLOUDFLARE_ENV,
-    run,
+    run: (command, args) => {
+      if (command !== "wrangler") {
+        die("unexpected executable in the read-only D1 schema preflight");
+      }
+      return runWorkerWrangler(args, "D1 schema query");
+    },
   });
 } catch (error) {
   if (error.stdout !== undefined) {
@@ -726,38 +957,49 @@ process.stdout.write(
   `D1 schema preflight ${schemaPreflight.table} ${schemaPreflight.scope}\n`,
 );
 
-// reversal: 戻し先の version を先に読む。読めなければ publish しない。
-let previous = null;
-try {
-  const listed = run("wrangler", [
-    "versions",
-    "list",
-    "--name",
-    W.worker,
-    "--config",
-    resolvedConfig,
-  ]);
-  previous =
-    listed.match(
-      /([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/u,
-    )?.[1] ?? null;
-} catch (error) {
-  die(`cannot read the current version list: ${error.message}`);
+const beforePublishDeployment = readActiveDeployment(
+  "pre-publication active Deployment recheck",
+);
+if (
+  JSON.stringify(beforePublishDeployment) !== JSON.stringify(previousDeployment)
+) {
+  die(
+    "the active Worker Deployment changed during preflight; publication was not attempted; re-establish operator serialization and review the current deployment",
+  );
 }
-if (!previous)
-  die("no current version was readable, so there is no revert point");
-process.stdout.write(`previous version ${previous}\n`);
-
 requireStableDeployConfig("Worker publication");
+requireEmptyWranglerEnvFile("Worker publication");
 process.stdout.write(`\n==> publishing ${W.worker}\n`);
 let output;
 try {
-  output = run("wrangler", ["deploy", "--config", resolvedConfig]);
+  output = runWorkerWrangler(
+    ["deploy", "--name", W.worker, "--config", resolvedConfig],
+    "Worker publication",
+  );
 } catch (error) {
   process.stderr.write(`${error.stdout ?? ""}${error.stderr ?? ""}\n`);
+  process.stderr.write(
+    `${JSON.stringify(
+      {
+        kind: "takos.deploy-result@v1",
+        surface: W.surface,
+        target: `cloudflare-worker:${W.worker}`,
+        accountId: realizedWorkerConfig.account_id,
+        commit,
+        bundleDigest,
+        previousDeployment,
+        rollbackArgs: rollbackArguments(previousDeployment),
+        rollbackCommand: rollbackCommand(previousDeployment),
+        postConditions: "NOT_RUN",
+        status: "INDETERMINATE",
+      },
+      null,
+      2,
+    )}\n`,
+  );
   die(
     "publication failed; production may be unchanged or partially updated. " +
-      `Reconcile against version ${previous} before retrying.`,
+      `Reconcile the active Deployment before any retry; captured rollback command: ${rollbackCommand(previousDeployment)}`,
   );
 }
 process.stdout.write(output);
@@ -780,9 +1022,12 @@ const result = {
   kind: "takos.deploy-result@v1",
   surface: W.surface,
   target: `cloudflare-worker:${W.worker}`,
+  accountId: realizedWorkerConfig.account_id,
   commit,
   bundleDigest,
-  previousVersion: previous,
+  previousDeployment,
+  rollbackArgs: rollbackArguments(previousDeployment),
+  rollbackCommand: rollbackCommand(previousDeployment),
   postConditions: postOk ? "PASSED" : "FAILED",
   status: postOk ? "PUBLISHED" : "INDETERMINATE",
 };
@@ -790,9 +1035,8 @@ process.stdout.write(`\n${JSON.stringify(result, null, 2)}\n`);
 
 if (!postOk) {
   process.stderr.write(
-    `\nthe new version is live on ${W.worker} but the post-conditions did not pass. ` +
-      `Do not retry blindly: read \`wrangler versions list --name ${W.worker}\` and decide whether to ` +
-      `roll back to ${previous}.\n`,
+    `\npublication completed but the post-conditions did not pass, so the serving Deployment has not been verified. ` +
+      `Do not retry blindly: read the active Deployment with \`wrangler versions deployments status --name ${shellQuote(W.worker)} --config ${shellQuote(resolvedConfig)} --env-file ${shellQuote(WORKER_EMPTY_ENV_FILE)} --json\`, then review the captured full-map rollback command: ${rollbackCommand(previousDeployment)}\n`,
   );
   process.exit(1);
 }
