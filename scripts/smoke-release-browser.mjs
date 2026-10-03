@@ -22,6 +22,10 @@ import { qualifyBrowserCommunityDeleteReload } from "./release-browser-community
 import { qualifyBrowserFeedRefresh } from "./release-browser-feed-refresh.mjs";
 import { qualifyBrowserFeedAck } from "./release-browser-feed-ack.mjs";
 import { qualifyStorySubmit } from "./release-browser-story-submit.mjs";
+import {
+  qualifyStoryOutcome,
+  qualifyStoryOutcomeConfirmed,
+} from "./release-browser-story-outcome.mjs";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const password = " browser-smoke-only ";
@@ -587,6 +591,85 @@ async function smoke(artifact, digest) {
       await storyPage.close();
     }
 
+    // Keep the prior Story qualification and its ordered checks unchanged.
+    // These new pages share the real session cookie, with their own observers.
+    const outcomeContext = await browser.newContext({
+      storageState: await context.storageState(),
+      locale: "ja-JP",
+      viewport: { width: 1280, height: 900 },
+      serviceWorkers: "block",
+    });
+    const outcomePageErrors = [];
+    const outcomeServerErrors = [];
+    const outcomeBlockedOutbound = [];
+    outcomeContext.on("page", (outcomePage) => {
+      outcomePage.on("pageerror", (error) =>
+        outcomePageErrors.push(String(error)),
+      );
+      outcomePage.on("response", (response) => {
+        if (response.status() >= 500)
+          outcomeServerErrors.push({
+            path: new URL(response.url()).pathname,
+            status: response.status(),
+          });
+      });
+    });
+    await outcomeContext.route("**/*", (route) => {
+      const url = new URL(route.request().url());
+      if (
+        url.origin === origin ||
+        url.protocol === "data:" ||
+        url.protocol === "blob:"
+      )
+        return route.continue();
+      outcomeBlockedOutbound.push({
+        method: route.request().method(),
+        url: url.href,
+      });
+      return route.abort("blockedbyclient");
+    });
+    let storyOutcome;
+    let storyOutcomeConfirmed;
+    try {
+      const outcomePage = await outcomeContext.newPage();
+      await outcomePage.goto(`${origin}/?tab=timeline`, {
+        waitUntil: "domcontentloaded",
+        timeout: 20_000,
+      });
+      const bucket = await worker.getR2Bucket("MEDIA");
+      storyOutcome = await qualifyStoryOutcome({
+        page: outcomePage,
+        context: outcomeContext,
+        db,
+        bucket,
+        origin,
+        actorApId: ownerId,
+        checks,
+      });
+      await outcomePage.close();
+      storyOutcomeConfirmed = await qualifyStoryOutcomeConfirmed({
+        context: outcomeContext,
+        db,
+        bucket,
+        origin,
+        actorApId: ownerId,
+        checks,
+      });
+      check(
+        !outcomePageErrors.length &&
+          !outcomeServerErrors.length &&
+          !outcomeBlockedOutbound.length,
+        "Story outcome raised a page error, HTTP 5xx or external request",
+      );
+      storyOutcome.runtimeObservations = {
+        pageErrors: outcomePageErrors,
+        serverErrors: outcomeServerErrors,
+        blockedOutbound: outcomeBlockedOutbound,
+      };
+    } finally {
+      await outcomeContext.close();
+    }
+
     check(
       pageErrors.length === 0,
       "community delete browser raised a runtime error",
@@ -612,6 +695,8 @@ async function smoke(artifact, digest) {
       feedRefresh,
       feedAck,
       storySubmit,
+      storyOutcome,
+      storyOutcomeConfirmed,
       status: "PASSED",
     };
   } catch (error) {

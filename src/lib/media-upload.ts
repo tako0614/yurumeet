@@ -10,7 +10,10 @@ const TRANSPORT_NAMES: Record<string, string> = {
 };
 
 /** Adapt browser filenames to the published SDK's ASCII multipart contract. */
-export async function uploadProductMedia(file: File) {
+export async function uploadProductMedia(
+  file: File,
+  beforeUpload?: () => void,
+) {
   const transportName = TRANSPORT_NAMES[file.type] ?? "media.bin";
   const validationFile = new Proxy(file, {
     get(target, property) {
@@ -23,5 +26,8 @@ export async function uploadProductMedia(file: File) {
     type: file.type,
     lastModified: file.lastModified,
   });
+  // A Story caller can reject a changed principal/transport after byte reads.
+  // No await separates this check from the SDK resolving its destination.
+  beforeUpload?.();
   return uploadMedia(transportFile);
 }

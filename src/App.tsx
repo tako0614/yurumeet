@@ -22,6 +22,7 @@ import {
   createCommunity,
   createNote,
   createStory,
+  getYurucommuApiTransport,
   deleteMyNote,
   deleteStory,
   fetchArchivedDMConversations,
@@ -41,6 +42,14 @@ import {
 } from "@takosjp/yurucommu-api";
 import { uploadProductMedia } from "./lib/media-upload.ts";
 import { submitStoryDraft } from "./lib/story-submission.ts";
+import {
+  type StoryIntentOutcome,
+  type StoryIntentSnapshot,
+} from "./lib/story-intent.ts";
+import {
+  storyIntentSession,
+  type StoryIntentSessionEntry,
+} from "./lib/story-intent-session.ts";
 import { createTimelineFeed } from "./lib/timeline-feed.ts";
 import { useApp } from "./lib/app-context.tsx";
 import { useChat } from "./lib/chat-context.tsx";
@@ -1686,168 +1695,508 @@ function StoryComposerModal(props: {
   onClose: () => void;
   onSuccess: () => Promise<void> | void;
 }) {
+  const app = useApp();
   const [file, setFile] = createSignal<File | null>(null);
   const [caption, setCaption] = createSignal("");
   const [saving, setSaving] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
-
+  const [intent, setIntent] = createSignal<StoryIntentSnapshot>({
+    record: null,
+    failed: false,
+  });
+  type Coordinator = StoryIntentSessionEntry;
+  let coordinator: Coordinator | undefined;
   let submissionStatus: HTMLParagraphElement | undefined;
+  const [confirmation, setConfirmation] = createSignal<{
+    title: string;
+    message: string;
+    confirmLabel: string;
+    resolve: (accepted: boolean) => void;
+  } | null>(null);
+  const settleConfirmation = (accepted: boolean) => {
+    const pending = confirmation();
+    setConfirmation(null);
+    pending?.resolve(accepted);
+  };
+  const confirm = (options: {
+    title: string;
+    message: string;
+    confirmLabel: string;
+  }) =>
+    new Promise<boolean>((resolve) => {
+      settleConfirmation(false);
+      setConfirmation({ ...options, resolve });
+    });
+  let confirmationRoot: HTMLDivElement | undefined;
   let mounted = true;
   onCleanup(() => {
     mounted = false;
+    settleConfirmation(false);
   });
 
-  const reset = () => {
+  const resetEditor = () => {
     setFile(null);
     setCaption("");
     setError(null);
     setSaving(false);
   };
-
+  // Keep live operations and conclusive ACKs across same-tab auth re-entry.
+  // Subscribe only this view; other principals retain their own scoped state.
+  createEffect(
+    on([app.origin, () => app.actor().ap_id], ([origin, principal]) => {
+      settleConfirmation(false);
+      resetEditor();
+      try {
+        const endpoint = new URL(
+          getYurucommuApiTransport().resolveUrl("/api/stories"),
+          origin,
+        ).href;
+        coordinator = storyIntentSession.get({
+          origin,
+          principal,
+          endpoint,
+        });
+        const snapshot = coordinator.read();
+        setIntent(snapshot);
+        setSaving(snapshot.busy);
+        setCaption(snapshot.record?.payload.caption ?? "");
+        const captured = coordinator;
+        const unsubscribe = captured.subscribe((next) => {
+          if (!current(captured)) return;
+          if (intent().record && !next.record && !next.busy) resetEditor();
+          setIntent(next);
+          setSaving(next.busy);
+        });
+        onCleanup(unsubscribe);
+      } catch {
+        coordinator = undefined;
+        setIntent({ record: null, failed: true });
+      }
+    }),
+  );
   const close = () => {
     if (saving()) return;
-    reset();
+    // Closing an unresolved outcome keeps the uploaded references and journal.
+    if (!intent().record && !intent().failed) resetEditor();
     props.onClose();
   };
-
+  const current = (captured: NonNullable<typeof coordinator>) => {
+    if (!mounted || coordinator !== captured) return false;
+    const scope = captured.scope;
+    try {
+      return (
+        app.origin() === scope.origin &&
+        app.actor().ap_id === scope.principal &&
+        new URL(
+          getYurucommuApiTransport().resolveUrl("/api/stories"),
+          app.origin(),
+        ).href === scope.endpoint
+      );
+    } catch {
+      return false;
+    }
+  };
+  createEffect(
+    on(
+      () => props.open,
+      (open) => {
+        if (!open) settleConfirmation(false);
+        const captured = coordinator;
+        if (!open || !captured || !current(captured)) return;
+        const snapshot = captured.read();
+        setIntent(snapshot);
+        setSaving(snapshot.busy);
+        if (snapshot.record) setCaption(snapshot.record.payload.caption ?? "");
+      },
+    ),
+  );
+  const focusBusy = (captured: Coordinator) =>
+    queueMicrotask(() => {
+      if (
+        current(captured) &&
+        props.open &&
+        saving() &&
+        submissionStatus?.isConnected
+      )
+        submissionStatus.focus();
+    });
+  const finish = (captured: Coordinator, outcome: StoryIntentOutcome) => {
+    if (!current(captured)) return;
+    setIntent(captured.read());
+    setSaving(false);
+    if (outcome.kind !== "confirmed") return;
+    if (outcome.failed || captured.read().record) {
+      setIntent({ record: outcome.record, failed: outcome.failed });
+      return; // ACK is conclusive; cleanup failure must never expose retry.
+    }
+    resetEditor();
+    props.onClose();
+    void Promise.resolve()
+      .then(() => {
+        if (current(captured)) return props.onSuccess();
+      })
+      .catch(() => undefined);
+  };
   const submit = async () => {
     const selected = file();
-    if (!selected || saving()) return;
-    const draft = { file: selected, caption: caption() };
+    const captured = coordinator;
+    if (
+      !selected ||
+      saving() ||
+      !captured ||
+      !current(captured) ||
+      captured.read().busy ||
+      intent().record ||
+      intent().failed
+    )
+      return;
+    const { origin, principal, endpoint } = captured.scope;
+    const guard = () => {
+      if (
+        !mounted ||
+        coordinator !== captured ||
+        app.origin() !== origin ||
+        app.actor().ap_id !== principal ||
+        new URL(getYurucommuApiTransport().resolveUrl("/api/stories"), origin)
+          .href !== endpoint ||
+        new URL(
+          getYurucommuApiTransport().resolveUrl("/api/media/upload"),
+          origin,
+        ).href !== new URL("/api/media/upload", origin).href
+      ) {
+        throw new Error("Story submission scope changed");
+      }
+    };
     const previousFocus =
       document.activeElement instanceof HTMLElement
         ? document.activeElement
         : null;
-    setSaving(true);
     setError(null);
-    queueMicrotask(() => {
-      if (mounted && props.open && saving() && submissionStatus?.isConnected) {
-        submissionStatus.focus();
-      }
-    });
     try {
-      await submitStoryDraft(draft, {
-        upload: uploadProductMedia,
-        create: createStory,
+      const outcome = await captured.run((intentCoordinator) => {
+        focusBusy(captured);
+        return submitStoryDraft(
+          { file: selected, caption: caption() },
+          {
+            upload: (selectedFile) => uploadProductMedia(selectedFile, guard),
+            create: async (payload) => {
+              // Store old-scope uploaded references even if its view was detached.
+              const staged = intentCoordinator.stage(payload);
+              if (
+                !current(captured) ||
+                staged.failed ||
+                staged.record?.status !== "ready"
+              )
+                return { ...staged, kind: "blocked" } as StoryIntentOutcome;
+              return intentCoordinator.submit((sent) => {
+                guard(); // SDK resolves its mutable transport in this same turn.
+                return createStory(sent);
+              });
+            },
+          },
+        );
       });
+      if (outcome) finish(captured, outcome);
     } catch (err) {
-      if (!mounted) return;
-      console.error("Failed to create story:", err);
+      if (!current(captured)) return;
+      console.error("Failed to upload story:", err);
       setError("ストーリーの作成に失敗しました");
       setSaving(false);
       queueMicrotask(() => {
         if (
-          mounted &&
+          current(captured) &&
           props.open &&
           previousFocus?.isConnected &&
           !previousFocus.matches(":disabled")
-        ) {
+        )
           previousFocus.focus();
-        }
       });
-      return;
     }
-    if (!mounted) return;
-    // The story exists now; a failed story-bar refresh must not roll the form
-    // back into an error state and invite a duplicate re-submit.
-    reset();
-    props.onClose();
-    void Promise.resolve()
-      .then(() => {
-        if (mounted) return props.onSuccess();
-      })
-      .catch(() => undefined);
+  };
+  const retry = async () => {
+    const captured = coordinator;
+    const snapshot = intent();
+    if (
+      !captured ||
+      !current(captured) ||
+      captured.read().busy ||
+      saving() ||
+      snapshot.failed ||
+      !snapshot.record ||
+      snapshot.record.status === "confirmed"
+    )
+      return;
+    const needsRisk = snapshot.record.status !== "ready";
+    const outcome = await captured.run(async (intentCoordinator) => {
+      const accepted =
+        !needsRisk ||
+        (await confirm({
+          title: "ストーリーを再投稿しますか？",
+          message:
+            "前の投稿が保存されている可能性があります。再投稿すると同じストーリーが重複することがあります。",
+          confirmLabel: "再投稿する",
+        }));
+      if (!accepted || !current(captured)) return;
+      focusBusy(captured);
+      const create = (payload: Parameters<typeof createStory>[0]) => {
+        if (!current(captured))
+          throw new Error("Story submission scope changed");
+        return createStory(payload);
+      };
+      return needsRisk
+        ? intentCoordinator.retry(create)
+        : intentCoordinator.submit(create);
+    });
+    if (outcome) finish(captured, outcome);
+  };
+  const retryStorage = () => {
+    const captured = coordinator;
+    const record = intent().record;
+    if (
+      !captured ||
+      !current(captured) ||
+      saving() ||
+      record?.status !== "ready"
+    )
+      return;
+    setIntent(captured.coordinator.stage(record.payload));
+  };
+  const dismiss = async () => {
+    const captured = coordinator;
+    if (!captured || !current(captured) || saving() || !intent().record) return;
+    await captured.run(async (intentCoordinator) => {
+      const accepted = await confirm({
+        title: "このタブの復旧メモを取り除きますか？",
+        message:
+          "公開済みのストーリーやアップロード済みの画像・動画は削除されません。投稿結果が未確認の場合、あとで新しく投稿すると重複する可能性があります。",
+        confirmLabel: "メモを取り除く",
+      });
+      if (!accepted || !current(captured)) return;
+      const next =
+        intent().record?.status === "confirmed"
+          ? intentCoordinator.clearConfirmed()
+          : intentCoordinator.dismiss();
+      setIntent(next);
+      if (!next.failed && !next.record) resetEditor();
+    });
   };
 
   let dialogRoot: HTMLDivElement | undefined;
   return (
     <Show when={props.open}>
-      <div
-        class="p-story-composer"
-        role="dialog"
-        aria-modal="true"
-        aria-label="ストーリー作成"
-        ref={(el) => (dialogRoot = el)}
-      >
-        <DialogA11y root={() => dialogRoot} onClose={close} />
-        <button
-          type="button"
-          class="p-story-composer-dismiss"
-          aria-label="閉じる"
-          disabled={saving()}
-          onClick={close}
-        />
-        <form
-          class="p-story-composer-panel"
-          onSubmit={(event) => {
-            event.preventDefault();
-            void submit();
-          }}
+      <>
+        <div
+          class="p-story-composer"
+          role="dialog"
+          aria-modal="true"
+          aria-label="ストーリー作成"
+          ref={(el) => (dialogRoot = el)}
         >
-          <div class="p-story-composer-head">
-            <h2>ストーリー作成</h2>
-            <button
-              type="button"
-              onClick={close}
-              aria-label="閉じる"
-              disabled={saving()}
-            >
-              <CloseIcon />
-            </button>
-          </div>
-          <Show when={saving()}>
-            <p
-              role="status"
-              tabIndex={0}
-              ref={(element) => (submissionStatus = element)}
-            >
-              ストーリーを投稿しています
-            </p>
-          </Show>
-          <div aria-busy={saving()}>
-            <label class="p-story-file">
-              <span>{file()?.name ?? "写真・動画を選択"}</span>
-              <input
-                type="file"
-                accept="image/jpeg,image/png,image/gif,image/webp,video/mp4,video/webm"
+          <DialogA11y root={() => dialogRoot} onClose={close} />
+          <button
+            type="button"
+            class="p-story-composer-dismiss"
+            aria-label="閉じる"
+            disabled={saving()}
+            onClick={close}
+          />
+          <form
+            class="p-story-composer-panel"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void submit();
+            }}
+          >
+            <div class="p-story-composer-head">
+              <h2>ストーリー作成</h2>
+              <button
+                type="button"
+                onClick={close}
+                aria-label="閉じる"
                 disabled={saving()}
-                onInput={(event) => {
-                  if (saving()) return;
-                  const selected = event.currentTarget.files?.[0] ?? null;
-                  // Mirror the server-side media cap up front instead of
-                  // surfacing a generic upload failure later.
-                  if (selected && selected.size > MAX_STORY_MEDIA_SIZE) {
-                    event.currentTarget.value = "";
-                    setFile(null);
-                    setError("ファイルは 20MB までです");
-                    return;
-                  }
-                  setFile(selected);
-                  setError(null);
-                }}
-              />
-            </label>
-            <textarea
-              value={caption()}
-              maxLength={120}
-              placeholder="キャプション"
-              disabled={saving()}
-              onInput={(event) => {
-                if (!saving()) setCaption(event.currentTarget.value);
-              }}
-            />
-            <Show when={error()}>
-              {(message) => <p class="p-story-composer-error">{message()}</p>}
-            </Show>
-            <div class="p-story-composer-actions">
-              <span>{caption().trim().length} / 120</span>
-              <button type="submit" disabled={!file() || saving()}>
-                {saving() ? "投稿中" : "投稿"}
+              >
+                <CloseIcon />
               </button>
             </div>
-          </div>
-        </form>
-      </div>
+            <Show when={saving()}>
+              <p
+                role="status"
+                tabIndex={0}
+                ref={(element) => (submissionStatus = element)}
+              >
+                ストーリーを投稿しています
+              </p>
+            </Show>
+            <Show when={intent().record || intent().failed}>
+              <section
+                class="p-story-composer-error"
+                aria-label="ストーリー投稿の復旧"
+                aria-live="polite"
+              >
+                <Show
+                  when={intent().record?.status === "confirmed"}
+                  fallback={
+                    <Show
+                      when={intent().record?.status === "ready"}
+                      fallback={
+                        <>
+                          <p>投稿結果を確認できません</p>
+                          <p>
+                            保存されている可能性があります。このタブに投稿内容を残しています。再投稿すると重複することがあります。
+                          </p>
+                        </>
+                      }
+                    >
+                      <p>アップロードした投稿内容をこのタブに保持しています</p>
+                    </Show>
+                  }
+                >
+                  <p>ストーリーは保存されました</p>
+                  <p>復旧メモの片付けを確認できません。再投稿はできません。</p>
+                </Show>
+                <Show when={intent().failed}>
+                  <p>
+                    このタブの保存を確認できません。新しい投稿は止めています。内容をコピーして保持してください。
+                  </p>
+                </Show>
+                <textarea
+                  aria-label="保持しているキャプション"
+                  readOnly
+                  value={intent().record?.payload.caption ?? caption()}
+                />
+                <Show
+                  when={
+                    intent().record &&
+                    !intent().failed &&
+                    intent().record?.status !== "confirmed"
+                  }
+                >
+                  <button
+                    type="button"
+                    disabled={saving()}
+                    onClick={() => void retry()}
+                  >
+                    {intent().record?.status === "ready"
+                      ? "保持した内容を投稿"
+                      : "重複の可能性を理解して再投稿"}
+                  </button>
+                </Show>
+                <Show
+                  when={intent().failed && intent().record?.status === "ready"}
+                >
+                  <button
+                    type="button"
+                    disabled={saving()}
+                    onClick={retryStorage}
+                  >
+                    このタブの保存を再確認
+                  </button>
+                </Show>
+                <Show when={intent().record && !intent().failed}>
+                  <button
+                    type="button"
+                    disabled={saving()}
+                    onClick={() => void dismiss()}
+                  >
+                    このタブの復旧メモを取り除く
+                  </button>
+                </Show>
+              </section>
+            </Show>
+            <div aria-busy={saving()}>
+              <label class="p-story-file">
+                <span>{file()?.name ?? "写真・動画を選択"}</span>
+                <input
+                  type="file"
+                  accept="image/jpeg,image/png,image/gif,image/webp,video/mp4,video/webm"
+                  disabled={saving() || !!intent().record || intent().failed}
+                  onInput={(event) => {
+                    if (saving()) return;
+                    const selected = event.currentTarget.files?.[0] ?? null;
+                    // Mirror the server-side media cap up front instead of
+                    // surfacing a generic upload failure later.
+                    if (selected && selected.size > MAX_STORY_MEDIA_SIZE) {
+                      event.currentTarget.value = "";
+                      setFile(null);
+                      setError("ファイルは 20MB までです");
+                      return;
+                    }
+                    setFile(selected);
+                    setError(null);
+                  }}
+                />
+              </label>
+              <textarea
+                value={caption()}
+                maxLength={120}
+                placeholder="キャプション"
+                disabled={saving() || !!intent().record || intent().failed}
+                onInput={(event) => {
+                  if (!saving()) setCaption(event.currentTarget.value);
+                }}
+              />
+              <Show when={error()}>
+                {(message) => <p class="p-story-composer-error">{message()}</p>}
+              </Show>
+              <div class="p-story-composer-actions">
+                <span>{caption().trim().length} / 120</span>
+                <button
+                  type="submit"
+                  disabled={
+                    !file() || saving() || !!intent().record || intent().failed
+                  }
+                >
+                  {saving() ? "投稿中" : "投稿"}
+                </button>
+              </div>
+            </div>
+          </form>
+        </div>
+        <Show when={confirmation()}>
+          {(pending) => (
+            <div
+              class="yc-confirm-scrim"
+              role="presentation"
+              onClick={(event) => {
+                if (event.target === event.currentTarget)
+                  settleConfirmation(false);
+              }}
+            >
+              <div
+                class="yc-confirm"
+                role="alertdialog"
+                aria-modal="true"
+                aria-label={pending().title}
+                ref={(element) => (confirmationRoot = element)}
+              >
+                <DialogA11y
+                  root={() => confirmationRoot}
+                  onClose={() => settleConfirmation(false)}
+                />
+                <strong>{pending().title}</strong>
+                <p>{pending().message}</p>
+                <div class="yc-confirm-actions">
+                  <button
+                    type="button"
+                    class="yc-confirm-cancel"
+                    autofocus
+                    onClick={() => settleConfirmation(false)}
+                  >
+                    戻る
+                  </button>
+                  <button
+                    type="button"
+                    class="yc-confirm-ok is-danger"
+                    onClick={() => settleConfirmation(true)}
+                  >
+                    {pending().confirmLabel}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+        </Show>
+      </>
     </Show>
   );
 }
