@@ -28,6 +28,7 @@ import {
   sendUserDMTyping,
 } from "@takosjp/yurucommu-api";
 import { useApp } from "./app-context.tsx";
+import { createHistoryReadCoordinator } from "./history-read-coordinator.ts";
 import {
   classifyMessageDeliveryFailure,
   type MessageDeliveryFailure,
@@ -463,49 +464,46 @@ export function ChatProvider(props: { children: JSX.Element }) {
     })();
   };
 
-  // Load messages + mark read whenever the open conversation changes. A
-  // generation fence prevents a slow A request from overwriting B after a
-  // rapid conversation switch.
-  let messageLoadGeneration = 0;
+  // Full reads and newest-page polls share an ordering fence. A poll can
+  // establish history while a slower full read is still pending.
+  const historyReads = createHistoryReadCoordinator();
+  onCleanup(() => historyReads.invalidate());
   const loadConversation = async (contact: DMContact) => {
-    const generation = ++messageLoadGeneration;
     const principal = scopeKey();
     const fetchedAtRevision = recovery().revision();
-    setMessages(mergeOutgoing(contact, []));
-    setMessagesLoading(true);
-    setMessagesError(false);
-    try {
-      const page = await loadMessagesPage(contact);
-      if (
-        generation !== messageLoadGeneration ||
-        !isSelectedContact(contact) ||
-        principal !== scopeKey()
-      ) {
-        return;
-      }
-      setMessages(mergeOutgoing(contact, page.messages, fetchedAtRevision));
-      setMessagesHasMore(page.hasMore);
-      setPartnerLastReadAt(page.partnerLastReadAt);
-      setReadStates(page.readStates);
-      markRead(contact);
-    } catch {
-      // Surface the failure instead of masquerading as an empty thread; the
-      // 再試行 button and the poll both provide recovery paths.
-      if (generation === messageLoadGeneration && isSelectedContact(contact)) {
+    await historyReads.runFull(() => loadMessagesPage(contact), {
+      isScopeCurrent: () =>
+        isSelectedContact(contact) && principal === scopeKey(),
+      onStart: () => {
+        setMessages(mergeOutgoing(contact, []));
+        setMessagesLoading(true);
+        setMessagesError(false);
+        setMessagesHasMore(false);
+        setLoadingOlder(false);
+      },
+      onSuccess: (page) => {
+        setMessages(mergeOutgoing(contact, page.messages, fetchedAtRevision));
+        setMessagesHasMore(page.hasMore);
+        setPartnerLastReadAt(page.partnerLastReadAt);
+        setReadStates(page.readStates);
+        markRead(contact);
+      },
+      onFailure: () => {
+        // Surface the failure instead of masquerading as an empty thread; the
+        // 再試行 button and the poll both provide recovery paths.
         setMessagesError(true);
-      }
-    } finally {
-      if (generation === messageLoadGeneration && isSelectedContact(contact)) {
+      },
+      onFinally: () => {
         setMessagesLoading(false);
-      }
-    }
+      },
+    });
   };
 
   createEffect(
     on(
       () => [selected(), scopeKey()] as const,
       ([contact]) => {
-        messageLoadGeneration++; // invalidate any in-flight load
+        historyReads.invalidate(); // invalidate reads from the previous scope
         setIsTyping(false);
         setMessagesHasMore(false);
         setLoadingOlder(false);
@@ -534,13 +532,13 @@ export function ChatProvider(props: { children: JSX.Element }) {
     }
     const cursor = olderCursor(messages());
     if (!cursor) return;
-    const generation = messageLoadGeneration;
+    const generation = historyReads.generation();
     const principal = scopeKey();
     setLoadingOlder(true);
     try {
       const page = await loadMessagesPage(contact, cursor);
       if (
-        generation !== messageLoadGeneration ||
+        !historyReads.isCurrent(generation) ||
         !isSelectedContact(contact) ||
         principal !== scopeKey()
       ) {
@@ -556,9 +554,19 @@ export function ChatProvider(props: { children: JSX.Element }) {
       });
       setMessagesHasMore(page.hasMore);
     } catch {
-      app.toast("以前のメッセージを読み込めませんでした", "error");
+      if (
+        historyReads.isCurrent(generation) &&
+        isSelectedContact(contact) &&
+        principal === scopeKey()
+      ) {
+        app.toast("以前のメッセージを読み込めませんでした", "error");
+      }
     } finally {
-      if (generation === messageLoadGeneration && isSelectedContact(contact)) {
+      if (
+        historyReads.isCurrent(generation) &&
+        isSelectedContact(contact) &&
+        principal === scopeKey()
+      ) {
         setLoadingOlder(false);
       }
     }
@@ -575,51 +583,64 @@ export function ChatProvider(props: { children: JSX.Element }) {
         if (pollInFlight) return;
         pollInFlight = true;
         void (async () => {
+          const principal = scopeKey();
+          const fetchedAtRevision = recovery().revision();
+          const isScopeCurrent = () =>
+            isSelectedContact(contact) && principal === scopeKey();
           try {
-            const principal = scopeKey();
-            const fetchedAtRevision = recovery().revision();
-            const page = await loadMessagesPage(contact);
-            notePollSuccess();
-            if (!isSelectedContact(contact) || principal !== scopeKey()) return;
-            // A failed initial load left the thread empty with paging
-            // disabled — the first successful poll is the recovery path.
-            if (messagesError()) {
-              setMessagesError(false);
-              setMessagesHasMore(page.hasMore);
-            }
-            let receivedWhileOpen = false;
-            setMessages((prev) => {
-              const known = new Set(prev.map((message) => message.id));
-              receivedWhileOpen = page.messages.some(
-                (message) =>
-                  !known.has(message.id) &&
-                  message.sender.ap_id !== app.actor().ap_id,
-              );
-              return mergeOutgoing(
-                contact,
-                reconcileFetchedWindow(prev, page.messages),
-                fetchedAtRevision,
-                new Set(page.messages.map((message) => message.id)),
-              );
-            });
-            // Keep the read receipts fresh: the partner/member read positions
-            // advance while the thread is open.
-            setPartnerLastReadAt(page.partnerLastReadAt);
-            setReadStates(page.readStates);
-            // A conversation that is visibly open must not accumulate an unread
-            // badge as its poll receives messages. Only write when a genuinely
-            // new message from the other side arrived.
-            if (receivedWhileOpen) markRead(contact);
-            if (contact.type === "user") {
+            const generation = await historyReads.runPoll(
+              () => loadMessagesPage(contact),
+              {
+                isScopeCurrent,
+                onSuccess: (page) => {
+                  notePollSuccess();
+                  // A poll can recover a failed full read, or finish while the
+                  // full read is still pending. In both cases it establishes
+                  // the newest page, its paging cursor and usable UI state.
+                  if (messagesError() || messagesLoading()) {
+                    setMessagesHasMore(page.hasMore);
+                  }
+                  setMessagesError(false);
+                  setMessagesLoading(false);
+                  let receivedWhileOpen = false;
+                  setMessages((prev) => {
+                    const known = new Set(prev.map((message) => message.id));
+                    receivedWhileOpen = page.messages.some(
+                      (message) =>
+                        !known.has(message.id) &&
+                        message.sender.ap_id !== app.actor().ap_id,
+                    );
+                    return mergeOutgoing(
+                      contact,
+                      reconcileFetchedWindow(prev, page.messages),
+                      fetchedAtRevision,
+                      new Set(page.messages.map((message) => message.id)),
+                    );
+                  });
+                  // Keep local partner/member read positions fresh, and only
+                  // mark the open conversation read for new incoming messages.
+                  setPartnerLastReadAt(page.partnerLastReadAt);
+                  setReadStates(page.readStates);
+                  if (receivedWhileOpen) markRead(contact);
+                },
+                onFailure: () => {
+                  // Transient for the message list, but counted toward the
+                  // connection banner.
+                  notePollFailure();
+                },
+              },
+            );
+            if (generation === null || contact.type !== "user") return;
+            try {
               const typing = await fetchUserDMTyping(contact.ap_id);
-              if (isSelectedContact(contact)) {
+              if (historyReads.isCurrent(generation) && isScopeCurrent()) {
                 setIsTyping(!!typing.is_typing);
               }
+            } catch {
+              if (historyReads.isCurrent(generation) && isScopeCurrent()) {
+                notePollFailure();
+              }
             }
-          } catch {
-            // Transient for the message list, but counted toward the
-            // connection banner.
-            notePollFailure();
           } finally {
             pollInFlight = false;
           }
@@ -828,10 +849,10 @@ export function ChatProvider(props: { children: JSX.Element }) {
     // The first operation removes the row synchronously. A duplicate call
     // cannot capture an empty restore snapshot and start another DELETE.
     if (!before.some((message) => message.id === messageId)) return false;
-    const generation = messageLoadGeneration;
+    const generation = historyReads.generation();
     const principal = scopeKey();
     const stillCurrent = () =>
-      generation === messageLoadGeneration &&
+      historyReads.isCurrent(generation) &&
       isSelectedContact(contact) &&
       principal === scopeKey();
     const store = recovery();
