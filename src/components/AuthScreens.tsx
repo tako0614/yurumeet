@@ -94,7 +94,7 @@ export function SignedOut(props: { origin: string }) {
   });
 
   const login = async () => {
-    const value = password().trim();
+    const value = password();
     if (!value) {
       setError("パスワードを入力してください。");
       return;
@@ -180,10 +180,7 @@ export function SignedOut(props: { origin: string }) {
                     autocomplete="current-password"
                     autofocus={(authConfig()?.providers.length ?? 0) === 0}
                   />
-                  <button
-                    type="submit"
-                    disabled={submitting() || !password().trim()}
-                  >
+                  <button type="submit" disabled={submitting() || !password()}>
                     {submitting() ? "ログイン中" : "ログイン"}
                   </button>
                 </form>
