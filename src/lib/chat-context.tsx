@@ -28,7 +28,10 @@ import {
   sendUserDMTyping,
 } from "@takosjp/yurucommu-api";
 import { useApp } from "./app-context.tsx";
-import { createHistoryReadCoordinator } from "./history-read-coordinator.ts";
+import {
+  createHistoryReadCoordinator,
+  type AppliedOlderHistory,
+} from "./history-read-coordinator.ts";
 import {
   classifyMessageDeliveryFailure,
   type MessageDeliveryFailure,
@@ -202,8 +205,8 @@ export type ChatContextValue = {
   /** Whether an older page of history exists for the open conversation. */
   messagesHasMore: Accessor<boolean>;
   loadingOlder: Accessor<boolean>;
-  /** Prepend the next older page of the open conversation's history. */
-  loadOlderMessages: () => Promise<void>;
+  /** A current applied prepend can authorize the pane's scroll correction. */
+  loadOlderMessages: () => Promise<AppliedOlderHistory | null>;
   /**
    * The partner's last-read time for the open 1:1 thread (LOCAL-ONLY read
    * receipt; null = unknown, e.g. a remote partner — render no receipt).
@@ -528,39 +531,43 @@ export function ChatProvider(props: { children: JSX.Element }) {
   const loadOlderMessages = async () => {
     const contact = selected();
     if (!contact || loadingOlder() || !messagesHasMore() || messagesLoading()) {
-      return;
+      return null;
     }
     const cursor = olderCursor(messages());
-    if (!cursor) return;
+    if (!cursor) return null;
     const generation = historyReads.generation();
     const principal = scopeKey();
     setLoadingOlder(true);
     try {
-      const page = await loadMessagesPage(contact, cursor);
-      if (
-        !historyReads.isCurrent(generation) ||
-        !isSelectedContact(contact) ||
-        principal !== scopeKey()
-      ) {
-        return;
-      }
-      setMessages((prev) => {
-        const known = new Set(prev.map((m) => m.id));
-        const older = page.messages.filter((m) => !known.has(m.id));
-        return mergeOutgoing(
-          contact,
-          older.length === 0 ? prev : [...older, ...prev],
-        );
-      });
-      setMessagesHasMore(page.hasMore);
-    } catch {
-      if (
-        historyReads.isCurrent(generation) &&
-        isSelectedContact(contact) &&
-        principal === scopeKey()
-      ) {
-        app.toast("以前のメッセージを読み込めませんでした", "error");
-      }
+      return await historyReads.runOlder(
+        () => loadMessagesPage(contact, cursor),
+        {
+          isScopeCurrent: () =>
+            isSelectedContact(contact) && principal === scopeKey(),
+          onSuccess: (page) => {
+            let prepended = false;
+            setMessages((prev) => {
+              const known = new Set(prev.map((m) => m.id));
+              const older = page.messages.filter((m) => !known.has(m.id));
+              const olderIds = new Set(older.map((m) => m.id));
+              const next = mergeOutgoing(
+                contact,
+                older.length === 0 ? prev : [...older, ...prev],
+              );
+              // Recovery may mask a deleted server row. A fetched row alone
+              // does not mean anything was actually prepended to the pane.
+              prepended = next.some(
+                (m) => olderIds.has(m.id) && !m.pending && !m.failed,
+              );
+              return next;
+            });
+            setMessagesHasMore(page.hasMore);
+            return prepended;
+          },
+          onFailure: () =>
+            app.toast("以前のメッセージを読み込めませんでした", "error"),
+        },
+      );
     } finally {
       if (
         historyReads.isCurrent(generation) &&
