@@ -13,6 +13,8 @@ import {
   PRODUCT_WIRE_IDENTITY,
 } from "../src/product-identity.ts";
 import { qualifyProductJourneys } from "./release-product-journeys.mjs";
+import { qualifyStorageRestore } from "./release-storage-restore.mjs";
+import { createManagedNativeRuntime } from "./native-runtime-stdio.mjs";
 
 const MAX_RESPONSE_BYTES = 1024 * 1024;
 const TEST_PASSWORD = "release-smoke-only";
@@ -294,33 +296,33 @@ async function smokeNativeWorker(
   if (!sourceConfig.compatibility_date) {
     throw new Error("wrangler.jsonc must declare compatibility_date");
   }
-  const worker = new Miniflare({
-    rootPath: dirname(artifactPath),
-    modules: [{ type: "ESModule", path: artifactPath }],
-    modulesRoot: dirname(artifactPath),
-    compatibilityDate: sourceConfig.compatibility_date,
-    compatibilityFlags: sourceConfig.compatibility_flags,
-    cf: false,
-    bindings: {
-      APP_URL: APP_ORIGIN,
-      AUTH_PASSWORD_HASH: passwordFixture.hash,
-      DELIVERY_QUEUE_NAME: DELIVERY_QUEUE,
-      DELIVERY_DLQ_NAME: DELIVERY_DLQ,
-      ENCRYPTION_KEY: "00".repeat(32),
-      YURUCOMMU_SESSION_HASH_SALT: SESSION_HASH_SALT,
-    },
-    d1Databases: ["DB"],
-    kvNamespaces: ["KV"],
-    r2Buckets: ["MEDIA"],
-    queueProducers: ["DELIVERY_QUEUE", "DELIVERY_DLQ"],
-    // Keep Workerd diagnostics and deliberate dead-letter logs off the pure
-    // JSON result stream.
-    handleRuntimeStdio(stdout, stderr) {
-      stdout.pipe(process.stderr, { end: false });
-      stderr.pipe(process.stderr, { end: false });
-    },
-  });
-
+  const { worker, dispose } = createManagedNativeRuntime(
+    (handleRuntimeStdio) =>
+      new Miniflare({
+        rootPath: dirname(artifactPath),
+        modules: [{ type: "ESModule", path: artifactPath }],
+        modulesRoot: dirname(artifactPath),
+        compatibilityDate: sourceConfig.compatibility_date,
+        compatibilityFlags: sourceConfig.compatibility_flags,
+        cf: false,
+        bindings: {
+          APP_URL: APP_ORIGIN,
+          AUTH_PASSWORD_HASH: passwordFixture.hash,
+          DELIVERY_QUEUE_NAME: DELIVERY_QUEUE,
+          DELIVERY_DLQ_NAME: DELIVERY_DLQ,
+          ENCRYPTION_KEY: "00".repeat(32),
+          YURUCOMMU_SESSION_HASH_SALT: SESSION_HASH_SALT,
+        },
+        d1Databases: ["DB"],
+        kvNamespaces: ["KV"],
+        r2Buckets: ["MEDIA"],
+        queueProducers: ["DELIVERY_QUEUE", "DELIVERY_DLQ"],
+        // Keep Workerd diagnostics and deliberate dead-letter logs off the pure
+        // JSON result stream.
+        handleRuntimeStdio,
+      }),
+  );
+  let primaryFailed = false;
   try {
     await worker.ready;
     // HTTP middleware can enqueue durable outbox work. Prepare and exercise
@@ -411,8 +413,16 @@ async function smokeNativeWorker(
       ],
       status: "PASSED",
     };
+  } catch (error) {
+    primaryFailed = true;
+    throw error;
   } finally {
-    await worker.dispose();
+    try {
+      await dispose();
+    } catch (error) {
+      if (!primaryFailed) throw error;
+      process.stderr.write(`release-worker cleanup also failed: ${error}\n`);
+    }
   }
 }
 
@@ -665,15 +675,35 @@ async function main() {
   for (const fixture of PASSWORD_FIXTURES) {
     // Separate disposable bindings; both auth paths must pass on these bytes.
     results.push(
-      await smokeNativeWorker(artifactPath, artifactDigest, fixture),
+      await qualifyStage(`password-${fixture.method}`, () =>
+        smokeNativeWorker(artifactPath, artifactDigest, fixture),
+      ),
     );
   }
-  const sessionSaltGuard = await qualifyRequiredSessionSalt(artifactPath);
+  const sessionSaltGuard = await qualifyStage("required-session-salt", () =>
+    qualifyRequiredSessionSalt(artifactPath),
+  );
+  const storageRestore = await qualifyStage("closed-storage-restore", () =>
+    qualifyStorageRestore({
+      artifactPath,
+      artifactSha256: `sha256:${artifactDigest}`,
+      repoRoot: repo,
+      wranglerConfig: unstable_readConfig(
+        { config: resolve(repo, "wrangler.jsonc") },
+        { hideWarnings: true },
+      ),
+    }),
+  );
   process.stdout.write(
     `${JSON.stringify({
       ...results[0],
       sessionSaltGuard,
-      checks: [...results[0].checks, ...sessionSaltGuard.checks],
+      storageRestore,
+      checks: [
+        ...results[0].checks,
+        ...sessionSaltGuard.checks,
+        "native-persistent-storage-restore",
+      ],
       authentication: {
         passwordMethods: PASSWORD_FIXTURES.map((fixture) => fixture.method),
         actor: "preexisting-fixture-owner",
@@ -681,6 +711,16 @@ async function main() {
       },
     })}\n`,
   );
+}
+
+async function qualifyStage(label, qualify) {
+  const started = performance.now();
+  process.stderr.write(`release-worker stage=${label} start\n`);
+  const result = await qualify();
+  process.stderr.write(
+    `release-worker stage=${label} complete elapsedMs=${Math.round(performance.now() - started)}\n`,
+  );
+  return result;
 }
 
 await main();

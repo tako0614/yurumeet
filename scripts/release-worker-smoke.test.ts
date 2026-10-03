@@ -1,15 +1,21 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { build, stop } from "esbuild";
 
 import { createEntrySource } from "./build-takos-worker.ts";
 import { PRODUCT_WIRE_IDENTITY } from "../src/product-identity.ts";
+import {
+  assertClosedStoreInventoriesEqual,
+  cloneClosedStores,
+  inventoryClosedStores,
+} from "./release-storage-restore.mjs";
 
 const repo = new URL("../", import.meta.url).pathname;
 const temporaryDirectories: string[] = [];
+const smokeChildDeadlineMs = 30_000;
 const fixtureOrigin = "https://release-smoke.yurumeet.invalid";
 const smokeHtml =
   '<!doctype html><html><head><title>Yurumeet</title></head><body><div id="root"></div></body></html>';
@@ -58,16 +64,131 @@ async function generatedArtifact(directory: string, source = entrySource()) {
 async function smoke(artifactPath: string) {
   const bytes = await Bun.file(artifactPath).bytes();
   const digest = createHash("sha256").update(bytes).digest("hex");
-  return Bun.spawnSync(
+  const started = performance.now();
+  const result = Bun.spawnSync(
     [
       "bun",
       "scripts/smoke-release-worker.mjs",
       artifactPath,
       `sha256:${digest}`,
     ],
-    { cwd: repo, stdout: "pipe", stderr: "pipe", timeout: 30_000 },
+    {
+      cwd: repo,
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: smokeChildDeadlineMs,
+    },
+  );
+  return requireSmokeProcessExit(
+    result,
+    Math.round(performance.now() - started),
   );
 }
+
+function requireSmokeProcessExit(
+  result: Bun.ReadableSyncSubprocess,
+  elapsedMs: number,
+  deadlineMs = smokeChildDeadlineMs,
+) {
+  if (
+    result.exitCode === null ||
+    result.signalCode != null ||
+    elapsedMs >= deadlineMs
+  ) {
+    throw new Error(
+      `Native smoke child did not complete after ${elapsedMs}ms: exit=${result.exitCode}, signal=${result.signalCode ?? "none"}; ${result.stderr.toString()}`,
+    );
+  }
+  return result;
+}
+
+async function closedFileFixture() {
+  const directory = await mkdtemp(
+    join(tmpdir(), "yurumeet-closed-store-test-"),
+  );
+  temporaryDirectories.push(directory);
+  const paths = {
+    d1: join(directory, "d1"),
+    kv: join(directory, "kv"),
+    r2: join(directory, "r2"),
+  };
+  for (const [name, path] of Object.entries(paths)) {
+    await mkdir(path);
+    await writeFile(join(path, "state"), `native-${name}-data`);
+  }
+  return { paths, cloneRoot: join(directory, "clone") };
+}
+
+describe("closed snapshot inventory validation", () => {
+  test("accepts a byte-identical closed copy without changing its source", async () => {
+    const { paths, cloneRoot } = await closedFileFixture();
+    const expected = inventoryClosedStores(paths);
+    const clone = cloneClosedStores(paths, cloneRoot, expected);
+    expect(() =>
+      assertClosedStoreInventoriesEqual(expected, clone.inventory),
+    ).not.toThrow();
+    expect(inventoryClosedStores(paths)).toEqual(expected);
+  });
+
+  test("refuses a clone missing the KV snapshot file", async () => {
+    const { paths, cloneRoot } = await closedFileFixture();
+    const expected = inventoryClosedStores(paths);
+    const clone = cloneClosedStores(paths, cloneRoot, expected);
+    await rm(join(clone.paths.kv, "state"));
+    expect(() =>
+      assertClosedStoreInventoriesEqual(
+        expected,
+        inventoryClosedStores(clone.paths),
+      ),
+    ).toThrow();
+  });
+
+  test("refuses changed KV bytes with the same filename and size", async () => {
+    const { paths, cloneRoot } = await closedFileFixture();
+    const expected = inventoryClosedStores(paths);
+    const clone = cloneClosedStores(paths, cloneRoot, expected);
+    await writeFile(join(clone.paths.kv, "state"), "broken-kv-data");
+    expect(() =>
+      assertClosedStoreInventoriesEqual(
+        expected,
+        inventoryClosedStores(clone.paths),
+      ),
+    ).toThrow();
+  });
+
+  test("refuses a signaled child even when it printed a success marker", () => {
+    const result = Bun.spawnSync(
+      [
+        process.execPath,
+        "-e",
+        'console.log("storage-restore-marker"); process.kill(process.pid, "SIGTERM");',
+      ],
+      { stdout: "pipe", stderr: "pipe" },
+    );
+    expect(result.stdout.toString()).toContain("storage-restore-marker");
+    expect(() => requireSmokeProcessExit(result, 0)).toThrow(
+      "did not complete",
+    );
+  });
+
+  test("refuses a timed-out child even when it printed a success marker", () => {
+    const deadlineMs = 100;
+    const started = performance.now();
+    const result = Bun.spawnSync(
+      [
+        process.execPath,
+        "-e",
+        'console.log("storage-restore-marker"); setInterval(() => {}, 1000);',
+      ],
+      { stdout: "pipe", stderr: "pipe", timeout: deadlineMs },
+    );
+    const elapsedMs = Math.round(performance.now() - started);
+    expect(result.stdout.toString()).toContain("storage-restore-marker");
+    expect(() =>
+      requireSmokeProcessExit(result, elapsedMs, deadlineMs),
+    ).toThrow("did not complete");
+  });
+});
 
 function httpHealthyArtifact() {
   return `
@@ -113,6 +234,9 @@ describe("release Worker smoke", () => {
     const artifactPath = await generatedArtifact(directory);
     const result = await smoke(artifactPath);
 
+    if (result.exitCode !== 0) {
+      throw new Error(`Native smoke failed: ${result.stderr.toString()}`);
+    }
     expect(result.exitCode).toBe(0);
     expect(JSON.parse(result.stdout.toString())).toMatchObject({
       kind: "yurumeet.release-worker-smoke@v1",
@@ -151,6 +275,7 @@ describe("release Worker smoke", () => {
         "required-session-salt-missing-refusal",
         "required-session-salt-blank-refusal",
         "required-session-salt-public-fallback-refusal",
+        "native-persistent-storage-restore",
       ],
       migrationCount: expect.any(Number),
       authentication: { passwordMethods: ["pbkdf2-sha256", "bootstrap"] },
@@ -171,6 +296,26 @@ describe("release Worker smoke", () => {
           "required-session-salt-missing-refusal",
           "required-session-salt-blank-refusal",
           "required-session-salt-public-fallback-refusal",
+        ],
+      },
+      storageRestore: {
+        kind: "yurumeet.native-storage-restore@v1",
+        status: "PASSED",
+        artifactSha256: `sha256:${createHash("sha256")
+          .update(await Bun.file(artifactPath).bytes())
+          .digest("hex")}`,
+        migrationCount: 29,
+        checks: [
+          "fixture-auth-post-media",
+          "kv-origin-pin",
+          "closed-store-inventories",
+          "clone-byte-proof",
+          "restored-ready",
+          "restored-cookie",
+          "restored-d1",
+          "restored-post-media",
+          "restored-kv",
+          "original-closed-unchanged",
         ],
       },
       status: "PASSED",
