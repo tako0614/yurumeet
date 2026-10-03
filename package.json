@@ -19,11 +19,11 @@
     "check:site": "bunx prettier --check site",
     "generate:schema-bundle": "bun scripts/generate-schema-bundle.ts",
     "prepare:takoform-v1": "bun scripts/prepare-takoform-v1-source.ts",
-    "check:opentofu": "tofu fmt -check -recursive && tofu init -backend=false -input=false -lockfile=readonly && tofu validate && tofu test -no-color -filter=tests/session-salt.tftest.hcl && bun run build:takos-worker && bun run prepare:takoform-v1 && bun scripts/validate-takoform-v1.ts",
+    "check:opentofu": "tofu fmt -check -recursive && tofu init -backend=false -input=false -lockfile=readonly && tofu validate && tofu test -no-color -filter=tests/session-salt.tftest.hcl -filter=tests/auth-password.tftest.hcl && bun run build:takos-worker && bun run prepare:takoform-v1 && bun scripts/validate-takoform-v1.ts",
     "smoke:postdeploy": "bun scripts/post-deploy-smoke.ts",
     "smoke:release-artifact": "bun scripts/smoke-release-worker.mjs",
     "lint": "tsc --noEmit && bun scripts/check-brand-assets.mjs",
-    "fmt": "bunx prettier --write package.json index.html vite.config.ts src site scripts README.md README.en.md",
+    "fmt": "bunx prettier --write package.json index.html vite.config.ts src site scripts README.md README.en.md && tofu fmt main.tf tests/auth-password.tftest.hcl",
     "fmt:check": "bunx prettier --check package.json index.html vite.config.ts src site scripts README.md README.en.md"
   },
   "cloudflare": {

@@ -105,6 +105,21 @@ Secret に渡し、汎用 `env` の同名キーは拒否します。新規環境
 Takosumi の direct install へ渡す sealed 入力経路は未検証で、通常の入力欄に秘密値を
 書いて代用しません。Wrangler を使う self-host でも同名の Worker Secret が必要です。
 
+root `main.tf` の機密入力 `auth_password_hash` は、正規の PBKDF2 hash または
+bootstrap token を `AUTH_PASSWORD_HASH` Secret に渡します。非空値は OpenTofu が
+受け取った文字列のまま渡し、空値・HCL または Core が空白だけと判定する値は省略します。
+省略する場合は、完全な OIDC 設定が必要です。PBKDF2 hash の端に空白がある値は
+plan で拒否します。hash が bootstrap token として扱われるのを防ぐため、
+正規の空白なし hash を明示してください。
+
+以前の adapter は端の空白を除いていました。既存の bootstrap 設定に端の空白が
+ある場合、この変更を Apply すると資格情報が変わります。現在の資格情報を保持するなら、
+以前の adapter が渡した空白なしの値を機密入力へ明示し、公開・ログ出力せずに確認して
+ください。OpenTofu の文字列は NFC 正規化されるため、合成形式に依存する任意の
+Unicode token の元バイト列保持は保証しません。新規 bootstrap token には安全に生成した
+ASCII 値を使い、既存値がこの文字列経路で変わる場合は credential owner の手順で
+対応してください。
+
 Worker compatibility date / flags の正本も `wrangler.jsonc` です。root の
 `main.tf` がこのファイルを `jsondecode` するため、JSONC 拡張のコメントや trailing
 comma は追加せず、strict JSON として維持します。D1 の migration 記録は core と同じ
