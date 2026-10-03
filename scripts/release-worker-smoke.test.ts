@@ -276,6 +276,7 @@ describe("release Worker smoke", () => {
         "required-session-salt-blank-refusal",
         "required-session-salt-public-fallback-refusal",
         "native-persistent-storage-restore",
+        "native-persistent-oidc-storage-restore",
       ],
       migrationCount: expect.any(Number),
       authentication: { passwordMethods: ["pbkdf2-sha256", "bootstrap"] },
@@ -318,11 +319,54 @@ describe("release Worker smoke", () => {
           "original-closed-unchanged",
         ],
       },
+      storageRestoreOidc: {
+        kind: "yurumeet.native-storage-restore@v1",
+        status: "PASSED",
+        authentication: "oidc",
+        artifactSha256: `sha256:${createHash("sha256")
+          .update(await Bun.file(artifactPath).bytes())
+          .digest("hex")}`,
+        migrationCount: 29,
+        checks: [
+          "fixture-auth-post-media",
+          "kv-origin-pin",
+          "closed-store-inventories",
+          "clone-byte-proof",
+          "restored-ready",
+          "restored-cookie",
+          "restored-d1",
+          "restored-post-media",
+          "restored-kv",
+          "original-closed-unchanged",
+          "fixture-oidc-encrypted-access-refresh-and-recovery-controls",
+          "restored-exact-oidc-ciphertext-and-recovery-controls",
+          "restored-same-subject-reauth-rotates-session-and-bounds-actor-login-time",
+          "restored-oidc-logout-removes-row-and-refuses-replay",
+          "restored-oidc-relogin-recovers-identity-and-data",
+        ],
+        oidc: {
+          issuer: { jwks: 3, token: 3, userinfo: 3, blocked: 0, logins: 3 },
+          runtimeDiagnostics: {
+            policy: "discard-without-retaining-or-forwarding-raw-output",
+            observedBytes: expect.any(Number),
+          },
+        },
+      },
       status: "PASSED",
     });
   }, 35_000);
 
   for (const [name, injected, error] of [
+    [
+      "OIDC callback losing encrypted refresh credentials",
+      `    if (request.method === "GET" && new URL(request.url).pathname === "/api/auth/callback/takos") {
+      const response = await backendApp.fetch(request, wrapYurumeetWorkerBindings(env) as Env, ctx);
+      await env.DB.prepare("UPDATE sessions SET provider_refresh_token = NULL WHERE provider = 'takos'").run();
+      return response;
+    }
+`,
+      "restore-oidc-initial-refresh-format",
+    ],
     [
       "post attachment followers ActivityPub leaked",
       `    if (request.method === "GET" && new URL(request.url).pathname.startsWith("/ap/objects/")) {
