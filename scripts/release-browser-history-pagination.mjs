@@ -201,19 +201,42 @@ async function makeCommunity(page, db, origin, actorApId, token) {
     `native community create failed (${created.status})`,
   );
   const apId = created.body.community.ap_id;
+  const path = `${origin}/api/communities/${encodeURIComponent(apId)}/messages`;
+  const opener = await api(page, "POST", path, {
+    content: marker(token, "community", 104),
+  });
+  expect(
+    opener.status === 201 && typeof opener.body?.message?.id === "string",
+    `native community opener failed (${opener.status})`,
+  );
   const messages = await insertMessages(db, {
     origin,
     actorApId,
     recipientApId: apId,
     kind: "community",
     token,
-    count: 105,
+    count: 104,
+  });
+  const openerRow = await rows(
+    db,
+    "SELECT ap_id, published, content FROM objects WHERE ap_id = ?",
+    opener.body.message.id,
+  );
+  expect(
+    openerRow.length === 1 &&
+      openerRow[0].content === marker(token, "community", 104),
+    "native community opener is absent from D1 or has wrong content",
+  );
+  messages.push({
+    id: openerRow[0].ap_id,
+    published: openerRow[0].published,
+    content: openerRow[0].content,
   });
   return {
     kind: "community",
     name: displayName,
     apId,
-    path: `${origin}/api/communities/${encodeURIComponent(apId)}/messages`,
+    path,
     messages,
   };
 }
