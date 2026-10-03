@@ -21,6 +21,15 @@ export type OutgoingJournalRecord = {
   serverId?: string;
 };
 
+/** A successful server delete, stored at the former confirmed intent's key. */
+export type DeletedJournalRecord = {
+  version: 2;
+  id: string;
+  target: JournalTarget;
+  state: "deleted";
+  serverId: string;
+};
+
 export type JournalStorage = {
   readonly length: number;
   key(index: number): string | null;
@@ -31,6 +40,7 @@ export type JournalStorage = {
 
 export type OutgoingJournalRead = {
   records: OutgoingJournalRecord[];
+  deletedRecords: DeletedJournalRecord[];
   failed: boolean;
 };
 
@@ -184,6 +194,25 @@ function validRecord(value: unknown): value is OutgoingJournalRecord {
   return true;
 }
 
+function validDeletedRecord(value: unknown): value is DeletedJournalRecord {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  return (
+    Object.keys(record).length === 5 &&
+    Object.keys(record).every((key) =>
+      ["version", "id", "target", "state", "serverId"].includes(key),
+    ) &&
+    record.version === 2 &&
+    typeof record.id === "string" &&
+    ID_PATTERN.test(record.id) &&
+    validTarget(record.target) &&
+    record.state === "deleted" &&
+    isHttpUrl(record.serverId)
+  );
+}
+
+type JournalRecord = OutgoingJournalRecord | DeletedJournalRecord;
+
 function enc(value: string): string {
   return encodeURIComponent(value);
 }
@@ -192,7 +221,7 @@ function scopePrefix(scope: JournalScope): string {
   return `${PREFIX}${enc(scope.serverOrigin)}:${enc(scope.principalApId)}:`;
 }
 
-function recordKey(scope: JournalScope, record: OutgoingJournalRecord): string {
+function recordKey(scope: JournalScope, record: JournalRecord): string {
   return `${scopePrefix(scope)}${record.target.type}:${enc(record.target.ap_id)}:${record.id}`;
 }
 
@@ -200,11 +229,24 @@ function sameTarget(a: JournalTarget, b: JournalTarget): boolean {
   return a.type === b.type && a.ap_id === b.ap_id;
 }
 
+function sameIntentPayload(
+  current: OutgoingJournalRecord,
+  snapshot: OutgoingJournalRecord,
+): boolean {
+  return (
+    current.id === snapshot.id &&
+    sameTarget(current.target, snapshot.target) &&
+    current.content === snapshot.content &&
+    current.created_at === snapshot.created_at &&
+    JSON.stringify(current.attachments) === JSON.stringify(snapshot.attachments)
+  );
+}
+
 function validEnvelope(
   value: unknown,
   scope: JournalScope,
   key: string,
-): value is { scope: JournalScope; record: OutgoingJournalRecord } {
+): value is { scope: JournalScope; record: JournalRecord } {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const envelope = value as Record<string, unknown>;
   if (
@@ -223,7 +265,7 @@ function validEnvelope(
     Object.keys(storedScope).length === 2 &&
     (storedScope as JournalScope).serverOrigin === scope.serverOrigin &&
     (storedScope as JournalScope).principalApId === scope.principalApId &&
-    validRecord(record) &&
+    (validRecord(record) || validDeletedRecord(record)) &&
     recordKey(scope, record) === key
   );
 }
@@ -265,6 +307,12 @@ export function createOutgoingJournal(
       ) {
         return false;
       }
+      const current = storage.getItem(key);
+      if (current !== null) {
+        const stored: unknown = JSON.parse(current);
+        if (!validEnvelope(stored, journalScope, key)) return false;
+        if (stored.record.version === 2) return false;
+      }
       storage.setItem(key, serialized);
       return storage.getItem(key) === serialized;
     } catch {
@@ -277,6 +325,17 @@ export function createOutgoingJournal(
     try {
       if (!validRecord(record)) return false;
       const key = recordKey(journalScope, record);
+      const current = storage.getItem(key);
+      if (current === null) return true;
+      const stored: unknown = JSON.parse(current);
+      if (!validEnvelope(stored, journalScope, key)) return false;
+      if (stored.record.version === 2) return false;
+      if (!sameIntentPayload(stored.record, record)) return false;
+      if (
+        stored.record.state === "confirmed" &&
+        stored.record.serverId !== record.serverId
+      )
+        return false;
       storage.removeItem(key);
       return storage.getItem(key) === null;
     } catch {
@@ -284,11 +343,63 @@ export function createOutgoingJournal(
     }
   }
 
+  /** Rewrite only the exact persisted confirmed ACK after a successful DELETE. */
+  function markDeleted(record: OutgoingJournalRecord): boolean {
+    if (
+      !canUse ||
+      !storage ||
+      !validRecord(record) ||
+      record.state !== "confirmed"
+    )
+      return false;
+    try {
+      const key = recordKey(journalScope, record);
+      const current = storage.getItem(key);
+      if (current === null) return true; // The confirmed journal was already removed.
+      const envelope: unknown = JSON.parse(current);
+      if (!validEnvelope(envelope, journalScope, key)) return false;
+      if (envelope.record.version === 2) {
+        return envelope.record.serverId === record.serverId;
+      }
+      if (envelope.record.state === "rejected") return false;
+      // A persisted pending/unconfirmed copy can survive a failed ACK write.
+      // The caller's canonical confirmed ACK supplies the server ID; immutable
+      // intent identity and payload must still match before replacing it.
+      if (!sameIntentPayload(envelope.record, record)) return false;
+      if (
+        envelope.record.state === "confirmed" &&
+        envelope.record.serverId !== record.serverId
+      )
+        return false;
+      const marker: DeletedJournalRecord = {
+        version: 2,
+        id: record.id,
+        target: { type: record.target.type, ap_id: record.target.ap_id },
+        state: "deleted",
+        serverId: record.serverId!,
+      };
+      const serialized = JSON.stringify({
+        scope: journalScope,
+        record: marker,
+      });
+      try {
+        storage.setItem(key, serialized);
+      } catch {
+        // Some adapters commit bytes before throwing. The readback below is
+        // the only evidence that this exact marker survived.
+      }
+      return storage.getItem(key) === serialized;
+    } catch {
+      return false;
+    }
+  }
+
   function read(target?: JournalTarget): OutgoingJournalRead {
     if (!canUse || !storage || (target !== undefined && !validTarget(target))) {
-      return { records: [], failed: true };
+      return { records: [], deletedRecords: [], failed: true };
     }
     const records: OutgoingJournalRecord[] = [];
+    const deletedRecords: DeletedJournalRecord[] = [];
     let failed = false;
     try {
       const prefix = scopePrefix(journalScope);
@@ -307,7 +418,9 @@ export function createOutgoingJournal(
             continue;
           }
           if (!target || sameTarget(envelope.record.target, target)) {
-            records.push(envelope.record);
+            if (envelope.record.version === 2)
+              deletedRecords.push(envelope.record);
+            else records.push(envelope.record);
           }
         } catch {
           failed = true;
@@ -317,10 +430,14 @@ export function createOutgoingJournal(
       failed = true;
     }
     records.sort((a, b) => a.created_at.localeCompare(b.created_at));
-    return { records, failed };
+    deletedRecords.sort(
+      (a, b) =>
+        a.serverId.localeCompare(b.serverId) || a.id.localeCompare(b.id),
+    );
+    return { records, deletedRecords, failed };
   }
 
-  return { write, remove, read };
+  return { write, remove, markDeleted, read };
 }
 
 /** Creates a fresh UI-only intent identifier; it is not a server idempotency key. */

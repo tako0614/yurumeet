@@ -356,16 +356,24 @@ describe("outgoing-recovery", () => {
     const intent = record({ target: COMMUNITY });
     const message = ack();
     expect(recovery.queue(intent)).toBe(true);
-    expect(recovery.confirm(intent.id, message)).toBe(true);
+    controlled.denyRemovals(true);
+    expect(recovery.confirm(intent.id, message)).toBe(false);
     const mutableTarget: JournalTarget = { ...COMMUNITY };
     const deletion = recovery.beginDelete(mutableTarget, message.id);
     mutableTarget.ap_id = "https://meet.example/ap/groups/changed";
     controlled.denyRemovals(true);
 
-    expect(deletion.commit()).toBe(false);
+    expect(deletion.commit()).toBe(true);
     expect(recovery.merge(COMMUNITY, [message], SENDER)).toEqual([]);
     controlled.denyRemovals(false);
     expect(recovery.merge(COMMUNITY, [message], SENDER)).toEqual([]);
+    expect(
+      createOutgoingRecovery(SCOPE_A, controlled.storage).merge(
+        COMMUNITY,
+        [message],
+        SENDER,
+      ),
+    ).toEqual([]);
   });
 
   test("overlapping delete handles cannot undo another handle's commit", () => {
@@ -392,7 +400,7 @@ describe("outgoing-recovery", () => {
     ]);
   });
 
-  test("committed delete masks same-session rows and retries failed journal cleanup", () => {
+  test("committed delete retries cleanup when removal and marker writes are denied", () => {
     const controlled = controlledStorage();
     const recovery = createOutgoingRecovery(SCOPE_A, controlled.storage);
     const intent = record({ target: COMMUNITY });
@@ -401,6 +409,7 @@ describe("outgoing-recovery", () => {
     controlled.denyRemovals(true);
     expect(recovery.confirm(intent.id, message)).toBe(false);
 
+    controlled.denyWrites(true);
     const deletion = recovery.beginDelete(COMMUNITY, message.id);
     expect(deletion.commit()).toBe(false);
     expect(
@@ -409,8 +418,163 @@ describe("outgoing-recovery", () => {
     expect(controlled.base.values.size).toBe(1);
 
     controlled.denyRemovals(false);
+    controlled.denyWrites(false);
     expect(recovery.merge(COMMUNITY, [message], SENDER)).toEqual([]);
     expect(controlled.base.values.size).toBe(0);
+  });
+
+  test("does not revive a deleted confirmed bridge after cleanup fails and the tab reloads", () => {
+    const controlled = controlledStorage();
+    const recovery = createOutgoingRecovery(SCOPE_A, controlled.storage);
+    const intent = record({ target: COMMUNITY });
+    const message = ack();
+    expect(recovery.queue(intent)).toBe(true);
+    controlled.denyRemovals(true);
+    expect(recovery.confirm(intent.id, message)).toBe(false);
+
+    // Canonical DELETE has succeeded before commit is called. Removal remains
+    // denied, but verified writes are still available for a deletion record.
+    recovery.beginDelete(COMMUNITY, message.id).commit();
+    const reloaded = createOutgoingRecovery(SCOPE_A, controlled.storage);
+    expect(reloaded.merge(COMMUNITY, [], SENDER)).toEqual([]);
+    expect(reloaded.merge(COMMUNITY, [message], SENDER)).toEqual([]);
+    expect(reloaded.retry(COMMUNITY, intent.id)).toBeNull();
+  });
+
+  test("restored deletion markers suppress only their exact server principal and target", () => {
+    const controlled = controlledStorage();
+    const recovery = createOutgoingRecovery(SCOPE_A, controlled.storage);
+    const intent = record({ target: COMMUNITY });
+    const message = ack();
+    expect(recovery.queue(intent)).toBe(true);
+    controlled.denyRemovals(true);
+    expect(recovery.confirm(intent.id, message)).toBe(false);
+    expect(recovery.beginDelete(COMMUNITY, message.id).commit()).toBe(true);
+
+    const reloaded = createOutgoingRecovery(SCOPE_A, controlled.storage);
+    expect(reloaded.merge(COMMUNITY, [message], SENDER)).toEqual([]);
+    expect(reloaded.merge(USER, [message], SENDER)).toEqual([message]);
+    const otherTarget = { ...COMMUNITY, ap_id: `${COMMUNITY.ap_id}/other` };
+    expect(reloaded.merge(otherTarget, [message], SENDER)).toEqual([message]);
+    expect(
+      createOutgoingRecovery(SCOPE_B, controlled.storage).merge(
+        COMMUNITY,
+        [message],
+        SENDER,
+      ),
+    ).toEqual([message]);
+    expect(
+      createOutgoingRecovery(SCOPE_OTHER_ORIGIN, controlled.storage).merge(
+        COMMUNITY,
+        [message],
+        SENDER,
+      ),
+    ).toEqual([message]);
+  });
+
+  test("does not prune a saved deletion marker on later merges or commit calls", () => {
+    const controlled = controlledStorage();
+    const recovery = createOutgoingRecovery(SCOPE_A, controlled.storage);
+    const intent = record({ target: COMMUNITY });
+    const message = ack();
+    expect(recovery.queue(intent)).toBe(true);
+    controlled.denyRemovals(true);
+    expect(recovery.confirm(intent.id, message)).toBe(false);
+    const deletion = recovery.beginDelete(COMMUNITY, message.id);
+    expect(deletion.commit()).toBe(true);
+    controlled.denyRemovals(false);
+
+    expect(recovery.merge(COMMUNITY, [message], SENDER)).toEqual([]);
+    expect(deletion.commit()).toBe(true);
+    const reloaded = createOutgoingRecovery(SCOPE_A, controlled.storage);
+    expect(reloaded.merge(COMMUNITY, [message], SENDER)).toEqual([]);
+    expect(reloaded.merge(COMMUNITY, [], SENDER)).toEqual([]);
+    expect(
+      createOutgoingRecovery(SCOPE_A, controlled.storage).merge(
+        COMMUNITY,
+        [message],
+        SENDER,
+      ),
+    ).toEqual([]);
+  });
+
+  test("cannot promise reload masking when both cleanup and marker writes are denied", () => {
+    const controlled = controlledStorage();
+    const recovery = createOutgoingRecovery(SCOPE_A, controlled.storage);
+    const intent = record({ target: COMMUNITY });
+    const message = ack();
+    expect(recovery.queue(intent)).toBe(true);
+    controlled.denyRemovals(true);
+    expect(recovery.confirm(intent.id, message)).toBe(false);
+    controlled.denyWrites(true);
+    expect(recovery.beginDelete(COMMUNITY, message.id).commit()).toBe(false);
+    expect(recovery.merge(COMMUNITY, [message], SENDER)).toEqual([]);
+    expect(
+      createOutgoingRecovery(SCOPE_A, controlled.storage).merge(
+        COMMUNITY,
+        [],
+        SENDER,
+      ),
+    ).toEqual([expect.objectContaining({ id: message.id })]);
+  });
+
+  test("later cleanup preserves a marker whose first verification was unreadable", () => {
+    const controlled = controlledStorage();
+    let unreadableMarker = false;
+    const storage: JournalStorage = {
+      ...controlled.storage,
+      get length() {
+        return controlled.storage.length;
+      },
+      setItem: (key, value) => {
+        controlled.storage.setItem(key, value);
+        if (JSON.parse(value).record.version === 2) unreadableMarker = true;
+      },
+      getItem: (key) => {
+        if (unreadableMarker)
+          throw new Error("verification temporarily denied");
+        return controlled.storage.getItem(key);
+      },
+    };
+    const recovery = createOutgoingRecovery(SCOPE_A, storage);
+    const intent = record({ target: COMMUNITY });
+    const message = ack();
+    expect(recovery.queue(intent)).toBe(true);
+    controlled.denyRemovals(true);
+    expect(recovery.confirm(intent.id, message)).toBe(false);
+    const deletion = recovery.beginDelete(COMMUNITY, message.id);
+    expect(deletion.commit()).toBe(false);
+
+    unreadableMarker = false;
+    controlled.denyRemovals(false);
+    expect(recovery.merge(COMMUNITY, [message], SENDER)).toEqual([]);
+    expect(deletion.commit()).toBe(true);
+    expect(
+      createOutgoingRecovery(SCOPE_A, storage).merge(
+        COMMUNITY,
+        [message],
+        SENDER,
+      ),
+    ).toEqual([]);
+  });
+
+  test("retires every confirmed sibling that shares the deleted server ID", () => {
+    const controlled = controlledStorage();
+    const recovery = createOutgoingRecovery(SCOPE_A, controlled.storage);
+    const first = record({ target: COMMUNITY });
+    const second = { ...first, id: tempId2 };
+    const message = ack();
+    expect(recovery.queue(first)).toBe(true);
+    expect(recovery.queue(second)).toBe(true);
+    controlled.denyRemovals(true);
+    expect(recovery.confirm(first.id, message)).toBe(false);
+    expect(recovery.confirm(second.id, message)).toBe(false);
+    expect(recovery.beginDelete(COMMUNITY, message.id).commit()).toBe(true);
+
+    const reloaded = createOutgoingRecovery(SCOPE_A, controlled.storage);
+    expect(reloaded.merge(COMMUNITY, [message], SENDER)).toEqual([]);
+    expect(reloaded.retry(COMMUNITY, first.id)).toBeNull();
+    expect(reloaded.retry(COMMUNITY, second.id)).toBeNull();
   });
 
   test("retains cautious reload state when saving a confirmed ACK fails", () => {
