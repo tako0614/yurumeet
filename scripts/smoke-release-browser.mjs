@@ -21,6 +21,7 @@ import {
 import { qualifyBrowserCommunityDeleteReload } from "./release-browser-community-delete-reload.mjs";
 import { qualifyBrowserFeedRefresh } from "./release-browser-feed-refresh.mjs";
 import { qualifyBrowserFeedAck } from "./release-browser-feed-ack.mjs";
+import { qualifyStorySubmit } from "./release-browser-story-submit.mjs";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const password = " browser-smoke-only ";
@@ -528,6 +529,64 @@ async function smoke(artifact, digest) {
       await feedAckPage.close();
     }
 
+    const storyPage = await context.newPage();
+    const storyPageErrors = [];
+    const storyServerErrors = [];
+    const storyBlockedOutbound = [];
+    storyPage.on("pageerror", (error) => storyPageErrors.push(String(error)));
+    storyPage.on("response", (response) => {
+      if (response.status() >= 500) {
+        storyServerErrors.push({
+          path: new URL(response.url()).pathname,
+          status: response.status(),
+        });
+      }
+    });
+    await storyPage.route("**/*", (route) => {
+      const url = new URL(route.request().url());
+      if (
+        url.origin === origin ||
+        url.protocol === "data:" ||
+        url.protocol === "blob:"
+      ) {
+        return route.continue();
+      }
+      storyBlockedOutbound.push({
+        method: route.request().method(),
+        url: url.href,
+      });
+      return route.abort("blockedbyclient");
+    });
+    let storySubmit;
+    try {
+      await storyPage.goto(`${origin}/?tab=timeline`, {
+        waitUntil: "domcontentloaded",
+        timeout: 20_000,
+      });
+      storySubmit = await qualifyStorySubmit({
+        page: storyPage,
+        context,
+        db,
+        bucket: await worker.getR2Bucket("MEDIA"),
+        origin,
+        actorApId: ownerId,
+        checks,
+      });
+      check(
+        storyPageErrors.length === 0 &&
+          storyServerErrors.length === 0 &&
+          storyBlockedOutbound.length === 0,
+        "Story submission raised a page error, HTTP 5xx or external request",
+      );
+      storySubmit.runtimeObservations = {
+        pageErrors: storyPageErrors,
+        serverErrors: storyServerErrors,
+        blockedOutbound: storyBlockedOutbound,
+      };
+    } finally {
+      await storyPage.close();
+    }
+
     check(
       pageErrors.length === 0,
       "community delete browser raised a runtime error",
@@ -552,6 +611,7 @@ async function smoke(artifact, digest) {
       communityDeleteReload,
       feedRefresh,
       feedAck,
+      storySubmit,
       status: "PASSED",
     };
   } catch (error) {
