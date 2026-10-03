@@ -322,7 +322,9 @@ async function initiateSettingsLogout(
           { timeout: TIMEOUT },
         );
   if (profileMenu) {
-    const more = page.getByRole("button", { name: "その他" });
+    const more = page
+      .locator(".p-profile-actions")
+      .getByRole("button", { name: "メニュー", exact: true });
     await more.waitFor({ state: "visible", timeout: TIMEOUT });
     await more.click({ timeout: TIMEOUT });
     await page
@@ -648,7 +650,11 @@ export async function qualifyLogoutOutcome({
           timeout: TIMEOUT,
         });
         await fixture.page
-          .getByRole("button", { name: "その他" })
+          .getByRole("button", { name: "プロフィールを編集", exact: true })
+          .waitFor({ state: "visible", timeout: TIMEOUT });
+        await fixture.page
+          .locator(".p-profile-actions")
+          .getByRole("button", { name: "メニュー", exact: true })
           .waitFor({ state: "visible", timeout: TIMEOUT });
       } else if (path !== "/settings") {
         await fixture.page.goto(`${origin}${path}`, {
