@@ -124,6 +124,24 @@ Secret に渡し、汎用 `env` の同名キーは拒否します。新規環境
 Takosumi の direct install へ渡す sealed 入力経路は未検証で、通常の入力欄に秘密値を
 書いて代用しません。Wrangler を使う self-host でも同名の Worker Secret が必要です。
 
+Worker は未設定・空白だけの salt と公開された開発用 fallback を、Core の処理前に
+拒否します。受け入れた値は正規化しません。code-only の公開入口は
+`YURUMEET_WRANGLER_CONFIG` で選んだ実環境の strict JSON config の root
+`secrets.required` に `YURUCOMMU_SESSION_HASH_SALT` が一つ含まれることを、
+gate・D1 確認・公開の前に要求します。同名の plaintext `vars` は拒否します。
+宣言後は Wrangler が既存 Worker の必須 Secret を継承し、欠けていれば公開を拒否します。
+宣言は実値・エントロピー・現在配信中の Version の custody を証明しません。
+
+repo の `wrangler.jsonc` は開発用の template のため、全環境共通の必須 Secret 一覧を
+追加しません。Wrangler は一覧を定義するとローカルの秘密入力もその一覧だけに限定します。
+公開用 config の一覧には、salt と暗号化キーに加え、選択した認証方式の Secret 名を
+明示してください。password を使う場合は `AUTH_PASSWORD_HASH`、OIDC-only の場合は
+その方式で必要な名前を含め、password を必須にしません。秘密値は config に書きません。
+初めて salt を追加する既存環境では、credential owner の別途レビュー済み手順で
+Secret を設定し、その環境の password または OIDC による再認証を確認してください。
+暗号化キー・既存データを保持し、新しい salt は更新と code rollback でも保持します。
+旧 session を変換・削除して再認証を回避しません。ローカル検証と公開環境の保持確認は別です。
+
 root `main.tf` の機密入力 `auth_password_hash` は、正規の PBKDF2 hash または
 bootstrap token を `AUTH_PASSWORD_HASH` Secret に渡します。非空値は OpenTofu が
 受け取った文字列のまま渡し、空値・HCL または Core が空白だけと判定する値は省略します。

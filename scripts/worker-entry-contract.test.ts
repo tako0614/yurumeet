@@ -278,7 +278,9 @@ describe("generated entry lane behavior", () => {
   );
   let entry: {
     default: {
+      fetch(request: Request, env: unknown, ctx: unknown): Promise<Response>;
       queue(batch: unknown, env: unknown, ctx: unknown): Promise<void>;
+      scheduled(controller: unknown, env: unknown, ctx: unknown): Promise<void>;
     };
   };
 
@@ -322,6 +324,7 @@ describe("generated entry lane behavior", () => {
       DB: nativeD1(),
       KV: kv(),
       APP_URL: "https://yurumeet.example.test",
+      YURUCOMMU_SESSION_HASH_SALT: "synthetic-test-session-salt",
       // Direct installs must declare both names; portable Hosts project the
       // same logical names with their lane's queue binding shape.
       DELIVERY_QUEUE_NAME: "configured-delivery",
@@ -374,6 +377,217 @@ describe("generated entry lane behavior", () => {
       retryAll: () => settled.push("retryAll"),
     };
   }
+
+  test("generated fetch, queue, and scheduled entrypoints refuse a missing salt before binding effects on both lanes", async () => {
+    const { default: worker } = await loadEntry();
+
+    for (const lane of ["cloudflare", "portable"] as const) {
+      const effects = {
+        database: 0,
+        kv: 0,
+        objects: 0,
+        queue: 0,
+        batch: 0,
+        context: 0,
+      };
+      const trackedKv = {
+        get: async () => {
+          effects.kv += 1;
+          return null;
+        },
+        getWithMetadata: async () => {
+          effects.kv += 1;
+          return null;
+        },
+        put: async () => {
+          effects.kv += 1;
+        },
+        delete: async () => {
+          effects.kv += 1;
+        },
+        list: async () => {
+          effects.kv += 1;
+          return { keys: [], list_complete: true, listComplete: true };
+        },
+      };
+      const nativeDatabase = {
+        prepare: () => {
+          effects.database += 1;
+          return {
+            bind: () => ({}),
+            first: async () => null,
+            all: async () => ({ results: [], success: true }),
+            run: async () => ({ success: true }),
+          };
+        },
+        batch: async () => {
+          effects.database += 1;
+          return [];
+        },
+        exec: async () => {
+          effects.database += 1;
+          return { count: 0, duration: 0 };
+        },
+      };
+      const portableDatabase = {
+        execute: async () => {
+          effects.database += 1;
+          return { rows: [], rowsWritten: 0 };
+        },
+        query: async () => {
+          effects.database += 1;
+          return { rows: [], rowsWritten: 0 };
+        },
+        transaction: async () => {
+          effects.database += 1;
+          return [];
+        },
+      };
+      const nativeObjects = {
+        head: async () => {
+          effects.objects += 1;
+          return null;
+        },
+        get: async () => {
+          effects.objects += 1;
+          return null;
+        },
+        put: async () => {
+          effects.objects += 1;
+          return {};
+        },
+        delete: async () => {
+          effects.objects += 1;
+        },
+        list: async () => {
+          effects.objects += 1;
+          return { objects: [], truncated: false };
+        },
+        createMultipartUpload: async () => {
+          effects.objects += 1;
+          return {};
+        },
+        resumeMultipartUpload: () => {
+          effects.objects += 1;
+          return {};
+        },
+      };
+      const portableObjects = {
+        head: async () => {
+          effects.objects += 1;
+          return null;
+        },
+        get: async () => {
+          effects.objects += 1;
+          return null;
+        },
+        put: async () => {
+          effects.objects += 1;
+          return {};
+        },
+        delete: async () => {
+          effects.objects += 1;
+        },
+        list: async () => {
+          effects.objects += 1;
+          return { objects: [], prefixes: [], truncated: false };
+        },
+      };
+      const queueProducer = {
+        send: async () => {
+          effects.queue += 1;
+        },
+        sendBatch: async () => {
+          effects.queue += 1;
+        },
+      };
+      const bindings = {
+        DB: lane === "cloudflare" ? nativeDatabase : portableDatabase,
+        KV: trackedKv,
+        MEDIA: lane === "cloudflare" ? nativeObjects : portableObjects,
+        DELIVERY_QUEUE: queueProducer,
+        DELIVERY_DLQ: queueProducer,
+        DELIVERY_QUEUE_NAME: "configured-delivery",
+        DELIVERY_DLQ_NAME: "configured-delivery-dlq",
+        APP_URL: "https://yurumeet.example.test",
+        YURUCOMMU_SESSION_HASH_SALT: undefined,
+        ...(lane === "portable" ? { YURUCOMMU_RUNTIME_LANE: "portable" } : {}),
+      };
+      const batch =
+        lane === "cloudflare"
+          ? {
+              queue: "configured-delivery",
+              messages: [],
+              ackAll: () => {
+                effects.batch += 1;
+              },
+              retryAll: () => {
+                effects.batch += 1;
+              },
+            }
+          : {
+              batchId: "salt-guard-test",
+              queue: "configured-delivery",
+              messages: [],
+              acknowledgeAll: () => {
+                effects.batch += 1;
+              },
+              retryAll: () => {
+                effects.batch += 1;
+              },
+            };
+      const context = {
+        waitUntil: () => {
+          effects.context += 1;
+        },
+      };
+      const invocations = [
+        [
+          "fetch",
+          () =>
+            worker.fetch(
+              new Request("https://yurumeet.example.test/readyz"),
+              bindings,
+              context,
+            ),
+        ],
+        ["queue", () => worker.queue(batch, bindings, context)],
+        [
+          "scheduled",
+          () =>
+            worker.scheduled(
+              { scheduledTime: 0, cron: "0 * * * *" },
+              bindings,
+              context,
+            ),
+        ],
+      ] as const;
+
+      for (const [name, invoke] of invocations) {
+        let failure: unknown;
+        try {
+          await invoke();
+        } catch (error) {
+          failure = error;
+        }
+        expect(
+          failure,
+          `${lane} ${name} must refuse a missing session salt`,
+        ).toBeInstanceOf(Error);
+        expect((failure as Error).message).toMatch(
+          /YURUCOMMU_SESSION_HASH_SALT/,
+        );
+      }
+      expect(effects).toEqual({
+        database: 0,
+        kv: 0,
+        objects: 0,
+        queue: 0,
+        batch: 0,
+        context: 0,
+      });
+    }
+  });
 
   test("a Cloudflare event with an undeclared queue is refused without settling", async () => {
     const { default: worker } = await loadEntry();
@@ -698,6 +912,7 @@ describe("public origin per lane", () => {
       {
         DB: edgeSql(),
         KV: kv,
+        YURUCOMMU_SESSION_HASH_SALT: "synthetic-test-session-salt",
         YURUCOMMU_RUNTIME_LANE: "portable",
       },
       {},
@@ -722,7 +937,12 @@ describe("public origin per lane", () => {
 
     await worker.fetch(
       new Request("https://second.example.test/healthz"),
-      { DB: edgeSql(), KV: kv, YURUCOMMU_RUNTIME_LANE: "portable" },
+      {
+        DB: edgeSql(),
+        KV: kv,
+        YURUCOMMU_SESSION_HASH_SALT: "synthetic-test-session-salt",
+        YURUCOMMU_RUNTIME_LANE: "portable",
+      },
       {},
     );
 
@@ -739,6 +959,7 @@ describe("public origin per lane", () => {
       DB: nativeD1(),
       KV: kv,
       APP_URL: "https://configured.example.test",
+      YURUCOMMU_SESSION_HASH_SALT: "synthetic-test-session-salt",
     };
 
     expect(
@@ -773,7 +994,11 @@ describe("public origin per lane", () => {
     const kv = nativeKv();
     const response = await worker.fetch(
       new Request("https://workers-dev.example.test/healthz"),
-      { DB: nativeD1(), KV: kv },
+      {
+        DB: nativeD1(),
+        KV: kv,
+        YURUCOMMU_SESSION_HASH_SALT: "synthetic-test-session-salt",
+      },
       {},
     );
 
@@ -792,7 +1017,11 @@ describe("public origin per lane", () => {
     const kv = nativeKv();
     const response = await worker.fetch(
       new Request("http://workers-dev.example.test/healthz"),
-      { DB: nativeD1(), KV: kv },
+      {
+        DB: nativeD1(),
+        KV: kv,
+        YURUCOMMU_SESSION_HASH_SALT: "synthetic-test-session-salt",
+      },
       {},
     );
 
@@ -821,6 +1050,7 @@ describe("public origin per lane", () => {
         {
           DB: edgeSql(),
           KV: edgeKv(),
+          YURUCOMMU_SESSION_HASH_SALT: "synthetic-test-session-salt",
           YURUCOMMU_RUNTIME_LANE: "portable",
         },
         {},
@@ -834,6 +1064,7 @@ describe("public origin per lane", () => {
     const bindings = {
       DB: edgeSql(),
       KV: kv,
+      YURUCOMMU_SESSION_HASH_SALT: "synthetic-test-session-salt",
       DELIVERY_QUEUE_NAME: "configured-main",
       DELIVERY_DLQ_NAME: "configured-dlq",
       YURUCOMMU_RUNTIME_LANE: "portable",

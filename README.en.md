@@ -12,6 +12,27 @@ manifest declares a generated-secret binding for fresh installs. Updating an
 existing Capsule requires separate platform custody/migration evidence because
 a changed generated-secret profile may also regenerate its encryption key.
 
+The Worker refuses missing, blank and known public development-fallback salts
+before Core effects, preserving every accepted byte. The code-only publishing
+entrypoint requires exactly one `YURUCOMMU_SESSION_HASH_SALT` name in the root
+`secrets.required` array of the strict JSON config selected by
+`YURUMEET_WRANGLER_CONFIG`, before the gate, D1 check or publication. A plaintext
+`vars` entry with that name is refused. Wrangler then inherits required secrets
+and refuses publication if the existing Worker lacks one. This validates the
+declaration, not its value, entropy or active-serving-Version custody.
+
+The checked-in `wrangler.jsonc` remains a local development template without a
+blanket required-secret list: once such a list exists, Wrangler loads only those
+local secret inputs. In the realized publishing config, list the salt and
+encryption key plus the secret names needed by the selected authentication
+method. Include `AUTH_PASSWORD_HASH` for password auth; do not require it for
+an OIDC-only installation. Never put secret values in the config. Adding the
+first salt to an existing installation needs a separate credential-owner-reviewed
+Secret-setting and re-authentication procedure using that installation's
+password or OIDC method. Preserve its encryption key, data and the new salt
+through later updates and code rollback; do not convert/delete old sessions to
+disguise the required re-login. Local proof does not qualify public custody.
+
 The sensitive root `main.tf` input `auth_password_hash` projects a canonical
 PBKDF2 hash or unambiguous bootstrap token into the `AUTH_PASSWORD_HASH` Secret.
 Nonblank values retain the string OpenTofu receives. Values considered blank

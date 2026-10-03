@@ -10,9 +10,9 @@
 //   bun run deploy -- yurumeet-site --environment=integration|production
 //
 // 3 つの surface は publish するものが違い、負う obligation も違います。
-// worker は code だけを差し替える routine な surface、worker-release は consumer
-// が pin する identity を mint する published-identity surface、site は静的な
-// landing site です。
+// worker は session secret の継承設定を admission する authority-sensitive surface、
+// worker-release は consumer が pin する identity を mint する published-identity
+// surface、site は静的な landing site です。
 //
 // どの surface も publish するのは **code と静的 asset だけ** です。durable store
 // (D1 DB / KV / R2 MEDIA) は変更しません。Worker publish 前には D1 を SELECT だけで
@@ -93,7 +93,11 @@ const CONTRACT = {
     {
       surface: W.surface,
       target: `cloudflare-worker:${W.worker}`,
-      covers: ["wrangler.jsonc"],
+      covers: [
+        "wrangler.jsonc",
+        "scripts/deploy.mjs",
+        "scripts/yurumeet-worker-bindings.ts",
+      ],
       requiresScripts: ["check", "build:takos-worker", "smoke:postdeploy"],
       requiresTools: ["git", "bun", "wrangler"],
       requiresEnv: [
@@ -105,13 +109,15 @@ const CONTRACT = {
       // code だけを差し替えます。直前の version がそのまま戻し先として残るので
       // irreversible は立ちません。durable store の schema を変える作業は
       // この surface ではなく、別の deliberate な手順です。
-      triggers: [],
+      triggers: ["authority"],
       obligations: {
-        provenance: `refuses a dirty worktree, runs \`${OWNER_GATE}\`, builds ${W.bundle} from that worktree with \`bun run build\`, records the commit and bundle sha256, then uses the realized YURUMEET_WRANGLER_CONFIG for a read-only D1 metadata query requiring Core 4.1.11 migration 0030's media deletion table and index before publication.`,
+        provenance: `refuses a dirty worktree, requires the realized YURUMEET_WRANGLER_CONFIG to declare YURUCOMMU_SESSION_HASH_SALT in root secrets.required, runs \`${OWNER_GATE}\`, builds ${W.bundle} from that worktree with \`bun run build:takos-worker\`, records the commit and bundle sha256, then uses the same config for a read-only D1 metadata query requiring Core 4.1.11 migration 0030's media deletion table and index before publication.`,
         "post-conditions": `runs \`bun run smoke:postdeploy\`, which exercises real request paths against the deployed Worker rather than a health endpoint; the smoke reads the public launch URL from the Capsule outputs file selected by TAKOSUMI_CAPSULE_OUTPUTS_FILE and authenticates with YURUMEET_E2E_SESSION_COOKIE for OIDC-only deployments or YURUMEET_E2E_PASSWORD where password auth is enabled`,
         reversal: `the current version id is read and printed before publishing; restore it with \`wrangler versions list --name ${W.worker}\` and \`wrangler versions deploy <previous-id>@100%\``,
         "failure-handling":
-          "prints the provider's own stdout and stderr; config, D1 query, or schema mismatch blocks before publication; post-publication failures exit non-zero and name the previous version instead of retrying",
+          "prints the provider's own stdout and stderr; missing session-salt config blocks before any gate, and D1 query or schema mismatch blocks before publication; post-publication failures exit non-zero and name the previous version instead of retrying",
+        "independent-review":
+          "before publishing, independently review exact source, native artifact, and CI evidence for session-salt behavior plus the realized config admission and pinned Wrangler strict secret inheritance; these checks prove declaration and behavior only, not the secret value or active Worker binding, so the operator separately owns custody and must supply the exact existing secret without rotation",
       },
     },
     {
@@ -131,7 +137,7 @@ const CONTRACT = {
       requiresScripts: ["check", "build:takos-worker", R.smokeScript],
       requiresTools: ["git", "bun", "gh"],
       requiresEnv: [],
-      triggers: ["published-identity"],
+      triggers: ["published-identity", "authority"],
       obligations: {
         provenance:
           "refuses a dirty, detached, or unpushed worktree; requires main for publication; runs `bun run check`; builds and boots the embedded Worker from that exact commit; requires package.json, the direct-Cloudflare module's release-tag default, the append-only release.lock.json pin, the repository manifest's module_default release inputs, and the deploy/takoform sourceBuild assets to identify the same tag, commit, and artifact digest; and records the source commit plus SHA-256 in the release manifest",
@@ -143,6 +149,8 @@ const CONTRACT = {
           "fails before mutation when the tag, the release, or an aligned lock pin is missing or already taken, printing the exact release.lock.json entry the publish requires; after release creation starts it reports an indeterminate publication and requires authoritative tag/release readback before any retry",
         "no-overwrite":
           "derives one SemVer tag from package.json, refuses any existing local/remote tag or GitHub Release, reads repos/tako0614/yurumeet/immutable-releases immediately before create and requires enabled:true, requires post-readback isImmutable:true, and uses GitHub create-only release publication without update or delete paths",
+        "independent-review":
+          "before publishing, independently review exact source, native artifact, and CI evidence for the immutable Worker's required YURUCOMMU_SESSION_HASH_SALT runtime contract and the direct publisher's strict config declaration; this release proves no deployed secret value or active binding, which remains separate operator-owned custody and must be preserved exactly",
       },
     },
     {
@@ -581,6 +589,58 @@ if (!existsSync(resolvedConfig)) {
   );
 }
 const configText = readFileSync(resolvedConfig, "utf8");
+function requireSessionSaltConfig(text) {
+  let config;
+  try {
+    config = JSON.parse(text);
+  } catch {
+    die(
+      "the realized Wrangler config must be strict JSON and declare the required session-salt secret; publication was not attempted",
+    );
+  }
+
+  const required = config?.secrets?.required;
+  const requiredIsValid =
+    config &&
+    typeof config === "object" &&
+    !Array.isArray(config) &&
+    config.secrets &&
+    typeof config.secrets === "object" &&
+    !Array.isArray(config.secrets) &&
+    Array.isArray(required) &&
+    required.length > 0 &&
+    required.every((name) => typeof name === "string" && name.trim() !== "") &&
+    new Set(required).size === required.length &&
+    required.filter((name) => name === "YURUCOMMU_SESSION_HASH_SALT").length ===
+      1;
+  const hasPlaintextSalt = (bindings) =>
+    bindings &&
+    typeof bindings === "object" &&
+    !Array.isArray(bindings) &&
+    Object.hasOwn(bindings, "YURUCOMMU_SESSION_HASH_SALT");
+  const hasEnvironmentPlaintextSalt =
+    config?.env &&
+    typeof config.env === "object" &&
+    !Array.isArray(config.env) &&
+    Object.values(config.env).some(
+      (environment) =>
+        environment &&
+        typeof environment === "object" &&
+        !Array.isArray(environment) &&
+        hasPlaintextSalt(environment.vars),
+    );
+
+  if (
+    !requiredIsValid ||
+    hasPlaintextSalt(config?.vars) ||
+    hasEnvironmentPlaintextSalt
+  ) {
+    die(
+      "the realized Wrangler config must declare YURUCOMMU_SESSION_HASH_SALT exactly once in root secrets.required and must not set it in plaintext vars; publication was not attempted",
+    );
+  }
+}
+requireSessionSaltConfig(configText);
 const configValues = configText
   .split("\n")
   .filter((line) => !/^\s*(?:#|\/\/)/u.test(line))

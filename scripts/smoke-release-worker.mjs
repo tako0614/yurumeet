@@ -29,6 +29,9 @@ const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const DELIVERY_QUEUE = "yurumeet-delivery";
 const DELIVERY_DLQ = "yurumeet-delivery-dlq";
 const SESSION_HASH_SALT = "release-smoke-session-salt-not-a-credential";
+const REQUIRED_SESSION_SALT_ERROR =
+  "YURUCOMMU_SESSION_HASH_SALT must be configured with a non-development value";
+const PUBLIC_FALLBACK_SESSION_SALT = "yurucommu:dev-only-session-hash-salt";
 
 async function qualifyBackgroundEvents(worker) {
   const schemaBytes = readFileSync(
@@ -413,6 +416,231 @@ async function smokeNativeWorker(
   }
 }
 
+async function applyIdentityOnlySchema(db) {
+  const schemaBytes = readFileSync(
+    resolve(repo, "deploy/takoform/migrations/schema-bundle.json"),
+  );
+  const schema = JSON.parse(schemaBytes);
+  if (
+    schema.apiVersion !== "takosumi.resource-migrations/v1" ||
+    schema.engine !== "sqlite" ||
+    !Array.isArray(schema.entries) ||
+    schema.entries.length === 0
+  ) {
+    throw new Error("session-salt smoke requires the product migration bundle");
+  }
+  for (const entry of schema.entries) {
+    if (
+      typeof entry.sql !== "string" ||
+      entry.sha256 !== `sha256:${sha256(Buffer.from(entry.sql, "utf8"))}`
+    ) {
+      throw new Error("session-salt smoke migration digest mismatch");
+    }
+    const statements = unstable_splitSqlQuery(entry.sql);
+    if (statements.length === 0) {
+      throw new Error("session-salt smoke migration contains no SQL");
+    }
+    await db.batch(statements.map((sql) => db.prepare(sql)));
+  }
+  return {
+    schemaSha256: `sha256:${sha256(schemaBytes)}`,
+    migrationCount: schema.entries.length,
+  };
+}
+
+async function identityCounts(db) {
+  const actors = await db
+    .prepare("SELECT COUNT(*) AS count FROM actors")
+    .first();
+  const sessions = await db
+    .prepare("SELECT COUNT(*) AS count FROM sessions")
+    .first();
+  return { actors: actors?.count ?? null, sessions: sessions?.count ?? null };
+}
+
+function createSaltQualificationWorker(artifactPath, config, salt, outbound) {
+  const bindings = {
+    APP_URL: APP_ORIGIN,
+    AUTH_PASSWORD_HASH: PASSWORD_FIXTURES[0].hash,
+    ENCRYPTION_KEY: "00".repeat(32),
+  };
+  if (salt !== undefined) {
+    bindings.YURUCOMMU_SESSION_HASH_SALT = salt;
+  }
+  return new Miniflare({
+    rootPath: dirname(artifactPath),
+    modules: [{ type: "ESModule", path: artifactPath }],
+    modulesRoot: dirname(artifactPath),
+    compatibilityDate: config.compatibility_date,
+    compatibilityFlags: config.compatibility_flags,
+    cf: false,
+    routes: [APP_ORIGIN + "/*"],
+    bindings,
+    d1Databases: ["DB"],
+    kvNamespaces: ["KV"],
+    r2Buckets: ["MEDIA"],
+    outboundService: async () => {
+      outbound.blockedFetches++;
+      return new Response(null, { status: 502 });
+    },
+  });
+}
+
+async function invokePasswordLogin(nativeWorker) {
+  return nativeWorker.fetch(`${APP_ORIGIN}/api/auth/login`, {
+    method: "POST",
+    headers: {
+      origin: APP_ORIGIN,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({ password: TEST_PASSWORD }),
+  });
+}
+
+async function qualifyRequiredSessionSalt(artifactPath) {
+  const sourceConfig = unstable_readConfig(
+    { config: resolve(repo, "wrangler.jsonc") },
+    { hideWarnings: true },
+  );
+  if (!sourceConfig.compatibility_date) {
+    throw new Error("wrangler.jsonc must declare compatibility_date");
+  }
+  const outbound = { blockedFetches: 0 };
+  const checks = [];
+
+  // This control starts with DDL only and lets the real password route create
+  // its owner and salted session through the native Workerd Fetcher.
+  let worker = createSaltQualificationWorker(
+    artifactPath,
+    sourceConfig,
+    SESSION_HASH_SALT,
+    outbound,
+  );
+  let schema;
+  try {
+    await worker.ready;
+    const db = await worker.getD1Database("DB");
+    schema = await applyIdentityOnlySchema(db);
+    const before = await identityCounts(db);
+    if (before.actors !== 0 || before.sessions !== 0) {
+      throw new Error(
+        "session-salt valid control did not start from empty identity tables",
+      );
+    }
+    const native = await worker.getWorker();
+    const response = await invokePasswordLogin(native);
+    const responseText = await boundedText(response);
+    let body;
+    try {
+      body = JSON.parse(responseText);
+    } catch {
+      throw new Error("session-salt valid control returned non-JSON");
+    }
+    const cookies = response.headers
+      .getSetCookie()
+      .filter((header) => header.trim().toLowerCase().startsWith("session="));
+    const cookieValue = cookies[0]?.split(";", 1)[0]?.slice("session=".length);
+    const actor = await db
+      .prepare("SELECT ap_id, role FROM actors ORDER BY ap_id")
+      .first();
+    const session = await db
+      .prepare("SELECT id, member_id, access_token, expires_at FROM sessions")
+      .first();
+    const after = await identityCounts(db);
+    const rawSession = cookieValue ? decodeURIComponent(cookieValue) : "";
+    const expectedSessionId = `sha256:${sha256(Buffer.from(`${SESSION_HASH_SALT}:${rawSession}`, "utf8"))}`;
+    if (
+      response.status !== 200 ||
+      body?.success !== true ||
+      cookies.length !== 1 ||
+      rawSession.length === 0 ||
+      actor?.ap_id !== `${APP_ORIGIN}/ap/users/tako` ||
+      actor?.role !== "owner" ||
+      after.actors !== 1 ||
+      after.sessions !== 1 ||
+      session?.id !== expectedSessionId ||
+      session?.member_id !== actor.ap_id ||
+      session?.access_token !== expectedSessionId ||
+      !Number.isFinite(Date.parse(session?.expires_at ?? "")) ||
+      Date.parse(session?.expires_at ?? "") <= Date.now()
+    ) {
+      throw new Error(
+        "session-salt valid control did not persist its owner session",
+      );
+    }
+    checks.push("required-session-salt-valid-control");
+  } finally {
+    await worker.dispose();
+  }
+
+  const invalidCases = [
+    { name: "missing", value: undefined },
+    { name: "blank", value: " \t" },
+    { name: "public-fallback", value: PUBLIC_FALLBACK_SESSION_SALT },
+  ];
+  for (const item of invalidCases) {
+    worker = createSaltQualificationWorker(
+      artifactPath,
+      sourceConfig,
+      item.value,
+      outbound,
+    );
+    try {
+      await worker.ready;
+      const db = await worker.getD1Database("DB");
+      await applyIdentityOnlySchema(db);
+      const before = await identityCounts(db);
+      if (before.actors !== 0 || before.sessions !== 0) {
+        throw new Error(`session-salt ${item.name} case did not start empty`);
+      }
+      const native = await worker.getWorker();
+      let observedExactGuard = false;
+      try {
+        const response = await invokePasswordLogin(native);
+        await response.body?.cancel();
+      } catch (error) {
+        observedExactGuard =
+          error instanceof Error &&
+          error.message === REQUIRED_SESSION_SALT_ERROR;
+      }
+      const after = await identityCounts(db);
+      if (!observedExactGuard) {
+        throw new Error(
+          `session-salt ${item.name} case missed the native required-salt guard`,
+        );
+      }
+      if (after.actors !== 0 || after.sessions !== 0) {
+        throw new Error(
+          `session-salt ${item.name} guard wrote owner or session rows`,
+        );
+      }
+      checks.push(`required-session-salt-${item.name}-refusal`);
+    } finally {
+      await worker.dispose();
+    }
+  }
+  if (outbound.blockedFetches !== 0) {
+    throw new Error(
+      "session-salt qualification attempted an external Worker fetch",
+    );
+  }
+  return {
+    status: "PASSED",
+    schemaSha256: schema.schemaSha256,
+    migrationCount: schema.migrationCount,
+    validControl: "password-login-persisted-one-owner-and-salted-session",
+    invalidCases: invalidCases.map(({ name }) => name),
+    guardClass: "required-nondevelopment-session-salt",
+    guardSource: "native-fetch-thrown-error-message",
+    identityRowsAfterRefusal: { actors: 0, sessions: 0 },
+    externalWorkerFetches: {
+      policy: "denied-locally-by-miniflare-outbound-service",
+      observedBlockedFetches: outbound.blockedFetches,
+    },
+    checks,
+  };
+}
+
 async function main() {
   const [artifactArgument, expectedDigestArgument] = process.argv.slice(2);
   if (!artifactArgument || process.argv.length > 4) {
@@ -440,9 +668,12 @@ async function main() {
       await smokeNativeWorker(artifactPath, artifactDigest, fixture),
     );
   }
+  const sessionSaltGuard = await qualifyRequiredSessionSalt(artifactPath);
   process.stdout.write(
     `${JSON.stringify({
       ...results[0],
+      sessionSaltGuard,
+      checks: [...results[0].checks, ...sessionSaltGuard.checks],
       authentication: {
         passwordMethods: PASSWORD_FIXTURES.map((fixture) => fixture.method),
         actor: "preexisting-fixture-owner",
