@@ -627,6 +627,7 @@ ul {
 
 .c-talk-chat-failed {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
   justify-content: flex-end;
@@ -635,11 +636,14 @@ ul {
 }
 
 .c-talk-chat-failed span {
+  flex-basis: 100%;
+  text-align: right;
   color: #e0245e;
   font-weight: 700;
 }
 
 .c-talk-chat-failed button {
+  flex-shrink: 0;
   border: 1px solid #d4d4df;
   border-radius: 999px;
   background: #ffffff;

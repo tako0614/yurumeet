@@ -59,10 +59,14 @@ function dmPost(response, origin, peerApId, content) {
 }
 
 function waitForDmPost(page, origin, peerApId, content) {
-  return page.waitForResponse(
+  const pending = page.waitForResponse(
     (response) => dmPost(response, origin, peerApId, content),
     { timeout: 15_000 },
   );
+  // A preceding UI action can fail before the caller awaits this waiter.
+  // Observe that rejection immediately without changing the returned promise.
+  pending.catch(() => {});
+  return pending;
 }
 
 async function postFromPage(page, path, body) {
@@ -160,6 +164,85 @@ async function assertDmPersistence(db, { apId, actorApId, peerApId, content }) {
     "D1 DM recipient, Create activity, or peer inbox row is missing",
   );
   return object;
+}
+
+async function dmSideEffectCounts(db, { actorApId, peerApId, content }) {
+  return {
+    notes: await first(
+      db,
+      "SELECT COUNT(*) AS count FROM objects WHERE attributed_to = ? AND content = ? AND type = 'Note' AND visibility = 'direct'",
+      actorApId,
+      content,
+    ),
+    creates: await first(
+      db,
+      `SELECT COUNT(*) AS count FROM activities a
+        JOIN objects o ON o.ap_id = a.object_ap_id
+       WHERE o.attributed_to = ? AND o.content = ? AND a.type = 'Create'`,
+      actorApId,
+      content,
+    ),
+    recipients: await first(
+      db,
+      `SELECT COUNT(*) AS count FROM object_recipients r
+        JOIN objects o ON o.ap_id = r.object_ap_id
+       WHERE o.attributed_to = ? AND o.content = ?
+         AND r.recipient_ap_id = ? AND r.type = 'to'`,
+      actorApId,
+      content,
+      peerApId,
+    ),
+    peerInbox: await first(
+      db,
+      `SELECT COUNT(*) AS count FROM inbox i
+        JOIN activities a ON a.ap_id = i.activity_ap_id
+        JOIN objects o ON o.ap_id = a.object_ap_id
+       WHERE o.attributed_to = ? AND o.content = ?
+         AND i.actor_ap_id = ? AND a.type = 'Create'`,
+      actorApId,
+      content,
+      peerApId,
+    ),
+  };
+}
+
+function hasSideEffectCounts(counts, expected) {
+  return (
+    counts.notes?.count === expected &&
+    counts.creates?.count === expected &&
+    counts.recipients?.count === expected &&
+    counts.peerInbox?.count === expected
+  );
+}
+
+async function expectUnknownDelivery(page, content) {
+  // Polling may already render the committed server message with the same text.
+  // Only the local failed placeholder owns the unconfirmed outcome controls.
+  const row = page
+    .locator("li.c-talk-chat.is-failed")
+    .filter({ hasText: content });
+  await row.waitFor({ state: "visible", timeout: 10_000 });
+  requireTalk(
+    (await row.count()) === 1,
+    "unconfirmed placeholder is not unique",
+  );
+  await row
+    .getByText("送信結果を確認できません", { exact: true })
+    .waitFor({ state: "visible", timeout: 10_000 });
+  await row
+    .getByText("再送すると重複する可能性があります。履歴を確認してください。", {
+      exact: true,
+    })
+    .waitFor({ state: "visible", timeout: 10_000 });
+  await row.getByRole("button", { name: "再送" }).waitFor({
+    state: "visible",
+    timeout: 10_000,
+  });
+  await row.getByRole("button", { name: "表示を消す" }).waitFor({
+    state: "visible",
+    timeout: 10_000,
+  });
+  return row;
 }
 
 async function addLocalMemberPeer(db, peerApId) {
@@ -515,7 +598,8 @@ export async function qualifyBrowserTalk({
   const abortGate = new Promise((resolve) => (releaseAbort = resolve));
   const intercepted = new Promise((resolve) => (notifyIntercept = resolve));
   let abortCount = 0;
-  const abortOnePost = async (route) => {
+  let beforeBackendAbortError = null;
+  const abortBeforeBackend = async (route) => {
     const request = route.request();
     if (
       request.method() === "POST" &&
@@ -527,15 +611,20 @@ export async function qualifyBrowserTalk({
       abortCount += 1;
       notifyIntercept();
       await abortGate;
-      await route.abort("failed");
+      try {
+        await route.abort("failed");
+      } catch (error) {
+        beforeBackendAbortError =
+          error instanceof Error ? error.message : String(error);
+      }
       return;
     }
     await route.fallback();
   };
   const failedRow = page
-    .locator("li.c-talk-chat.is-failed")
+    .locator("li.c-talk-chat")
     .filter({ hasText: failedText });
-  await page.route("**/api/dm/user/**/messages", abortOnePost);
+  await page.route("**/api/dm/user/**/messages", abortBeforeBackend);
   let interceptTimeout;
   try {
     await textarea.fill(failedText);
@@ -547,7 +636,7 @@ export async function qualifyBrowserTalk({
           () =>
             reject(
               new Error(
-                "release-browser talk controlled DM request was not intercepted",
+                "release-browser talk before-backend DM request was not intercepted",
               ),
             ),
           10_000,
@@ -559,18 +648,19 @@ export async function qualifyBrowserTalk({
       .filter({ hasText: failedText });
     await pending.waitFor({ state: "visible", timeout: 10_000 });
     releaseAbort();
-    await failedRow.waitFor({ state: "visible", timeout: 10_000 });
-    await failedRow
-      .getByText("送信できませんでした", { exact: true })
-      .waitFor({ state: "visible", timeout: 10_000 });
+    const unknownRow = await expectUnknownDelivery(page, failedText);
+    await unknownRow.getByRole("button", { name: "再送" }).waitFor({
+      state: "visible",
+      timeout: 10_000,
+    });
   } finally {
     clearTimeout(interceptTimeout);
     releaseAbort();
-    await page.unroute("**/api/dm/user/**/messages", abortOnePost);
+    await page.unroute("**/api/dm/user/**/messages", abortBeforeBackend);
   }
   requireTalk(
-    abortCount === 1,
-    "controlled network abort was not exactly once",
+    abortCount === 1 && !beforeBackendAbortError,
+    `before-backend abort did not complete exactly once: ${beforeBackendAbortError ?? "count mismatch"}`,
   );
   const failedDbRows = await all(
     db,
@@ -578,16 +668,13 @@ export async function qualifyBrowserTalk({
     actorApId,
     failedText,
   );
-  requireTalk(failedDbRows.length === 0, "aborted DM left a D1 Note");
+  requireTalk(failedDbRows.length === 0, "before-backend abort left a D1 Note");
 
   const retryWait = waitForDmPost(page, origin, peerApId, failedText);
   await failedRow.getByRole("button", { name: "再送" }).click();
   const retry = await retryWait;
-  requireTalk(
-    retry.status() === 201,
-    "failed bubble retry did not use real Core API",
-  );
-  const retryBody = await jsonResponse(retry, "DM retry");
+  requireTalk(retry.status() === 201, "known-empty retry did not return 201");
+  const retryBody = await jsonResponse(retry, "before-backend retry");
   const retriedObject = await assertDmPersistence(db, {
     apId: retryBody.message?.id,
     actorApId,
@@ -604,28 +691,231 @@ export async function qualifyBrowserTalk({
           failedText,
         )
       ).length === 1,
-    "retry did not produce exactly one persisted Note in the original thread",
+    "before-backend retry did not create exactly one persisted Note",
   );
   const retriedRow = page
     .locator("li.c-talk-chat")
     .filter({ hasText: failedText });
   await retriedRow.waitFor({ state: "visible", timeout: 10_000 });
   await settledBubble(page, failedText);
-  requireTalk(
-    !(await retriedRow.evaluate(
-      (element) =>
-        element.classList.contains("is-pending") ||
-        element.classList.contains("is-failed"),
-    )),
-    "successful retry retained an optimistic failed/pending message",
-  );
   await page.waitForFunction(
     () => document.querySelector('textarea[name="message"]')?.value === "",
     undefined,
     { timeout: 10_000 },
   );
   checks.push(
-    "browser-talk-real-network-failure-visible-and-core-retry-persisted-once",
+    "browser-talk-before-backend-loss-shows-unknown-warning-and-real-retry-persists-one",
+  );
+
+  const lostAckText = `browser committed lost acknowledgement ${crypto.randomUUID()}`;
+  let releaseLostAck;
+  let notifyLostAck;
+  const lostAckGate = new Promise((resolve) => (releaseLostAck = resolve));
+  const lostAckIntercepted = new Promise(
+    (resolve) => (notifyLostAck = resolve),
+  );
+  let lostAckAbortCount = 0;
+  let backendError = null;
+  let browserAbortError = null;
+  let lostAckObservation = null;
+  let lostAckNarrowLayout = null;
+  const abortAfterCommit = async (route) => {
+    const request = route.request();
+    if (
+      request.method() === "POST" &&
+      new URL(request.url()).origin === origin &&
+      new URL(request.url()).pathname ===
+        `/api/dm/user/${encodeURIComponent(peerApId)}/messages` &&
+      request.postDataJSON()?.content === lostAckText
+    ) {
+      lostAckAbortCount += 1;
+      try {
+        const response = await route.fetch({ maxRedirects: 0 });
+        const body = await response.json();
+        requireTalk(
+          response.status() === 201 && typeof body.message?.id === "string",
+          "real backend did not return 201 before simulated lost ACK",
+        );
+        await assertDmPersistence(db, {
+          apId: body.message.id,
+          actorApId,
+          peerApId,
+          content: lostAckText,
+        });
+        const counts = await dmSideEffectCounts(db, {
+          actorApId,
+          peerApId,
+          content: lostAckText,
+        });
+        requireTalk(
+          hasSideEffectCounts(counts, 1),
+          `pre-abort database readback was not one complete DM: ${JSON.stringify(counts)}`,
+        );
+        lostAckObservation = {
+          status: response.status(),
+          messageId: body.message.id,
+          counts,
+        };
+      } catch (error) {
+        backendError = error instanceof Error ? error.message : String(error);
+      }
+      notifyLostAck();
+      await lostAckGate;
+      try {
+        await route.abort("failed");
+      } catch (error) {
+        browserAbortError =
+          error instanceof Error ? error.message : String(error);
+      }
+      return;
+    }
+    await route.fallback();
+  };
+  await page.route("**/api/dm/user/**/messages", abortAfterCommit);
+  let lostAckTimeout;
+  try {
+    await textarea.fill(lostAckText);
+    await sendButton.click();
+    await Promise.race([
+      lostAckIntercepted,
+      new Promise((_, reject) => {
+        lostAckTimeout = setTimeout(
+          () =>
+            reject(new Error("lost-ACK backend request was not intercepted")),
+          15_000,
+        );
+      }),
+    ]);
+    requireTalk(
+      !backendError && lostAckObservation?.status === 201,
+      `lost-ACK backend verification failed: ${backendError ?? "no observation"}`,
+    );
+    await page
+      .locator("li.c-talk-chat.is-pending")
+      .filter({ hasText: lostAckText })
+      .waitFor({ state: "visible", timeout: 10_000 });
+    releaseLostAck();
+    const unknownRow = await expectUnknownDelivery(page, lostAckText);
+    await page.setViewportSize({ width: 390, height: 844 });
+    // Resizing an already-scrolled conversation may move the newest controls
+    // below the viewport. Exercise the actual scroll before measuring them.
+    await unknownRow
+      .locator(".c-talk-chat-failed")
+      .scrollIntoViewIfNeeded({ timeout: 10_000 });
+    const unknownWarning = unknownRow.getByText("送信結果を確認できません", {
+      exact: true,
+    });
+    const duplicateCaution = unknownRow.getByText(
+      "再送すると重複する可能性があります。履歴を確認してください。",
+      { exact: true },
+    );
+    const retryButton = unknownRow.getByRole("button", { name: "再送" });
+    const dismissButton = unknownRow.getByRole("button", {
+      name: "表示を消す",
+    });
+    const narrowBounds = await Promise.all(
+      [unknownWarning, duplicateCaution, retryButton, dismissButton].map(
+        (locator) =>
+          locator.evaluate((element) => {
+            const rect = element.getBoundingClientRect();
+            return {
+              left: rect.left,
+              right: rect.right,
+              top: rect.top,
+              bottom: rect.bottom,
+            };
+          }),
+      ),
+    );
+    const narrowWidth = await page.evaluate(() => ({
+      viewport: document.documentElement.clientWidth,
+      content: document.documentElement.scrollWidth,
+    }));
+    lostAckNarrowLayout = { viewport: narrowWidth, bounds: narrowBounds };
+    requireTalk(
+      (await unknownWarning.isVisible()) &&
+        (await duplicateCaution.isVisible()) &&
+        (await retryButton.isVisible()) &&
+        (await dismissButton.isVisible()) &&
+        narrowWidth.viewport === 390 &&
+        narrowWidth.content <= 390 &&
+        narrowBounds.every(
+          (rect) =>
+            rect.top >= 0 &&
+            rect.bottom <= 844 &&
+            rect.left >= 0 &&
+            rect.right <= 390,
+        ),
+      `unknown delivery controls overflow or leave the viewport at 390px: ${JSON.stringify({ narrowWidth, narrowBounds })}`,
+    );
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await unknownRow.getByRole("button", { name: "表示を消す" }).click();
+    await page
+      .getByText(
+        "再送すると重複する可能性があります。履歴を確認してください。",
+        {
+          exact: true,
+        },
+      )
+      .waitFor({ state: "detached", timeout: 10_000 });
+  } finally {
+    clearTimeout(lostAckTimeout);
+    releaseLostAck();
+    await page.unroute("**/api/dm/user/**/messages", abortAfterCommit);
+  }
+  requireTalk(
+    lostAckAbortCount === 1 &&
+      !backendError &&
+      !browserAbortError &&
+      lostAckObservation?.status === 201,
+    `lost-ACK injection did not complete exactly once: ${backendError ?? browserAbortError ?? "missing backend result"}`,
+  );
+  const afterLostAckDismiss = await dmSideEffectCounts(db, {
+    actorApId,
+    peerApId,
+    content: lostAckText,
+  });
+  requireTalk(
+    hasSideEffectCounts(afterLostAckDismiss, 1),
+    `dismissing an unknown placeholder changed persisted DM side effects: ${JSON.stringify(afterLostAckDismiss)}`,
+  );
+  checks.push(
+    "browser-talk-after-commit-lost-ack-warns-dismisses-placeholder-and-keeps-one-real-dm",
+  );
+
+  const rejectedText = "x".repeat(5001);
+  await textarea.fill(rejectedText);
+  const rejectedWait = waitForDmPost(page, origin, peerApId, rejectedText);
+  await sendButton.click();
+  const rejectedResponse = await rejectedWait;
+  requireTalk(
+    rejectedResponse.status() === 400,
+    "real oversized DM was not refused with HTTP 400",
+  );
+  const rejectedBody = await jsonResponse(
+    rejectedResponse,
+    "oversized DM refusal",
+  );
+  requireTalk(
+    String(rejectedBody.error).includes("Message too long"),
+    "real Core 400 did not report the length rejection",
+  );
+  const rejectedRow = page
+    .locator("li.c-talk-chat")
+    .filter({ hasText: rejectedText });
+  await rejectedRow
+    .getByText("送信を受け付けられませんでした", { exact: true })
+    .waitFor({ state: "visible", timeout: 10_000 });
+  await rejectedRow.getByRole("button", { name: "削除" }).click();
+  const rejectedDbRows = await all(
+    db,
+    "SELECT ap_id FROM objects WHERE attributed_to = ? AND content = ?",
+    actorApId,
+    rejectedText,
+  );
+  requireTalk(rejectedDbRows.length === 0, "real HTTP 400 persisted a DM Note");
+  checks.push(
+    "browser-talk-real-core-400-shows-refused-outcome-without-persistence",
   );
 
   await page.reload({ waitUntil: "domcontentloaded", timeout: 20_000 });
@@ -633,12 +923,22 @@ export async function qualifyBrowserTalk({
     .locator("li.c-talk-rooms > button")
     .filter({ hasText: peerName })
     .click();
-  for (const content of [text, mediaText, failedText]) {
+  for (const content of [text, mediaText, failedText, lostAckText]) {
     await page.getByText(content, { exact: true }).waitFor({
       state: "visible",
       timeout: 15_000,
     });
   }
+  const persistedLostAckRows = page
+    .locator("li.c-talk-chat")
+    .filter({ hasText: lostAckText });
+  requireTalk(
+    (await persistedLostAckRows.count()) === 1,
+    "reload did not show exactly one server-persisted lost-ACK message",
+  );
+  await persistedLostAckRows
+    .getByText("送信結果を確認できません", { exact: true })
+    .waitFor({ state: "detached", timeout: 10_000 });
   await page.setViewportSize({ width: 390, height: 844 });
   await page.waitForFunction(
     () => {
@@ -677,6 +977,29 @@ export async function qualifyBrowserTalk({
     mediaUploadCount: uploads.length,
     retryMessageId: retryBody.message.id,
     abortedPosts: abortCount,
+    deliveryOutcomes: {
+      beforeBackendAbort: {
+        abortedPosts: abortCount,
+        notesBeforeRetry: failedDbRows.length,
+        retryStatus: retry.status(),
+        retryMessageId: retryBody.message.id,
+        persistedNoteCount: 1,
+      },
+      afterCommitLostAck: {
+        abortedPosts: lostAckAbortCount,
+        backendStatus: lostAckObservation.status,
+        firstCommittedMessageId: lostAckObservation.messageId,
+        browserAbortError,
+        retryAttempted: false,
+        dismissPreserved: afterLostAckDismiss,
+        reloadBubbleCount: await persistedLostAckRows.count(),
+        unknownState390px: lostAckNarrowLayout,
+      },
+      actualCoreRejection: {
+        status: rejectedResponse.status(),
+        persistedNoteCount: rejectedDbRows.length,
+      },
+    },
     mobileLayout,
   };
 }

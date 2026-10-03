@@ -840,7 +840,22 @@ export function ChatPane() {
                                     </div>
                                     <Show when={message.failed}>
                                       <div class="c-talk-chat-failed">
-                                        <span>送信できませんでした</span>
+                                        <span>
+                                          {message.deliveryFailure ===
+                                          "rejected"
+                                            ? "送信を受け付けられませんでした"
+                                            : "送信結果を確認できません"}
+                                        </span>
+                                        <Show
+                                          when={
+                                            message.deliveryFailure !==
+                                            "rejected"
+                                          }
+                                        >
+                                          <span>
+                                            再送すると重複する可能性があります。履歴を確認してください。
+                                          </span>
+                                        </Show>
                                         <button
                                           type="button"
                                           onClick={() =>
@@ -856,7 +871,10 @@ export function ChatPane() {
                                             chat.discardMessage(message.id)
                                           }
                                         >
-                                          削除
+                                          {message.deliveryFailure !==
+                                          "rejected"
+                                            ? "表示を消す"
+                                            : "削除"}
                                         </button>
                                       </div>
                                     </Show>
