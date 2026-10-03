@@ -342,10 +342,15 @@ export function createOutgoingRecovery(
         });
       }
     }
-    return [...rows.values()].sort(
-      (a, b) =>
-        a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id),
-    );
+    // The paging cursor uses the first canonical row. Keep the same tuple
+    // order as Core's history query; locale collation can put /a before /B
+    // and make a later request repeat an already displayed page.
+    return [...rows.values()].sort((a, b) => {
+      if (a.created_at !== b.created_at) {
+        return a.created_at < b.created_at ? -1 : 1;
+      }
+      return a.id === b.id ? 0 : a.id < b.id ? -1 : 1;
+    });
   };
 
   return {
