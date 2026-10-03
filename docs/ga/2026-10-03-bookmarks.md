@@ -1,4 +1,4 @@
-# Yurumeet bookmark removal — 2026-10-03
+# Yurumeet bookmark removal and stable draft identity — 2026-10-03
 
 Product UI unit stacked on PR44/head `c7ef25b81f1c178448f28663ab8b83769a814992`.
 Only the dedicated Yurumeet worktree is edited. Original message-search work,
@@ -43,6 +43,17 @@ lanes (12 checks, 13 public fixture Notes, seven exact issued session rows and n
 outbound requests); the final source additionally needs the auth-loss regression,
 complete owner gate, canonical prior114 prefix and exact-head CI. Qualification
 receipts and final counts are returned separately in the integration handoff.
+
+Canonical qualification also exposed an existing draft lifecycle defect before
+the new bookmark lanes: the visible failed-read warning changed to `conflict`.
+The conversation selector/profile dependencies can update without changing the
+scoped identity, but the previous effect still called save/enter and cleared
+attachments/search. Memoizing the scoped identity confines those transitions to
+an actual owner/origin/conversation change. The existing exact read-error check
+is retained and extended with same-contact reselection, unchanged saved bytes
+and empty unconfirmed input. No failure is accepted as a successful recovery.
+The exact dependency scheduling that triggered the original failure is unproved;
+the recorded warning status and source lifecycle path are distinct evidence.
 
 Existing operator-data upgrade/restore, real issuer/token custody, immutable
 published app + Provider + Host Plan/Apply/State/Output/URL, deployment recovery,

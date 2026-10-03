@@ -474,6 +474,18 @@ export async function qualifyBrowserDraftStorage({
     await page.reload({ waitUntil: "domcontentloaded", timeout: 20_000 });
     await selectContact(page, contacts[1]);
     const deniedRead = await warning(page, "read-error");
+    // Desktop can already have selected this newest contact on boot. A repeated
+    // selection must retain its failed-read state rather than save/enter again.
+    await selectContact(page, contacts[1]);
+    await warning(page, "read-error");
+    requireDraft(
+      (await storageValue(page, keyB)) === texts.readRetry,
+      "same-identity reselection changed unread saved bytes",
+    );
+    requireDraft(
+      (await page.locator('textarea[name="message"]').inputValue()) === "",
+      "same-identity reselection fabricated a recovered draft",
+    );
     await selectContact(page, contacts[0]);
     requireDraft(
       (await storageValue(page, keyB)) === texts.readRetry,
