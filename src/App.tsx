@@ -2011,7 +2011,7 @@ export default function App() {
       <PostComposer
         open={postComposerOpen()}
         onClose={() => setPostComposerOpen(false)}
-        onPosted={(post) => setFeedPosts((prev) => [post, ...prev])}
+        onPosted={feed.acknowledgeCreated}
       />
     </>
   );

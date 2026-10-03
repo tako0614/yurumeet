@@ -25,6 +25,7 @@ export function createTimelineFeed(options: {
   let generation = 0;
   let disposed = false;
   let activeMore: object | null = null;
+  let refreshCreated: Set<string> | null = null;
 
   const isCurrent = (requestGeneration: number) =>
     !disposed && generation === requestGeneration;
@@ -32,6 +33,8 @@ export function createTimelineFeed(options: {
   const refresh = async () => {
     if (disposed) return;
     const requestGeneration = ++generation;
+    const createdIds = new Set<string>();
+    refreshCreated = createdIds;
     // A new head establishes a new cursor chain. An old request may still
     // finish on the network, but must not append or settle the new chain.
     activeMore = null;
@@ -44,7 +47,34 @@ export function createTimelineFeed(options: {
       const page = await options.fetchPage({ limit: 30 });
       if (!isCurrent(requestGeneration)) return;
       batch(() => {
-        setPosts(page.posts);
+        // A GET snapshot can predate a successful creation ACK. Retain only
+        // ACKs from this refresh window, taking current rows so local patches
+        // and removals are respected. A later refresh has no such overlay.
+        setPosts((rows) => {
+          const currentCreated = new Map(
+            rows
+              .filter((post) => createdIds.has(post.ap_id))
+              .map((post) => [post.ap_id, post]),
+          );
+          const seen = new Set<string>();
+          const head = page.posts
+            .filter((post) => {
+              if (seen.has(post.ap_id)) return false;
+              seen.add(post.ap_id);
+              return (
+                !createdIds.has(post.ap_id) || currentCreated.has(post.ap_id)
+              );
+            })
+            .map((post) => currentCreated.get(post.ap_id) ?? post);
+          // Rows already in the server head keep its order. Only a creation
+          // missing from that earlier snapshot is added ahead of the head.
+          return [
+            ...Array.from(currentCreated.values()).filter(
+              (post) => !seen.has(post.ap_id),
+            ),
+            ...head,
+          ];
+        });
         setCursor(page.nextCursor);
         setHasMore(page.hasMore);
       });
@@ -54,6 +84,7 @@ export function createTimelineFeed(options: {
       if (posts().length > 0) options.onError("refresh");
     } finally {
       if (isCurrent(requestGeneration)) {
+        refreshCreated = null;
         batch(() => {
           setLoadedAt((options.now ?? Date.now)());
           setLoading(false);
@@ -108,10 +139,25 @@ export function createTimelineFeed(options: {
     loadedAt,
     refresh,
     loadMore,
+    acknowledgeCreated: (post: Post) => {
+      if (disposed) return;
+      refreshCreated?.add(post.ap_id);
+      setPosts((rows) => {
+        const existing = rows.findIndex((row) => row.ap_id === post.ap_id);
+        if (existing < 0) return [post, ...rows];
+        // A head may observe the committed object before its POST ACK arrives.
+        // Keep that row's current fields/order rather than inserting the ACK's
+        // older representation or a second canonical ID.
+        return rows.filter(
+          (row, index) => row.ap_id !== post.ap_id || index === existing,
+        );
+      });
+    },
     dispose: () => {
       disposed = true;
       generation += 1;
       activeMore = null;
+      refreshCreated = null;
     },
   };
 }

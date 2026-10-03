@@ -78,6 +78,180 @@ function harness() {
   };
 }
 
+function acknowledgeCreated(
+  feed: ReturnType<typeof createTimelineFeed>,
+  created: Post,
+) {
+  feed.acknowledgeCreated(created);
+}
+
+test("a creation ACK survives a head fetched before its commit without changing the server cursor", async () => {
+  const { feed, replies } = harness();
+  const previous = post("previous");
+  const created = post("created-during-refresh");
+  const first = feed.refresh();
+  replies[0].resolve(page([previous], "old-cursor", true));
+  await first;
+  const refresh = feed.refresh();
+  acknowledgeCreated(feed, created);
+  feed.setPosts((rows) =>
+    rows.map((row) =>
+      row.ap_id === created.ap_id ? { ...row, liked: true } : row,
+    ),
+  );
+  expect(ids(feed.posts())).toEqual([created.ap_id, previous.ap_id]);
+  replies[1].resolve(page([previous], "server-cursor", true));
+  await refresh;
+  expect(ids(feed.posts())).toEqual([created.ap_id, previous.ap_id]);
+  expect(feed.posts()[0].liked).toBe(true);
+  expect(feed.cursor()).toBe("server-cursor");
+  expect(feed.hasMore()).toBe(true);
+  expect(feed.loading()).toBe(false);
+  feed.dispose();
+});
+
+test("a delayed creation ACK already present in the server head does not duplicate or revert its row", async () => {
+  const { feed, replies } = harness();
+  const created = post("committed-before-ack");
+  const previous = post("previous");
+  const newer = post("newer-than-created");
+  const refresh = feed.refresh();
+  replies[0].resolve(page([newer, created, previous], "raw-cursor", true));
+  await refresh;
+  feed.setPosts((rows) =>
+    rows.map((row) =>
+      row.ap_id === created.ap_id ? { ...row, liked: true } : row,
+    ),
+  );
+  acknowledgeCreated(feed, created);
+  expect(ids(feed.posts())).toEqual([
+    newer.ap_id,
+    created.ap_id,
+    previous.ap_id,
+  ]);
+  expect(feed.posts()[1].liked).toBe(true);
+  expect(feed.cursor()).toBe("raw-cursor");
+  expect(feed.hasMore()).toBe(true);
+  feed.dispose();
+});
+
+test("ACK reconciliation uses current patches/removals and ends at this full refresh", async () => {
+  const { feed, replies } = harness();
+  const previous = post("previous");
+  const created = post("created");
+  const removed = post("removed");
+  const refresh = feed.refresh();
+  acknowledgeCreated(feed, created);
+  acknowledgeCreated(feed, removed);
+  acknowledgeCreated(feed, created);
+  feed.setPosts((rows) =>
+    rows
+      .filter((row) => row.ap_id !== removed.ap_id)
+      .map((row) => ({ ...row, bookmarked: true })),
+  );
+  replies[0].resolve(page([removed, created, previous], "real-cursor", true));
+  await refresh;
+  expect(ids(feed.posts())).toEqual([created.ap_id, previous.ap_id]);
+  expect(feed.posts()[0].bookmarked).toBe(true);
+  expect(feed.cursor()).toBe("real-cursor");
+  const next = feed.refresh();
+  replies[1].resolve(page([previous], null, false));
+  await next;
+  expect(ids(feed.posts())).toEqual([previous.ap_id]);
+  expect(feed.cursor()).toBe(null);
+  expect(feed.hasMore()).toBe(false);
+  feed.dispose();
+});
+
+test("a refreshed server head keeps its order while reusing a current ACK row", async () => {
+  const { feed, replies } = harness();
+  const previous = post("previous");
+  const created = post("created");
+  const newer = post("newer-server-row");
+  const first = feed.refresh();
+  replies[0].resolve(page([previous], "previous", true));
+  await first;
+  const refresh = feed.refresh();
+  acknowledgeCreated(feed, created);
+  feed.setPosts((rows) =>
+    rows.map((row) =>
+      row.ap_id === created.ap_id ? { ...row, liked: true } : row,
+    ),
+  );
+  replies[1].resolve(page([newer, created, previous], "raw", true));
+  await refresh;
+  expect(ids(feed.posts())).toEqual([
+    newer.ap_id,
+    created.ap_id,
+    previous.ap_id,
+  ]);
+  expect(feed.posts()[1].liked).toBe(true);
+  expect(feed.cursor()).toBe("raw");
+  feed.dispose();
+});
+
+test("a superseded refresh cannot clear the latest ACK window, and failed heads retain ACK rows", async () => {
+  for (const staleOutcome of ["success", "failure"] as const) {
+    const { feed, replies, errors } = harness();
+    const stale = feed.refresh();
+    const latest = feed.refresh();
+    const created = post("created-in-latest-window");
+    acknowledgeCreated(feed, created);
+    if (staleOutcome === "success")
+      replies[0].resolve(page([post("stale")], "stale", false));
+    else replies[0].reject(new Error("stale failed"));
+    await stale;
+    expect(feed.loading()).toBe(true);
+    replies[1].resolve(page([post("current")], "current", true));
+    await latest;
+    expect(ids(feed.posts())).toEqual([created.ap_id, post("current").ap_id]);
+    expect(errors).toEqual([]);
+    const failed = feed.refresh();
+    const additional = post("created-before-failure");
+    acknowledgeCreated(feed, additional);
+    replies[2].reject(new Error("current failed"));
+    await failed;
+    expect(ids(feed.posts())).toEqual([
+      additional.ap_id,
+      created.ap_id,
+      post("current").ap_id,
+    ]);
+    expect(feed.cursor()).toBe("current");
+    expect(errors).toEqual(["refresh"]);
+    const retry = feed.refresh();
+    replies[3].resolve(page([post("server-after-failure")], null, false));
+    await retry;
+    expect(ids(feed.posts())).toEqual([post("server-after-failure").ap_id]);
+    feed.dispose();
+  }
+});
+
+test("ACKs remain single rows during pagination and cannot write after disposal", async () => {
+  const { feed, replies } = harness();
+  const previous = post("previous");
+  const created = post("created-during-paging");
+  const initial = feed.refresh();
+  replies[0].resolve(page([previous], "cursor", true));
+  await initial;
+  const more = feed.loadMore();
+  acknowledgeCreated(feed, created);
+  acknowledgeCreated(feed, created);
+  replies[1].resolve(page([created, post("tail")], null, false));
+  await more;
+  expect(ids(feed.posts())).toEqual([
+    created.ap_id,
+    previous.ap_id,
+    post("tail").ap_id,
+  ]);
+  feed.dispose();
+  acknowledgeCreated(feed, post("disposed"));
+  expect(ids(feed.posts())).toEqual([
+    created.ap_id,
+    previous.ap_id,
+    post("tail").ap_id,
+  ]);
+});
+
 test("a late older page cannot append to a newer full refresh in either completion order", async () => {
   for (const order of ["old-first", "new-first"] as const) {
     const { feed, requests, replies, errors, tick } = harness();
