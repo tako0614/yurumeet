@@ -30,6 +30,7 @@ import { qualifyLogoutOutcome } from "./release-browser-logout-outcome.mjs";
 import { qualifyBookmarks } from "./release-browser-bookmarks.mjs";
 import { qualifyBookmarkAuthLoss } from "./release-browser-bookmark-auth-loss.mjs";
 import { qualifyBrowserHistoryReadOrder } from "./release-browser-history-read-order.mjs";
+import { qualifyBrowserHistoryPagination } from "./release-browser-history-pagination.mjs";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const password = " browser-smoke-only ";
@@ -777,6 +778,60 @@ async function smoke(artifact, digest) {
       await historyPage.close();
     }
 
+    // Append the pagination journey after every existing ordered check.
+    const paginationPage = await context.newPage();
+    let historyPagination;
+    const paginationPageErrors = [];
+    const paginationServerErrors = [];
+    const paginationBlockedOutbound = [];
+    try {
+      paginationPage.on("pageerror", (error) =>
+        paginationPageErrors.push(String(error)),
+      );
+      paginationPage.on("response", (response) => {
+        if (response.status() >= 500) {
+          paginationServerErrors.push({
+            path: new URL(response.url()).pathname,
+            status: response.status(),
+          });
+        }
+      });
+      await paginationPage.route("**/*", (route) => {
+        const url = new URL(route.request().url());
+        if (
+          url.origin === origin ||
+          url.protocol === "data:" ||
+          url.protocol === "blob:"
+        )
+          return route.continue();
+        paginationBlockedOutbound.push({
+          method: route.request().method(),
+          url: url.href,
+        });
+        return route.abort("blockedbyclient");
+      });
+      historyPagination = await qualifyBrowserHistoryPagination({
+        page: paginationPage,
+        db,
+        origin,
+        actorApId: ownerId,
+        checks,
+      });
+      check(
+        paginationPageErrors.length === 0 &&
+          paginationServerErrors.length === 0 &&
+          paginationBlockedOutbound.length === 0,
+        "history pagination raised a page error, HTTP 5xx or external request",
+      );
+      historyPagination.runtimeObservations = {
+        pageErrors: paginationPageErrors,
+        serverErrors: paginationServerErrors,
+        blockedOutbound: paginationBlockedOutbound,
+      };
+    } finally {
+      await paginationPage.close();
+    }
+
     check(
       pageErrors.length === 0,
       "community delete browser raised a runtime error",
@@ -808,6 +863,7 @@ async function smoke(artifact, digest) {
       bookmarks,
       bookmarkAuthLoss,
       historyReadOrder,
+      historyPagination,
       status: "PASSED",
     };
   } catch (error) {

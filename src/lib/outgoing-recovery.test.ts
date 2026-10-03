@@ -228,6 +228,67 @@ describe("outgoing-recovery", () => {
     ]);
   });
 
+  test("keeps the oldest canonical row in binary ID order across a same-millisecond page boundary", () => {
+    const recovery = createOutgoingRecovery(SCOPE_A, memoryStorage());
+    const published = "2026-10-02T10:00:01.000Z";
+    const message = (suffix: string): DMMessage => ({
+      ...ack(`https://meet.example/ap/objects/${suffix}`),
+      created_at: published,
+    });
+    const upperA = message("A");
+    const upperB = message("B");
+    const lowerA = message("a");
+    const lowerB = message("b");
+
+    // Core's first page is a,b; its next page is A,B. The UI builds its next
+    // cursor from the first rendered non-pending row. Leaving a there would
+    // repeat A,B and hide an even older same-millisecond row such as /@.
+    expect(
+      recovery.merge(USER, [lowerA, lowerB], SENDER).map((row) => row.id),
+    ).toEqual([lowerA.id, lowerB.id]);
+    expect(
+      recovery
+        .merge(USER, [upperA, upperB, lowerA, lowerB], SENDER)
+        .map((row) => row.id),
+    ).toEqual([upperA.id, upperB.id, lowerA.id, lowerB.id]);
+  });
+
+  test("orders canonical IDs around an ACK bridge while keeping local delivery rows by timestamp", () => {
+    const recovery = createOutgoingRecovery(SCOPE_A, memoryStorage());
+    const published = "2026-10-02T10:00:01.000Z";
+    const before = "2026-10-02T10:00:00.000Z";
+    const after = "2026-10-02T10:00:02.000Z";
+    const failedId = "temp-123e4567-e89b-42d3-a456-426614174002";
+    const bridge = ack("https://meet.example/ap/objects/B");
+    const punctuation = ack("https://meet.example/ap/objects/@");
+    const lowercase = ack("https://meet.example/ap/objects/a");
+
+    expect(recovery.queue(record({ id: tempId2, created_at: before }))).toBe(
+      true,
+    );
+    expect(recovery.queue(record({ created_at: published }))).toBe(true);
+    expect(recovery.confirm(tempId, bridge)).toBe(true);
+    expect(recovery.queue(record({ id: failedId, created_at: after }))).toBe(
+      true,
+    );
+    expect(recovery.fail(failedId, "unconfirmed")).toBe(true);
+
+    const rows = recovery.merge(
+      USER,
+      [lowercase, bridge, punctuation, bridge],
+      SENDER,
+    );
+    expect(rows.map((row) => row.id)).toEqual([
+      tempId2,
+      punctuation.id,
+      bridge.id,
+      lowercase.id,
+      failedId,
+    ]);
+    expect(rows[0]).toMatchObject({ pending: true });
+    expect(rows[4]).toMatchObject({ failed: true });
+  });
+
   test("deduplicates a canonical ACK and protects it from a stale history revision", () => {
     const recovery = createOutgoingRecovery(SCOPE_A, memoryStorage());
     expect(recovery.queue(record())).toBe(true);
