@@ -3,6 +3,7 @@ import {
   claimTakosumiOidcAutoStart,
   parseAuthConfig,
   shouldAutoStartTakosumiOidc,
+  suppressTakosumiOidcAutoStart,
   type AuthConfig,
 } from "../lib/auth-config.ts";
 import {
@@ -66,32 +67,75 @@ export function SignedOut(props: { origin: string }) {
   const [loadingProviders, setLoadingProviders] = createSignal(true);
   const [authConfig, setAuthConfig] = createSignal<AuthConfig | null>(null);
 
+  const [authConfigError, setAuthConfigError] = createSignal(false);
+  const [callbackFailed, setCallbackFailed] = createSignal(false);
+  let receivedCallbackError = false;
+
+  const loadAuthConfig = async () => {
+    setLoadingProviders(true);
+    setAuthConfigError(false);
+    setAuthConfig(null);
+    try {
+      const response = await fetch(
+        serverUrl(props.origin, "/api/auth/providers"),
+        {
+          credentials: "include",
+        },
+      );
+      if (!response.ok) throw new Error("auth providers unavailable");
+      const config = parseAuthConfig(await response.json());
+      if (!config) throw new Error("invalid auth provider response");
+      setAuthConfig(config);
+      if (
+        !receivedCallbackError &&
+        shouldAutoStartTakosumiOidc(config) &&
+        claimTakosumiOidcAutoStart()
+      ) {
+        window.location.assign(
+          serverUrl(props.origin, "/api/auth/login/takos"),
+        );
+      }
+    } catch {
+      setAuthConfig(null);
+      setAuthConfigError(true);
+    } finally {
+      setLoadingProviders(false);
+    }
+  };
+
   onMount(() => {
-    void fetch(serverUrl(props.origin, "/api/auth/providers"), {
-      credentials: "include",
-    })
-      .then(async (response) => {
-        if (!response.ok) throw new Error("auth providers unavailable");
-        const config = parseAuthConfig(await response.json());
-        if (!config) throw new Error("invalid auth provider response");
-        if (
-          shouldAutoStartTakosumiOidc(config) &&
-          claimTakosumiOidcAutoStart()
-        ) {
-          window.location.assign(
-            serverUrl(props.origin, "/api/auth/login/takos"),
-          );
-          return;
-        }
-        setAuthConfig(config);
-      })
-      .catch(() => {
-        // Older/self-hosted servers may not expose provider discovery yet.
-        // Keep the bootstrap-password path available as a compatibility fallback.
-        setAuthConfig({ providers: [], password_enabled: true });
-      })
-      .finally(() => setLoadingProviders(false));
+    const params = new URLSearchParams(window.location.search);
+    if (params.has("error")) {
+      receivedCallbackError = true;
+      setCallbackFailed(true);
+      suppressTakosumiOidcAutoStart();
+      // Never reflect callback error details into the page. Keep unrelated
+      // route/query/hash state while consuming the failure once.
+      params.delete("error");
+      params.delete("error_description");
+      const query = params.toString();
+      try {
+        window.history.replaceState(
+          window.history.state,
+          "",
+          window.location.pathname +
+            (query ? `?${query}` : "") +
+            window.location.hash,
+        );
+      } catch {
+        // A restricted history API must not prevent manual sign-in recovery.
+      }
+    }
+    void loadAuthConfig();
   });
+
+  const visibleError = () =>
+    authConfigError()
+      ? "認証方法を取得できませんでした。接続を確認して再試行してください。"
+      : (error() ??
+        (callbackFailed()
+          ? "外部アカウントでのログインに失敗しました。もう一度お試しください。"
+          : null));
 
   const login = async () => {
     const value = password();
@@ -129,13 +173,20 @@ export function SignedOut(props: { origin: string }) {
         <h1>サインイン</h1>
         <p>この yurucommu のアカウントで Yurumeet を開きます。</p>
         <Show when={!loadingProviders()} fallback={<p>認証方法を確認中です</p>}>
+          <Show when={authConfigError()}>
+            <button type="button" onClick={() => void loadAuthConfig()}>
+              再試行
+            </button>
+          </Show>
           <Show
             when={
               (authConfig()?.providers.length ?? 0) > 0 ||
               authConfig()?.password_enabled
             }
             fallback={
-              <p class="p-connect-error">利用できる認証方法がありません。</p>
+              <Show when={!authConfigError()}>
+                <p class="p-connect-error">利用できる認証方法がありません。</p>
+              </Show>
             }
           >
             <div class="p-connect-auth">
@@ -143,6 +194,7 @@ export function SignedOut(props: { origin: string }) {
                 {(provider) => (
                   <a
                     class="p-connect-provider"
+                    rel="external"
                     href={serverUrl(
                       props.origin,
                       `/api/auth/login/${encodeURIComponent(provider.id)}`,
@@ -194,7 +246,7 @@ export function SignedOut(props: { origin: string }) {
             </div>
           </Show>
         </Show>
-        <Show when={error()}>
+        <Show when={visibleError()}>
           {(message) => (
             <p id="yurumeet-login-error" class="p-connect-error" role="alert">
               {message()}
