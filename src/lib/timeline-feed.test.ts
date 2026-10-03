@@ -54,6 +54,121 @@ const page = (
 });
 const ids = (posts: Post[]) => posts.map((item) => item.ap_id);
 
+test("a confirmed removal survives a head captured before the removal and a later head can restore a new save", async () => {
+  const { feed, replies } = harness();
+  const target = { ...post("saved-target"), bookmarked: true };
+  const other = { ...post("other-save"), bookmarked: true };
+  const initial = feed.refresh();
+  replies[0].resolve(page([target, other], "initial-cursor", true));
+  await initial;
+  const staleHead = feed.refresh();
+  feed.acknowledgeRemoved(target.ap_id);
+  expect(ids(feed.posts())).toEqual([other.ap_id]);
+  replies[1].resolve(page([target, other], "native-cursor", true));
+  await staleHead;
+  expect(ids(feed.posts())).toEqual([other.ap_id]);
+  expect(feed.cursor()).toBe("native-cursor");
+  expect(feed.hasMore()).toBe(true);
+  const laterSave = feed.refresh();
+  replies[2].resolve(page([target, other], null, false));
+  await laterSave;
+  expect(ids(feed.posts())).toEqual([target.ap_id, other.ap_id]);
+  feed.dispose();
+});
+
+test("a confirmed removal fences delayed and subsequent pages in the current cursor chain", async () => {
+  const { feed, replies } = harness();
+  const target = post("removed-bookmark");
+  const other = post("retained-bookmark");
+  const older = post("older-bookmark");
+  const first = feed.refresh();
+  replies[0].resolve(page([target, other], "head-cursor", true));
+  await first;
+  const delayed = feed.loadMore();
+  feed.acknowledgeRemoved(target.ap_id);
+  replies[1].resolve(page([target, older], "next-cursor", true));
+  await delayed;
+  expect(ids(feed.posts())).toEqual([other.ap_id, older.ap_id]);
+  expect(feed.cursor()).toBe("next-cursor");
+  const next = feed.loadMore();
+  replies[2].resolve(page([target], null, false));
+  await next;
+  expect(ids(feed.posts())).toEqual([other.ap_id, older.ap_id]);
+  expect(feed.hasMore()).toBe(false);
+  feed.dispose();
+});
+
+test("a removal between fetch fulfillment and head publication is respected", async () => {
+  const target = post("microtask-removal");
+  const other = post("microtask-retained");
+  let feed!: ReturnType<typeof createTimelineFeed>;
+  const response = deferred<Page>();
+  feed = createTimelineFeed({
+    fetchPage: async () => {
+      const result = await response.promise;
+      queueMicrotask(() => feed.acknowledgeRemoved(target.ap_id));
+      return result;
+    },
+    onError: () => {},
+  });
+  const refresh = feed.refresh();
+  response.resolve(page([target, other], "raw-cursor", true));
+  await refresh;
+  expect(ids(feed.posts())).toEqual([other.ap_id]);
+  expect(feed.cursor()).toBe("raw-cursor");
+  feed.dispose();
+});
+
+test("a disposed feed ignores late removal acknowledgements", async () => {
+  const { feed, replies } = harness();
+  const retained = post("disposed-retained");
+  const refresh = feed.refresh();
+  replies[0].resolve(page([retained], null, false));
+  await refresh;
+  feed.dispose();
+  feed.acknowledgeRemoved(retained.ap_id);
+  expect(ids(feed.posts())).toEqual([retained.ap_id]);
+});
+
+test("a failed head retains the previous cursor's confirmed-removal fence", async () => {
+  const { feed, replies, errors } = harness();
+  const removed = post("removed-before-failed-head");
+  const retained = post("retained-after-failed-head");
+  const older = post("older-after-failed-head");
+  const initial = feed.refresh();
+  replies[0].resolve(page([removed, retained], "old-cursor", true));
+  await initial;
+  feed.acknowledgeRemoved(removed.ap_id);
+  const failedHead = feed.refresh();
+  replies[1].reject(new Error("head unavailable"));
+  await failedHead;
+  expect(feed.error()).toBe(true);
+  expect(ids(feed.posts())).toEqual([retained.ap_id]);
+  expect(feed.cursor()).toBe("old-cursor");
+  expect(errors).toEqual(["refresh"]);
+  const oldChain = feed.loadMore();
+  replies[2].resolve(page([removed, older], null, false));
+  await oldChain;
+  expect(ids(feed.posts())).toEqual([retained.ap_id, older.ap_id]);
+  feed.dispose();
+});
+
+test("a superseded head cannot clear the current removal window", async () => {
+  const { feed, replies } = harness();
+  const removed = post("removed-from-latest-head");
+  const retained = post("latest-head-retained");
+  const obsolete = feed.refresh();
+  const latest = feed.refresh();
+  feed.acknowledgeRemoved(removed.ap_id);
+  replies[0].resolve(page([removed], "obsolete-cursor", true));
+  await obsolete;
+  replies[1].resolve(page([removed, retained], "latest-cursor", true));
+  await latest;
+  expect(ids(feed.posts())).toEqual([retained.ap_id]);
+  expect(feed.cursor()).toBe("latest-cursor");
+  feed.dispose();
+});
+
 function harness() {
   const requests: Request[] = [];
   const replies: ReturnType<typeof deferred<Page>>[] = [];

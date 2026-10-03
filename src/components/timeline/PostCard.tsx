@@ -147,6 +147,9 @@ export function PostCard(props: {
   focused?: boolean;
   onPatch: (apId: string, patch: (post: Post) => Post) => void;
   onRemove?: (apId: string) => void;
+  bookmarkPending?: boolean;
+  onBookmarkPendingChange?: (apId: string, pending: boolean) => void;
+  onBookmarkChange?: (apId: string, bookmarked: boolean) => void;
 }) {
   const app = useApp();
   const navigate = useNavigate();
@@ -214,23 +217,34 @@ export function PostCard(props: {
   };
 
   const toggleBookmark = async () => {
-    if (bookmarking()) return;
-    setBookmarking(true);
+    if (bookmarking() || props.bookmarkPending) return;
     const before = props.post;
     const next = !before.bookmarked;
-    props.onPatch(before.ap_id, (p) => ({ ...p, bookmarked: next }));
+    const origin = app.origin();
+    const principal = app.actor().ap_id;
+    const pendingChanged = props.onBookmarkPendingChange;
+    const current = () =>
+      app.origin() === origin && app.actor()?.ap_id === principal;
+    setBookmarking(true);
+    pendingChanged?.(before.ap_id, true);
     try {
       if (next) await bookmarkPost(before.ap_id);
       else await unbookmarkPost(before.ap_id);
+      if (!current()) return;
+      // Updating a For item replaces this card. Keep its pending guard alive
+      // until the request settles, and only publish acknowledged changes.
+      props.onPatch(before.ap_id, (p) => ({ ...p, bookmarked: next }));
+      props.onBookmarkChange?.(before.ap_id, next);
       app.toast(next ? "ブックマークしました" : "ブックマークを外しました");
     } catch {
-      props.onPatch(before.ap_id, (p) => ({
-        ...p,
-        bookmarked: before.bookmarked,
-      }));
-      app.toast("操作に失敗しました", "error");
+      if (!current()) return;
+      app.toast(
+        "ブックマークの操作結果を確認できませんでした。一覧を再読み込みして確認してください",
+        "error",
+      );
     } finally {
       setBookmarking(false);
+      pendingChanged?.(before.ap_id, false);
     }
   };
 
@@ -462,6 +476,8 @@ export function PostCard(props: {
           class="c-timeline-action c-timeline-action--bookmark"
           classList={{ "is-active": props.post.bookmarked }}
           onClick={() => void toggleBookmark()}
+          disabled={bookmarking() || props.bookmarkPending}
+          aria-busy={bookmarking() || props.bookmarkPending || false}
           aria-label={
             props.post.bookmarked ? "ブックマークを外す" : "ブックマーク"
           }
