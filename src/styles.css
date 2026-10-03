@@ -3092,6 +3092,40 @@ ul {
   pointer-events: none;
 }
 
+.yc-logout-status {
+  position: fixed;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 180;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: max-content;
+  max-width: min(640px, calc(100% - 24px));
+  padding: 12px 16px;
+  border: 1px solid #efc1c1;
+  border-radius: 12px;
+  background: #fff8f8;
+  box-shadow: 0 4px 20px rgb(0 0 0 / 15%);
+}
+
+.yc-logout-status button {
+  flex-shrink: 0;
+  font: inherit;
+  color: #b92525;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+
+@media (max-width: 600px) {
+  .yc-logout-status {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}
+
 .yc-toast {
   max-width: min(90vw, 420px);
   border-radius: 12px;

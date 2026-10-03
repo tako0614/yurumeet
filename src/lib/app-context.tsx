@@ -25,6 +25,9 @@ export type AppContextValue = {
   origin: Accessor<string>;
   /** Re-fetch the signed-in actor (e.g. after editing own profile). */
   refetchActor: () => void;
+  /** One root-owned confirmation, logout attempt and read-only reconciliation. */
+  logout: () => Promise<void>;
+  logoutBusy: Accessor<boolean>;
   /** Show a transient toast message (optionally with an action button). */
   toast: (message: string, tone?: ToastTone, action?: ToastAction) => void;
   /** Ask the user to confirm an action with a styled in-app dialog. */

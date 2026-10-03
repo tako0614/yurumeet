@@ -11,7 +11,6 @@ import {
   fetchBlockedUsers,
   fetchMutedUsers,
   getBrowserNotificationPushState,
-  logout,
   refreshBrowserNotificationPush,
   switchAccount,
   unblockUser,
@@ -26,7 +25,6 @@ import {
   resolveYurumeBrowserPushConfig,
   yurumeBrowserPushConfig,
 } from "../lib/browser-push.ts";
-import { suppressTakosumiOidcAutoStart } from "../lib/auth-config.ts";
 
 export default function SettingsPage() {
   const app = useApp();
@@ -100,7 +98,7 @@ export default function SettingsPage() {
   };
 
   const handleSwitch = async (apId: string) => {
-    if (apId === currentApId() || busy()) return;
+    if (apId === currentApId() || busy() || app.logoutBusy()) return;
     setBusy(true);
     try {
       await switchAccount(apId);
@@ -111,25 +109,7 @@ export default function SettingsPage() {
     }
   };
 
-  const handleLogout = async () => {
-    const ok = await app.confirm({
-      title: "ログアウト",
-      message: "ログアウトしますか?",
-      confirmLabel: "ログアウト",
-    });
-    if (!ok) return;
-    // Armed before the reload (sessionStorage survives it): the Takosumi
-    // session outlives ours, so an unsuppressed auto-start would redirect and
-    // sign the user straight back in.
-    suppressTakosumiOidcAutoStart();
-    try {
-      await clearYurumeBrowserPushBeforeSignOut();
-      await logout();
-    } catch {
-      /* reload anyway */
-    }
-    window.location.reload();
-  };
+  const handleLogout = () => void app.logout();
 
   // Account deletion is irreversible: a reflexive OK on a generic confirm is
   // too cheap. Require typing 「削除」 before the destructive button enables.
@@ -213,7 +193,7 @@ export default function SettingsPage() {
                   <button
                     type="button"
                     class="p-settings-btn"
-                    disabled={busy()}
+                    disabled={busy() || app.logoutBusy()}
                     onClick={() => void handleSwitch(account.ap_id)}
                   >
                     切り替え
@@ -228,6 +208,7 @@ export default function SettingsPage() {
           <button
             type="button"
             class="p-settings-row"
+            disabled={app.logoutBusy()}
             onClick={() => void handleLogout()}
           >
             ログアウト
