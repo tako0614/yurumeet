@@ -187,6 +187,9 @@ function isWideViewport(): boolean {
 export type ChatContextValue = {
   contacts: Accessor<DMContact[]>;
   contactsLoading: Accessor<boolean>;
+  /** A failed contact read remains unknown until a later successful read. */
+  contactsError: Accessor<boolean>;
+  contactsRefreshing: Accessor<boolean>;
   selected: Accessor<DMContact | null>;
   selectContact: (contact: DMContact | null) => void;
   messages: Accessor<ChatMessage[]>;
@@ -313,6 +316,11 @@ export function ChatProvider(props: { children: JSX.Element }) {
   let pointerHeld = false;
   let pendingContacts: DMContact[] | null = null;
   createEffect(() => {
+    // Solid rethrows a rejected resource when its value is read, including a
+    // retry while the previous error is still present. A background 401 during
+    // logout must not dispose the root auth reconciliation through its boundary.
+    // Keep the last confirmed rows until a successful contact read replaces them.
+    if (contactsResource.error !== undefined) return;
     const next = contactsResource() ?? [];
     if (pointerHeld) {
       pendingContacts = next;
@@ -857,6 +865,7 @@ export function ChatProvider(props: { children: JSX.Element }) {
   // most recent conversation by default rather than leaving it empty.
   createEffect(() => {
     if (didAutoSelect() || selected() || !isWideViewport()) return;
+    if (contactsResource.error !== undefined) return;
     const first = contactsResource()?.[0];
     if (!first) return;
     setDidAutoSelect(true);
@@ -870,6 +879,8 @@ export function ChatProvider(props: { children: JSX.Element }) {
         // `state === "pending"` only covers the FIRST load: a 20s-cadence
         // refetch must not swap the visible rooms list for a skeleton.
         contactsLoading: () => contactsResource.state === "pending",
+        contactsError: () => contactsResource.error !== undefined,
+        contactsRefreshing: () => contactsResource.loading,
         selected,
         selectContact,
         messages,

@@ -27,6 +27,8 @@ import {
   qualifyStoryOutcomeConfirmed,
 } from "./release-browser-story-outcome.mjs";
 import { qualifyLogoutOutcome } from "./release-browser-logout-outcome.mjs";
+import { qualifyBookmarks } from "./release-browser-bookmarks.mjs";
+import { qualifyBookmarkAuthLoss } from "./release-browser-bookmark-auth-loss.mjs";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const password = " browser-smoke-only ";
@@ -682,6 +684,25 @@ async function smoke(artifact, digest) {
       password,
       sessionSalt: salt,
     });
+    const bookmarks = await qualifyBookmarks({
+      browser,
+      worker,
+      db,
+      origin,
+      checks,
+      password,
+      sessionSalt: salt,
+      mode: "candidate",
+    });
+    const bookmarkAuthLoss = await qualifyBookmarkAuthLoss({
+      browser,
+      worker,
+      db,
+      origin,
+      checks,
+      password,
+      sessionSalt: salt,
+    });
 
     check(
       pageErrors.length === 0,
@@ -711,6 +732,8 @@ async function smoke(artifact, digest) {
       storyOutcome,
       storyOutcomeConfirmed,
       logoutOutcome,
+      bookmarks,
+      bookmarkAuthLoss,
       status: "PASSED",
     };
   } catch (error) {

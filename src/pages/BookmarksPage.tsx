@@ -1,82 +1,80 @@
-import { createSignal, For, onMount, Show } from "solid-js";
+import { createSignal, For, onCleanup, onMount, Show } from "solid-js";
 import { fetchBookmarks, type Post } from "@takosjp/yurucommu-api";
 import { PageLayout, PageHeader } from "../components/PageLayout.tsx";
 import { PostCard } from "../components/timeline/PostCard.tsx";
 import { useApp } from "../lib/app-context.tsx";
+import { createTimelineFeed } from "../lib/timeline-feed.ts";
 import { SpinnerIcon } from "../lib/ui.tsx";
 
 export default function BookmarksPage() {
   const app = useApp();
-  const [posts, setPosts] = createSignal<Post[]>([]);
-  const [loading, setLoading] = createSignal(true);
-  const [error, setError] = createSignal(false);
-  const [cursor, setCursor] = createSignal<string | null>(null);
-  const [hasMore, setHasMore] = createSignal(false);
-  const [loadingMore, setLoadingMore] = createSignal(false);
-
-  const load = () => {
-    setLoading(true);
-    setError(false);
-    setCursor(null);
-    setHasMore(false);
-    void (async () => {
-      try {
-        const page = await fetchBookmarks({ limit: 30 });
-        setPosts(page.posts);
-        setCursor(page.nextCursor);
-        setHasMore(page.hasMore);
-      } catch {
-        setError(true);
-      } finally {
-        setLoading(false);
-      }
-    })();
-  };
-  onMount(load);
-
-  const loadMore = async () => {
-    const before = cursor();
-    if (loadingMore() || !hasMore() || !before) return;
-    setLoadingMore(true);
-    try {
-      const page = await fetchBookmarks({ limit: 30, before });
-      const seen = new Set(posts().map((p) => p.ap_id));
-      setPosts((prev) => [
-        ...prev,
-        ...page.posts.filter((p) => !seen.has(p.ap_id)),
-      ]);
-      setCursor(page.nextCursor);
-      setHasMore(page.hasMore);
-    } catch {
-      app.toast("読み込みに失敗しました", "error");
-    } finally {
-      setLoadingMore(false);
-    }
-  };
-
+  const feed = createTimelineFeed({
+    fetchPage: fetchBookmarks,
+    onError: (kind) =>
+      app.toast(
+        kind === "refresh"
+          ? "ブックマークを確認できませんでした。表示中の一覧は更新されていません"
+          : "読み込みに失敗しました",
+        "error",
+      ),
+  });
+  const { posts, loading, error, hasMore, loadingMore } = feed;
+  // A refreshed Post is a new For item. Pending IDs must survive that remount.
+  const [pendingBookmarks, setPendingBookmarks] = createSignal(
+    new Set<string>(),
+  );
+  const bookmarkPendingChanged = (apId: string, pending: boolean) =>
+    setPendingBookmarks((previous) => {
+      const next = new Set(previous);
+      if (pending) next.add(apId);
+      else next.delete(apId);
+      return next;
+    });
+  onMount(() => void feed.refresh());
+  onCleanup(feed.dispose);
   const patchPost = (apId: string, patch: (p: Post) => Post) =>
-    setPosts((prev) => prev.map((p) => (p.ap_id === apId ? patch(p) : p)));
-  const removePost = (apId: string) =>
-    setPosts((prev) => prev.filter((p) => p.ap_id !== apId));
+    feed.setPosts((prev) => prev.map((p) => (p.ap_id === apId ? patch(p) : p)));
+  const removePost = feed.acknowledgeRemoved;
 
   return (
     <PageLayout>
-      <PageHeader title="ブックマーク" />
+      <PageHeader
+        title="ブックマーク"
+        actions={
+          <button
+            type="button"
+            disabled={loading()}
+            onClick={() => void feed.refresh()}
+          >
+            最新に更新
+          </button>
+        }
+      />
       <div class="p-page-body">
         <Show
-          when={!loading()}
+          when={!loading() || posts().length > 0}
           fallback={
             <div class="p-detail-loading">
               <SpinnerIcon />
             </div>
           }
         >
+          <Show when={error() && posts().length > 0}>
+            <div class="p-timeline-state" role="status">
+              <p>
+                ブックマークを確認できませんでした。表示中の一覧は更新されていません
+              </p>
+              <button type="button" onClick={() => void feed.refresh()}>
+                再読み込み
+              </button>
+            </div>
+          </Show>
           <Show
-            when={!error()}
+            when={!error() || posts().length > 0}
             fallback={
               <div class="p-timeline-state">
                 <p>ブックマークを読み込めませんでした</p>
-                <button type="button" onClick={load}>
+                <button type="button" onClick={() => void feed.refresh()}>
                   再読み込み
                 </button>
               </div>
@@ -89,7 +87,11 @@ export default function BookmarksPage() {
                   <svg viewBox="0 0 24 24" aria-hidden="true">
                     <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" />
                   </svg>
-                  <p>ブックマークはありません</p>
+                  <p>
+                    {hasMore()
+                      ? "続きのブックマークを読み込んでください"
+                      : "ブックマークはありません"}
+                  </p>
                 </div>
               }
             >
@@ -100,6 +102,11 @@ export default function BookmarksPage() {
                   currentActorApId={app.actor().ap_id}
                   onPatch={patchPost}
                   onRemove={removePost}
+                  bookmarkPending={pendingBookmarks().has(post.ap_id)}
+                  onBookmarkPendingChange={bookmarkPendingChanged}
+                  onBookmarkChange={(apId, bookmarked) => {
+                    if (!bookmarked) removePost(apId);
+                  }}
                 />
               )}
             </For>
@@ -107,8 +114,8 @@ export default function BookmarksPage() {
               <div class="p-timeline-more">
                 <button
                   type="button"
-                  disabled={loadingMore()}
-                  onClick={() => void loadMore()}
+                  disabled={loading() || loadingMore() || error()}
+                  onClick={() => void feed.loadMore()}
                 >
                   {loadingMore() ? "読み込み中…" : "もっと見る"}
                 </button>

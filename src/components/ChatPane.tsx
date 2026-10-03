@@ -96,7 +96,9 @@ export function ChatPane() {
   // is persisted per-talk and restored on return (staged media is not — object
   // URLs can't survive and mis-sending a stale upload would be worse).
   let stagedGeneration = 0;
-  const draftIdentity = () => {
+  // Contact/profile objects may refresh without changing the draft's owner.
+  // Only a different identity starts the save/enter and attachment cleanup.
+  const draftIdentity = createMemo(() => {
     const contact = chat.selected();
     return contact
       ? createScopedDraftIdentity(
@@ -104,7 +106,7 @@ export function ChatPane() {
           { type: contact.type, ap_id: contact.ap_id },
         )
       : "";
-  };
+  });
   const applyDraft = (state: DraftState) => {
     setDraft(state.text);
     setDraftStorageStatus(state.status);

@@ -26,6 +26,8 @@ export function createTimelineFeed(options: {
   let disposed = false;
   let activeMore: object | null = null;
   let refreshCreated: Set<string> | null = null;
+  let chainRemoved = new Set<string>();
+  let refreshRemoved: Set<string> | null = null;
 
   const isCurrent = (requestGeneration: number) =>
     !disposed && generation === requestGeneration;
@@ -35,6 +37,8 @@ export function createTimelineFeed(options: {
     const requestGeneration = ++generation;
     const createdIds = new Set<string>();
     refreshCreated = createdIds;
+    const removedIds = new Set<string>();
+    refreshRemoved = removedIds;
     // A new head establishes a new cursor chain. An old request may still
     // finish on the network, but must not append or settle the new chain.
     activeMore = null;
@@ -59,6 +63,7 @@ export function createTimelineFeed(options: {
           const seen = new Set<string>();
           const head = page.posts
             .filter((post) => {
+              if (removedIds.has(post.ap_id)) return false;
               if (seen.has(post.ap_id)) return false;
               seen.add(post.ap_id);
               return (
@@ -78,6 +83,9 @@ export function createTimelineFeed(options: {
         setCursor(page.nextCursor);
         setHasMore(page.hasMore);
       });
+      // Only a successful new head replaces the cursor-chain removal fence.
+      // A failed refresh retains the previous cursor and its confirmed removals.
+      chainRemoved = removedIds;
     } catch {
       if (!isCurrent(requestGeneration)) return;
       setError(true);
@@ -85,6 +93,7 @@ export function createTimelineFeed(options: {
     } finally {
       if (isCurrent(requestGeneration)) {
         refreshCreated = null;
+        refreshRemoved = null;
         batch(() => {
           setLoadedAt((options.now ?? Date.now)());
           setLoading(false);
@@ -109,6 +118,7 @@ export function createTimelineFeed(options: {
         setPosts((prev) => {
           const seen = new Set(prev.map((post) => post.ap_id));
           const added = page.posts.filter((post) => {
+            if (chainRemoved.has(post.ap_id)) return false;
             if (seen.has(post.ap_id)) return false;
             seen.add(post.ap_id);
             return true;
@@ -153,11 +163,19 @@ export function createTimelineFeed(options: {
         );
       });
     },
+    acknowledgeRemoved: (apId: string) => {
+      if (disposed) return;
+      chainRemoved.add(apId);
+      refreshRemoved?.add(apId);
+      refreshCreated?.delete(apId);
+      setPosts((rows) => rows.filter((post) => post.ap_id !== apId));
+    },
     dispose: () => {
       disposed = true;
       generation += 1;
       activeMore = null;
       refreshCreated = null;
+      refreshRemoved = null;
     },
   };
 }
