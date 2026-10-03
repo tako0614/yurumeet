@@ -67,6 +67,17 @@ describe("deploy contract", () => {
     );
   });
 
+  test("declares the read-only Core 4.1.11 migration 0030 preflight before Worker publication", () => {
+    const worker = surfaceOf("yurumeet-worker");
+    expect(worker?.obligations.provenance).toContain(
+      "read-only D1 metadata query",
+    );
+    expect(worker?.obligations.provenance).toContain("migration 0030");
+    expect(worker?.obligations["failure-handling"]).toContain(
+      "schema mismatch blocks before publication",
+    );
+  });
+
   test("names only package scripts that exist", () => {
     for (const entry of contract.surfaces) {
       for (const script of entry.requiresScripts ?? []) {

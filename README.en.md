@@ -179,8 +179,20 @@ append-only `release.lock.json`, `.well-known/takosumi.json`, and
 `deploy/takoform/`'s source build do not name the same release. `bun run check`
 asks that same question of every commit.
 
+Before publishing, `yurumeet-worker` reads DB metadata selected by the realized
+strict JSON config in `YURUMEET_WRANGLER_CONFIG`, using the existing Wrangler
+credential. It checks the columns, primary key and due index required by Core
+4.1.11's additive migration `0030`. Missing or inconsistent metadata, denied
+reads and invalid responses stop publication. This checks that specific contract;
+it does not qualify the whole schema or migration ledger, apply migrations or
+grant permissions. The root direct-Cloudflare module's Apply is a separate path
+requiring reviewed pre-applied schema evidence. Environment selection via
+`CLOUDFLARE_ENV` is unsupported and rejected; a changed config after inspection
+also stops publication. The portable module applies
+schema before updating its Worker.
+
 None of the three falls back to a raw Worker deployment or a migration, and none
-touches a durable store (D1 DB / KV / R2 MEDIA). Publishing the site is
+mutates a durable store (D1 DB / KV / R2 MEDIA). Publishing the site is
 documented in [`site/DEPLOY.md`](site/DEPLOY.md).
 
 ### Managed install through Takosumi (not yet public)

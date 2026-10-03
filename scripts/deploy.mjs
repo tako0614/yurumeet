@@ -15,11 +15,12 @@
 // landing site です。
 //
 // どの surface も publish するのは **code と静的 asset だけ** です。durable store
-// (D1 DB / KV / R2 MEDIA) には触れません。schema 変更は `irreversible` な別の作業で、
-// この entrypoint の副作用として起きてはいけないからです。
+// (D1 DB / KV / R2 MEDIA) は変更しません。Worker publish 前には D1 を SELECT だけで
+// 読み、Core 4.1.11 が必要とする migration 0030 の schema を確認します。schema 変更は
+// `irreversible` な別の作業で、この entrypoint の副作用として起きてはいけません。
 // ⚠ yurucommu 系の live D1 は `_cf_migrations` 台帳が実態とずれています。
 // `wrangler d1 migrations apply` を絶対に走らせないこと。schema 変更は
-// 直接 `d1 execute` で行う operator 手順です。この script は D1 に触れません。
+// operator が別途行う手順です。この script は台帳を参照せず、schema の read-only 確認だけをします。
 
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
@@ -48,6 +49,7 @@ import {
   releaseAssetUrl,
 } from "./release-artifact-manifest.mjs";
 import { releaseIdentityFailures } from "./release-identity.mjs";
+import { checkMediaDeletionSchema } from "./check-media-deletion-schema.mjs";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const OWNER_GATE = "bun run check";
@@ -105,11 +107,11 @@ const CONTRACT = {
       // この surface ではなく、別の deliberate な手順です。
       triggers: [],
       obligations: {
-        provenance: `refuses a dirty worktree, runs \`${OWNER_GATE}\`, builds ${W.bundle} from that worktree with \`bun run build\`, and records the commit and the bundle sha256 It takes the operator's realized deploy config from YURUMEET_WRANGLER_CONFIG and refuses to publish a config that still holds a self-host template placeholder.`,
+        provenance: `refuses a dirty worktree, runs \`${OWNER_GATE}\`, builds ${W.bundle} from that worktree with \`bun run build\`, records the commit and bundle sha256, then uses the realized YURUMEET_WRANGLER_CONFIG for a read-only D1 metadata query requiring Core 4.1.11 migration 0030's media deletion table and index before publication.`,
         "post-conditions": `runs \`bun run smoke:postdeploy\`, which exercises real request paths against the deployed Worker rather than a health endpoint; the smoke reads the public launch URL from the Capsule outputs file selected by TAKOSUMI_CAPSULE_OUTPUTS_FILE and authenticates with YURUMEET_E2E_SESSION_COOKIE for OIDC-only deployments or YURUMEET_E2E_PASSWORD where password auth is enabled`,
         reversal: `the current version id is read and printed before publishing; restore it with \`wrangler versions list --name ${W.worker}\` and \`wrangler versions deploy <previous-id>@100%\``,
         "failure-handling":
-          "prints the provider's own stdout and stderr, names whether the failure was before or after publication, and on a failed post-condition exits non-zero naming the previous version instead of retrying",
+          "prints the provider's own stdout and stderr; config, D1 query, or schema mismatch blocks before publication; post-publication failures exit non-zero and name the previous version instead of retrying",
       },
     },
     {
@@ -572,13 +574,14 @@ const CONFIG_ENV = "YURUMEET_WRANGLER_CONFIG";
 const configPath = process.env[CONFIG_ENV] ?? W.config;
 const resolvedConfig = existsSync(resolve(repo, configPath))
   ? resolve(repo, configPath)
-  : configPath;
+  : resolve(configPath);
 if (!existsSync(resolvedConfig)) {
   die(
     `deploy config ${configPath} does not exist; set ${CONFIG_ENV} to the operator's realized config`,
   );
 }
-const configValues = readFileSync(resolvedConfig, "utf8")
+const configText = readFileSync(resolvedConfig, "utf8");
+const configValues = configText
   .split("\n")
   .filter((line) => !/^\s*(?:#|\/\/)/u.test(line))
   .join("\n");
@@ -591,6 +594,23 @@ if (placeholder) {
     `${configPath} still contains the self-host template placeholder ${JSON.stringify(placeholder[1])}; ` +
       `set ${CONFIG_ENV} to the operator's realized config instead of publishing the template`,
   );
+}
+
+function requireStableDeployConfig(phase) {
+  let current;
+  try {
+    current = readFileSync(resolvedConfig, "utf8");
+  } catch (error) {
+    die(
+      `cannot re-read the realized deploy config before ${phase}; publication was not attempted`,
+      [error.message],
+    );
+  }
+  if (current !== configText) {
+    die(
+      `the realized deploy config changed before ${phase}; publication was not attempted`,
+    );
+  }
 }
 
 // provenance
@@ -619,6 +639,33 @@ process.stdout.write(
   `\ncandidate ${W.bundle} sha256 ${bundleDigest.slice(0, 16)}\n`,
 );
 
+let schemaPreflight;
+requireStableDeployConfig("D1 schema query");
+try {
+  schemaPreflight = checkMediaDeletionSchema({
+    configText,
+    configPath: resolvedConfig,
+    cloudflareEnv: process.env.CLOUDFLARE_ENV,
+    run,
+  });
+} catch (error) {
+  if (error.stdout !== undefined) {
+    process.stderr.write(error.stdout.toString());
+    if (!String(error.stdout).endsWith("\n")) process.stderr.write("\n");
+  }
+  if (error.stderr !== undefined) {
+    process.stderr.write(error.stderr.toString());
+    if (!String(error.stderr).endsWith("\n")) process.stderr.write("\n");
+  }
+  die(
+    "the realized D1 does not satisfy the read-only Core 4.1.11 migration 0030 schema preflight; Worker publication was not attempted",
+    [error.message],
+  );
+}
+process.stdout.write(
+  `D1 schema preflight ${schemaPreflight.table} ${schemaPreflight.scope}\n`,
+);
+
 // reversal: 戻し先の version を先に読む。読めなければ publish しない。
 let previous = null;
 try {
@@ -628,7 +675,7 @@ try {
     "--name",
     W.worker,
     "--config",
-    configPath,
+    resolvedConfig,
   ]);
   previous =
     listed.match(
@@ -641,10 +688,11 @@ if (!previous)
   die("no current version was readable, so there is no revert point");
 process.stdout.write(`previous version ${previous}\n`);
 
+requireStableDeployConfig("Worker publication");
 process.stdout.write(`\n==> publishing ${W.worker}\n`);
 let output;
 try {
-  output = run("wrangler", ["deploy", "--config", configPath]);
+  output = run("wrangler", ["deploy", "--config", resolvedConfig]);
 } catch (error) {
   process.stderr.write(`${error.stdout ?? ""}${error.stderr ?? ""}\n`);
   die(
