@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
 import { Miniflare } from "miniflare";
 import { unstable_readConfig, unstable_splitSqlQuery } from "wrangler";
+import { qualifyBrowserTalk } from "./release-browser-talk.mjs";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const password = " browser-smoke-only ";
@@ -382,6 +383,14 @@ async function smoke(artifact, digest) {
       "390px signed-in view has horizontal overflow",
     );
     checks.push("browser-mobile-layout-has-no-horizontal-overflow");
+    const talk = await qualifyBrowserTalk({
+      page,
+      worker,
+      db,
+      origin,
+      actorApId: ownerId,
+      checks,
+    });
     check(pageErrors.length === 0, "browser page raised a runtime error");
     check(
       serverErrors.length === 0,
@@ -397,6 +406,7 @@ async function smoke(artifact, digest) {
       substrate: "local-http-native-d1-kv-r2",
       schemaSha256,
       migrationCount,
+      talk,
       checks,
       status: "PASSED",
     };

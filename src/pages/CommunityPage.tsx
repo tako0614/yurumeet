@@ -17,8 +17,8 @@ import {
   removeCommunityMember,
   updateCommunityMemberRole,
   updateCommunitySettings,
-  uploadMedia,
 } from "@takosjp/yurucommu-api";
+import { uploadProductMedia } from "../lib/media-upload.ts";
 import { PageLayout, PageHeader } from "../components/PageLayout.tsx";
 import { useApp } from "../lib/app-context.tsx";
 import { useChat } from "../lib/chat-context.tsx";
@@ -581,7 +581,7 @@ function CommunitySettingsModal(props: {
     setUploading(true);
     setError(null);
     try {
-      const uploaded = await uploadMedia(file);
+      const uploaded = await uploadProductMedia(file);
       setIconUrl(uploaded.url ?? "");
     } catch {
       setError("画像のアップロードに失敗しました");

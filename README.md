@@ -47,7 +47,9 @@ bun run smoke:release-browser -- dist/takos-worker.js
 Chrome の場所は `BROWSER_SMOKE_CHROME` で指定できます。ブラウザは自動取得せず、
 未インストール時は失敗します。CI は完全な `check` の後でこの検証も必須実行します。
 使い捨てのローカル HTTP と native bindings 上で、実際のフォームによる認証失敗・再入力・
-ログイン後のトーク画面・永続 session を確認します。公開環境の TLS、OIDC、
+ログイン後の永続 session と、合成した通信相手への実画面からの DM・画像/動画添付・
+送信失敗からの再送を確認し、DB・ObjectBucket の保存内容と照合します。
+通信相手の fixture は初回ログインの確認後に追加します。公開環境の TLS、OIDC、
 他サーバーとの通信、更新・復旧の証拠は別途必要です。
 
 ## 仕組み

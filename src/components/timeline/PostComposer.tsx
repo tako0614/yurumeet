@@ -1,5 +1,6 @@
 import { createSignal, For, Show } from "solid-js";
-import { createPost, type Post, uploadMedia } from "@takosjp/yurucommu-api";
+import { createPost, type Post } from "@takosjp/yurucommu-api";
+import { uploadProductMedia } from "../../lib/media-upload.ts";
 import { useApp } from "../../lib/app-context.tsx";
 import { DialogA11y } from "../../lib/dialog.tsx";
 import { CloseIcon, UserAvatar } from "../../lib/ui.tsx";
@@ -107,7 +108,7 @@ export function PostComposer(props: {
           continue;
         }
         try {
-          const uploaded = await uploadMedia(file);
+          const uploaded = await uploadProductMedia(file);
           setMedia((prev) => [
             ...prev,
             {
