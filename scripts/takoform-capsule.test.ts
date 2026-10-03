@@ -265,6 +265,7 @@ describe("portable Takoform Capsule", () => {
       .filter(Boolean);
     expect(required).toEqual([
       "ENCRYPTION_KEY",
+      "YURUCOMMU_SESSION_HASH_SALT",
       "TAKOSUMI_ACCOUNTS_ISSUER_URL",
       "TAKOSUMI_ACCOUNTS_CLIENT_ID",
       "TAKOSUMI_ACCOUNTS_OWNER_SUB",
@@ -272,6 +273,7 @@ describe("portable Takoform Capsule", () => {
     ]);
     // Secret VALUES never appear in a module the repository publishes.
     expect(main).not.toMatch(/ENCRYPTION_KEY\s*=/);
+    expect(main).not.toMatch(/YURUCOMMU_SESSION_HASH_SALT\s*=/);
     expect(main).not.toContain("AUTH_PASSWORD_HASH");
   });
 

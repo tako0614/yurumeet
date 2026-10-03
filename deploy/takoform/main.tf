@@ -161,6 +161,7 @@ resource "takoform_worker_version" "worker" {
   # password-hash variable to fall back on.
   required_sensitive_vars = [
     "ENCRYPTION_KEY",
+    "YURUCOMMU_SESSION_HASH_SALT",
     "TAKOSUMI_ACCOUNTS_ISSUER_URL",
     "TAKOSUMI_ACCOUNTS_CLIENT_ID",
     "TAKOSUMI_ACCOUNTS_OWNER_SUB",

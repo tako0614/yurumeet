@@ -79,6 +79,13 @@ variable "encryption_key" {
   }
 }
 
+variable "session_hash_salt" {
+  description = "Operator-provided high-entropy session salt injected only as YURUCOMMU_SESSION_HASH_SALT secret_text. Required when this module deploys a Worker; preserve an existing instance's exact value across updates."
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
 variable "auth_password_hash" {
   description = "Explicit password hash/token injected as AUTH_PASSWORD_HASH. Required when deploying the Worker unless Takosumi Accounts OIDC is configured."
   type        = string
@@ -174,6 +181,7 @@ variable "env" {
         "DELIVERY_QUEUE_NAME",
         "DELIVERY_DLQ_NAME",
         "ENCRYPTION_KEY",
+        "YURUCOMMU_SESSION_HASH_SALT",
         "AUTH_PASSWORD_HASH",
         "TAKOSUMI_ACCOUNTS_ISSUER_URL",
         "TAKOSUMI_ACCOUNTS_CLIENT_ID",
@@ -347,6 +355,7 @@ locals {
   launch_url                    = trimspace(var.app_url) != "" ? trimspace(var.app_url) : local.workers_dev_url
   provided_encryption_key       = trimspace(var.encryption_key)
   provided_auth_password_hash   = trimspace(var.auth_password_hash)
+  provided_session_hash_salt    = var.session_hash_salt
   has_takosumi_accounts_oidc    = trimspace(var.takosumi_accounts_issuer_url) != "" && trimspace(var.takosumi_accounts_client_id) != ""
   effective_encryption_key      = local.provided_encryption_key != "" ? local.provided_encryption_key : random_id.encryption_key.hex
   effective_auth_password_hash  = local.provided_auth_password_hash
@@ -545,6 +554,11 @@ resource "cloudflare_workers_script" "worker" {
         name = "ENCRYPTION_KEY"
         text = local.effective_encryption_key
       },
+      {
+        type = "secret_text"
+        name = "YURUCOMMU_SESSION_HASH_SALT"
+        text = local.provided_session_hash_salt
+      },
     ],
     local.effective_auth_password_hash != "" ? [
       {
@@ -647,6 +661,11 @@ resource "cloudflare_workers_script" "worker" {
     precondition {
       condition     = !local.cloudflare_worker_enabled || local.provided_auth_password_hash != "" || local.has_takosumi_accounts_oidc
       error_message = "A deployed Yurumeet Worker requires an explicit auth_password_hash or a complete Takosumi Accounts issuer/client pair; no hidden bootstrap credential is generated."
+    }
+
+    precondition {
+      condition     = !local.cloudflare_worker_enabled || trimspace(local.provided_session_hash_salt) != ""
+      error_message = "A deployed Worker requires an explicit sensitive session_hash_salt; preserve an existing instance's exact value and never supply it through plaintext env."
     }
 
     # Owner-slot race. With Takosumi Accounts OIDC configured, auth_password_hash
