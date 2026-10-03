@@ -725,6 +725,7 @@ export function ChatProvider(props: { children: JSX.Element }) {
     setMessages((prev) => prev.filter((m) => m.id !== messageId));
     try {
       await deleteCommunityMessage(contact.ap_id, messageId);
+      void refetchContacts();
       return true;
     } catch {
       if (isSelectedContact(contact)) setMessages(before);

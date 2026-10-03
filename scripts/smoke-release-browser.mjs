@@ -10,6 +10,7 @@ import { chromium } from "playwright-core";
 import { Miniflare } from "miniflare";
 import { unstable_readConfig, unstable_splitSqlQuery } from "wrangler";
 import { qualifyBrowserTalk } from "./release-browser-talk.mjs";
+import { qualifyBrowserCommunityDeletePreview } from "./release-browser-community-delete-preview.mjs";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const password = " browser-smoke-only ";
@@ -391,6 +392,13 @@ async function smoke(artifact, digest) {
       actorApId: ownerId,
       checks,
     });
+    const communityDeletePreview = await qualifyBrowserCommunityDeletePreview({
+      page,
+      db,
+      origin,
+      actorApId: ownerId,
+      checks,
+    });
     check(pageErrors.length === 0, "browser page raised a runtime error");
     check(
       serverErrors.length === 0,
@@ -407,6 +415,7 @@ async function smoke(artifact, digest) {
       schemaSha256,
       migrationCount,
       talk,
+      communityDeletePreview,
       checks,
       status: "PASSED",
     };
