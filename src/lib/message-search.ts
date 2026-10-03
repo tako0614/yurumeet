@@ -50,14 +50,35 @@ export function splitHighlight(
   const haystack = text.toLowerCase();
   const out: HighlightSegment[] = [];
   let from = 0;
-  let idx = haystack.indexOf(needle, from);
+  let idx = haystack.indexOf(needle);
   if (idx < 0) return [{ text, hit: false }];
+
+  // Lowercasing may expand one original character (e.g. İ -> i + dot).
+  // Search in the folded text, but slice only at original UTF-16 offsets.
+  const starts: number[] = [];
+  const ends: number[] = [];
+  for (let offset = 0; offset < text.length;) {
+    const char = String.fromCodePoint(text.codePointAt(offset)!)!;
+    const end = offset + char.length;
+    for (let n = char.toLowerCase().length; n > 0; n--) {
+      starts.push(offset);
+      ends.push(end);
+    }
+    offset = end;
+  }
+
+  let cursor = 0;
   while (idx >= 0) {
-    if (idx > from) out.push({ text: text.slice(from, idx), hit: false });
-    out.push({ text: text.slice(idx, idx + needle.length), hit: true });
+    const start = starts[idx]!;
+    const end = ends[idx + needle.length - 1]!;
+    if (start > cursor)
+      out.push({ text: text.slice(cursor, start), hit: false });
+    if (end > cursor)
+      out.push({ text: text.slice(Math.max(start, cursor), end), hit: true });
+    cursor = Math.max(cursor, end);
     from = idx + needle.length;
     idx = haystack.indexOf(needle, from);
   }
-  if (from < text.length) out.push({ text: text.slice(from), hit: false });
+  if (cursor < text.length) out.push({ text: text.slice(cursor), hit: false });
   return out;
 }

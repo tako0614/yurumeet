@@ -358,7 +358,7 @@ export async function qualifyBrowserTalk({
 
   const textarea = page.locator('textarea[name="message"]');
   const sendButton = page.getByRole("button", { name: "送信" });
-  const text = `browser text ${crypto.randomUUID()}`;
+  const text = `browser unicode İstanbul 😀İx😀 ${crypto.randomUUID()}`;
   await textarea.fill(text);
   const textResponseWait = waitForDmPost(page, origin, peerApId, text);
   await sendButton.click();
@@ -399,6 +399,47 @@ export async function qualifyBrowserTalk({
     "successful text send left an optimistic pending/failed row",
   );
   checks.push("browser-talk-text-send-clears-composer-and-persists-activity");
+
+  await page.getByRole("button", { name: "トーク内を検索" }).click();
+  const searchInput = page.getByRole("textbox", {
+    name: "トーク内のメッセージを検索",
+  });
+  for (const [query, expectedMark] of [
+    ["stan", "stan"],
+    ["i̇", "İ"],
+    ["x😀", "x😀"],
+  ]) {
+    await searchInput.fill(query);
+    await page.waitForFunction(
+      ({ content, expected }) => {
+        const row = Array.from(
+          document.querySelectorAll("li.c-talk-chat"),
+        ).find((node) => node.textContent?.includes(content));
+        const marks = Array.from(
+          row?.querySelectorAll("mark.c-search-hit") ?? [],
+        ).map((node) => node.textContent);
+        return (
+          row?.classList.contains("is-search-hit") &&
+          row.classList.contains("is-search-current") &&
+          document.querySelector(".p-talk-chat-search__count")?.textContent ===
+            "1/1" &&
+          marks.length === (expected === "İ" ? 2 : 1) &&
+          marks.every((mark) => mark === expected)
+        );
+      },
+      { content: text, expected: expectedMark },
+      { timeout: 10_000 },
+    );
+  }
+  await page.getByRole("button", { name: "検索を閉じる" }).click();
+  requireTalk(
+    (await sentTextRow.locator("mark.c-search-hit").count()) === 0 &&
+      (await sentTextRow.textContent()).includes(text),
+    "closing Unicode search did not restore the complete original message text",
+  );
+  checks.push(
+    "browser-talk-unicode-search-marks-original-text-without-offset-drift",
+  );
 
   const pngBytes = Buffer.from(PNG_BASE64, "base64");
   const webmBytes = Buffer.from(WEBM_BASE64, "base64");
