@@ -162,3 +162,26 @@ describe("uploadProductMedia", () => {
     expect(uploadedFiles).toHaveLength(0);
   });
 });
+
+test("scope guard blocks SDK upload if the caller changed during file-byte preparation", async () => {
+  interceptUpload();
+  const original = new File(["bytes"], "photo.png", { type: "image/png" });
+  let resolveBytes!: (bytes: ArrayBuffer) => void;
+  const bytes = new Promise<ArrayBuffer>((resolve) => {
+    resolveBytes = resolve;
+  });
+  Object.defineProperty(original, "arrayBuffer", { value: () => bytes });
+  let currentScope = "first-principal";
+  let guardCalls = 0;
+  const uploading = uploadProductMedia(original, () => {
+    guardCalls += 1;
+    if (currentScope !== "first-principal")
+      throw new Error("Story scope changed");
+  });
+  currentScope = "second-principal";
+  resolveBytes(new Uint8Array([1, 2, 3]).buffer);
+  await expect(uploading).rejects.toThrow("Story scope changed");
+  expect(guardCalls).toBe(1);
+  expect(fetchCalls).toBe(0);
+  expect(uploadedFiles).toHaveLength(0);
+});
