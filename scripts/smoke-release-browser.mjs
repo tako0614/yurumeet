@@ -19,6 +19,7 @@ import {
   qualifyBrowserCurrentActorRecovery,
 } from "./release-browser-community-delete-bridge.mjs";
 import { qualifyBrowserCommunityDeleteReload } from "./release-browser-community-delete-reload.mjs";
+import { qualifyBrowserFeedRefresh } from "./release-browser-feed-refresh.mjs";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const password = " browser-smoke-only ";
@@ -486,6 +487,25 @@ async function smoke(artifact, digest) {
       "delete reload artifact returned an additional HTTP 5xx response",
     );
 
+    const feedPage = await context.newPage();
+    let feedRefresh;
+    try {
+      await feedPage.goto(`${origin}/?tab=timeline`, {
+        waitUntil: "domcontentloaded",
+        timeout: 20_000,
+      });
+      feedRefresh = await qualifyBrowserFeedRefresh({
+        page: feedPage,
+        db,
+        origin,
+        actorApId: ownerId,
+        checks,
+        expectedBaseline: false,
+      });
+    } finally {
+      await feedPage.close();
+    }
+
     check(
       pageErrors.length === 0,
       "community delete browser raised a runtime error",
@@ -508,6 +528,7 @@ async function smoke(artifact, digest) {
       communityDeleteBridge,
       currentActorRecovery,
       communityDeleteReload,
+      feedRefresh,
       status: "PASSED",
     };
   } catch (error) {
