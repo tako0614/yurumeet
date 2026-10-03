@@ -124,6 +124,8 @@ function observe(page, origin) {
     pageErrors: 0,
     documents: [],
     expectedLogout503: 0,
+    expectedContact503: 0,
+    allowContact503: false,
     unexpectedFiveHundreds: [],
     authRequests: [],
     authResponses: [],
@@ -191,6 +193,13 @@ function observe(page, origin) {
       if (url.origin === origin && response.status() >= 500) {
         if (url.pathname === "/api/auth/logout" && response.status() === 503)
           events.expectedLogout503 += 1;
+        else if (
+          events.allowContact503 &&
+          url.pathname === "/api/dm/contacts" &&
+          response.request().method() === "GET" &&
+          response.status() === 503
+        )
+          events.expectedContact503 += 1;
         else
           events.unexpectedFiveHundreds.push({
             path: url.pathname,
@@ -217,6 +226,9 @@ async function waitForSignedOut(fixture, caller) {
           visibility: document.visibilityState,
           signedOut: [...document.querySelectorAll("h1")].some(
             (item) => item.textContent === "サインイン",
+          ),
+          appError: [...document.querySelectorAll("h1")].some(
+            (item) => item.textContent === "問題が発生しました",
           ),
           boot: Boolean(document.querySelector(".yc-boot")),
           logoutBusy: Boolean(
@@ -352,10 +364,11 @@ async function loginFreshOwner({
 async function initiateSettingsLogout(
   fixture,
   interceptMode,
-  { profileMenu = false } = {},
+  { profileMenu = false, afterCommit } = {},
 ) {
   const { page, events } = fixture;
   let intercepted = 0;
+  let afterCommitError = null;
   let routeRelease;
   let routeEnteredResolve;
   const routeEntered = new Promise((resolve) => {
@@ -406,6 +419,17 @@ async function initiateSettingsLogout(
         responseBodySha256: sha(responseBytes),
         ownSessionAbsent: true,
       };
+      if (afterCommit) {
+        try {
+          await bounded(afterCommit(), "contact-401-after-commit", 10_000);
+        } catch (error) {
+          afterCommitError =
+            error instanceof Error &&
+            error.message.startsWith("yurumeet-logout-outcome:")
+              ? error.message
+              : "contact-401-after-commit-callback-failed";
+        }
+      }
       routeEnteredResolve();
       return route.abort("failed");
     }
@@ -446,6 +470,7 @@ async function initiateSettingsLogout(
   return {
     responsePromise,
     intercepted: () => intercepted,
+    afterCommitError: () => afterCommitError,
     routeEntered,
     release: routeRelease,
   };
@@ -612,6 +637,157 @@ async function runFailedThenRetry({
   };
 }
 
+/** Contact errors retain confirmed rows and expose explicit read-only recovery. */
+async function qualifyContactRecovery(fixture, origin) {
+  const { page } = fixture;
+  const response = await page.request.get(`${origin}/api/dm/contacts`, {
+    timeout: TIMEOUT,
+  });
+  need(response.status() === 200, "contact-recovery-real-contact-list");
+  const body = await response.json();
+  const peer = body.mutual_followers?.find((item) => item.name);
+  need(
+    typeof peer?.name === "string" && peer.name.length > 0,
+    "contact-recovery-existing-named-dm",
+  );
+  let mode = "fail";
+  const initialExpectedContact503 = fixture.events.expectedContact503;
+  fixture.events.allowContact503 = true;
+  let releaseRead;
+  let enteredReadResolve;
+  const armRead = () => {
+    let resolve;
+    const entered = new Promise((accept) => {
+      enteredReadResolve = accept;
+    });
+    const gate = new Promise((accept) => {
+      resolve = accept;
+    });
+    releaseRead = resolve;
+    return { entered, gate };
+  };
+  let held = null;
+  let refusedReads = 0;
+  let forwardedReads = 0;
+  await page.route("**/api/dm/contacts", async (route) => {
+    need(route.request().method() === "GET", "contact-recovery-readonly-route");
+    if (mode === "fail") {
+      refusedReads += 1;
+      return route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "temporarily unavailable" }),
+      });
+    }
+    if (mode === "held") {
+      enteredReadResolve();
+      await held.gate;
+    }
+    forwardedReads += 1;
+    return route.continue();
+  });
+  const notice = (view) =>
+    page
+      .locator(`${view} [role="alert"]`)
+      .filter({ hasText: "読み込めませんでした" });
+  const noFalseEmpty = async () => {
+    need(
+      (await page
+        .getByRole("heading", { name: "問題が発生しました", exact: true })
+        .count()) === 0,
+      "contact-error-does-not-reach-root-boundary",
+    );
+    for (const text of [
+      "まだ友だちはいません",
+      "参加中のグループはありません",
+      "まだトークはありません",
+    ])
+      need(
+        (await page.getByText(text, { exact: false }).count()) === 0,
+        "contact-error-is-not-confirmed-empty",
+      );
+  };
+  const retry = async (view) => {
+    mode = "held";
+    held = armRead();
+    await notice(view)
+      .getByRole("button", { name: "再試行", exact: true })
+      .click({ timeout: TIMEOUT });
+    await bounded(held.entered, "manual-contact-retry-held");
+    need(
+      await notice(view)
+        .getByRole("button", { name: "再読み込み中...", exact: true })
+        .isDisabled(),
+      "contact-retry-disabled-while-previous-error-present",
+    );
+    await noFalseEmpty();
+    mode = "pass";
+    releaseRead();
+    await notice(view).waitFor({ state: "hidden", timeout: TIMEOUT });
+    await page
+      .locator(view)
+      .getByText(peer.name, { exact: true })
+      .first()
+      .waitFor({ state: "visible", timeout: TIMEOUT });
+  };
+  try {
+    await page.goto(`${origin}/?tab=home`, {
+      waitUntil: "domcontentloaded",
+      timeout: TIMEOUT,
+    });
+    await notice(".p-home").waitFor({ state: "visible", timeout: TIMEOUT });
+    await noFalseEmpty();
+    const initialRefusedReads = refusedReads;
+    need(initialRefusedReads > 0, "initial-contact-read-was-refused");
+    await retry(".p-home");
+    mode = "fail";
+    await notice(".p-home").waitFor({ state: "visible", timeout: 25_000 });
+    await page
+      .locator(".p-home")
+      .getByText(peer.name, { exact: true })
+      .first()
+      .waitFor({ state: "visible", timeout: TIMEOUT });
+    await page
+      .locator('.l-header a[href="/?tab=talk"]')
+      .click({ timeout: TIMEOUT });
+    await notice(".p-talk-rooms-pane").waitFor({
+      state: "visible",
+      timeout: TIMEOUT,
+    });
+    await page
+      .locator(".p-talk-rooms-pane")
+      .getByText(peer.name, { exact: true })
+      .first()
+      .waitFor({ state: "visible", timeout: TIMEOUT });
+    await noFalseEmpty();
+    await retry(".p-talk-rooms-pane");
+    const current = await readAuth(page, origin);
+    need(
+      current.status === 200 && current.actorApId === fixture.actorApId,
+      "contact503-does-not-certify-signout",
+    );
+    need(fixture.events.logoutPosts === 0, "contact-recovery-is-readonly");
+    need(
+      fixture.events.expectedContact503 - initialExpectedContact503 ===
+        refusedReads,
+      "contact-recovery-only-exact-injected503-accepted",
+    );
+    return {
+      status: "PASSED",
+      initialRefusedReads,
+      refusedReads,
+      forwardedReads,
+      previousRowsRetained: true,
+      retryWhilePriorError: true,
+      unknownIsNotEmpty: true,
+    };
+  } finally {
+    fixture.events.allowContact503 = false;
+    releaseRead?.();
+    await page.unroute("**/api/dm/contacts");
+  }
+}
+
 async function runAckLoss({
   browser,
   worker,
@@ -631,10 +807,119 @@ async function runAckLoss({
     caller: "ack-loss",
   });
   fixture.db = db;
+  let releaseContacts;
+  let contactRouteError = null;
+  const contactResponses = [];
+  let finishedContactResolve;
+  const finishedContact = new Promise((resolve) => {
+    finishedContactResolve = resolve;
+  });
   try {
+    const contactRecovery = await qualifyContactRecovery(fixture, origin);
+    await fixture.page.goto(`${origin}/settings`, {
+      waitUntil: "domcontentloaded",
+      timeout: TIMEOUT,
+    });
+    // Earlier canonical draft lanes create real DM contacts. Require the wide
+    // viewport's mounted conversation before racing its next background read
+    // against real session revocation; settings still has the shared chat pane.
+    await fixture.page
+      .locator(".p-talk-chat-send__textarea")
+      .waitFor({ state: "visible", timeout: TIMEOUT });
+    await fixture.page
+      .locator(".c-talk-chat-box")
+      .first()
+      .waitFor({ state: "visible", timeout: TIMEOUT });
+    await fixture.page.evaluate(() => {
+      const original = window.fetch;
+      window.__logoutContact401Reads = 0;
+      window.fetch = async function (...args) {
+        const response = await original.apply(this, args);
+        const request = args[0];
+        const url = new URL(
+          typeof request === "string"
+            ? request
+            : request instanceof URL
+              ? request.href
+              : request.url,
+          window.location.href,
+        );
+        if (
+          url.origin === window.location.origin &&
+          url.pathname === "/api/dm/contacts" &&
+          response.status === 401
+        )
+          window.__logoutContact401Reads += 1;
+        return response;
+      };
+    });
+    let enteredContactResolve;
+    const enteredContact = new Promise((resolve) => {
+      enteredContactResolve = resolve;
+    });
+    const contactGate = new Promise((resolve) => {
+      releaseContacts = resolve;
+    });
+    await fixture.page.route("**/api/dm/contacts", async (route) => {
+      enteredContactResolve();
+      await contactGate;
+      try {
+        const request = route.request();
+        const response = await fetch(request.url(), {
+          method: "GET",
+          headers: await request.allHeaders(),
+          redirect: "manual",
+          signal: AbortSignal.timeout(TIMEOUT),
+        });
+        const body = Buffer.from(await response.arrayBuffer());
+        need(
+          response.status === 401 && body.length > 0,
+          "contact-poll-real-worker-401-after-session-revocation",
+        );
+        contactResponses.push({
+          status: response.status,
+          bodyBytes: body.length,
+        });
+        await route.fulfill({
+          status: response.status,
+          contentType: "application/json",
+          body,
+        });
+      } catch {
+        contactRouteError = "contact-response-or-route-failed";
+      } finally {
+        finishedContactResolve();
+      }
+    });
+    // The existing contact cadence is 20s. Hold its real next read, rather than
+    // changing the cadence, credentials, KV or server response to force a race.
+    await bounded(enteredContact, "next-contact-poll-held", 25_000);
     const initialDocuments = fixture.events.documents.length;
-    const operation = await initiateSettingsLogout(fixture, "ack-loss");
+    const operation = await initiateSettingsLogout(fixture, "ack-loss", {
+      afterCommit: async () => {
+        releaseContacts();
+        await bounded(finishedContact, "contact-401-fulfilled");
+        need(contactRouteError === null, "contact-401-route-completed");
+        await fixture.page.waitForFunction(
+          () => window.__logoutContact401Reads > 0,
+          null,
+          { timeout: TIMEOUT },
+        );
+        // Let the SDK/resource rejection settle before delivering logout's
+        // transport failure. This is an ordering fence, not an extended UI wait.
+        await fixture.page.evaluate(
+          () => new Promise((resolve) => setTimeout(resolve, 0)),
+        );
+        await fixture.page.evaluate(
+          () => new Promise((resolve) => setTimeout(resolve, 0)),
+        );
+      },
+    });
     await bounded(operation.routeEntered, "ack-loss-worker-commit");
+    need(
+      operation.afterCommitError() === null,
+      operation.afterCommitError() ?? "contact-401-after-commit-completed",
+    );
     await waitForSignedOut(fixture, "ack-loss");
     need(
       fixture.committed?.status === 200 && fixture.committed.ownSessionAbsent,
@@ -696,10 +981,13 @@ async function runAckLoss({
       oldCookieStatus: oldCookie.status(),
       browserRetainedStaleCookie: cookieRetained,
       nativeSessionCount: sessions.count,
+      contact401Responses: contactResponses.length,
+      contactRecovery,
       logoutPosts: fixture.events.logoutPosts,
       oidcStarts: fixture.events.oidcStarts,
     };
   } finally {
+    releaseContacts?.();
     await fixture.context.close();
   }
 }

@@ -155,6 +155,9 @@ function HomeView(props: {
   actor: Actor;
   contacts: DMContact[];
   contactsLoading: boolean;
+  contactsError: boolean;
+  contactsRefreshing: boolean;
+  onRetryContacts: () => void;
   notes: ActorNote[];
   notesLoading: boolean;
   onTalk: (contact: DMContact) => void;
@@ -263,6 +266,19 @@ function HomeView(props: {
         onSave={props.onSaveNote}
         onDelete={props.onDeleteNote}
       />
+      <Show when={props.contactsError}>
+        <div class="p-home-empty" role="alert">
+          友だち・グループを読み込めませんでした。
+          <button
+            type="button"
+            class="p-home-empty-cta"
+            disabled={props.contactsRefreshing}
+            onClick={props.onRetryContacts}
+          >
+            {props.contactsRefreshing ? "再読み込み中..." : "再試行"}
+          </button>
+        </div>
+      </Show>
       <section class="p-home-section">
         <div class="p-home-section-head">
           <h2>友だち</h2>
@@ -289,24 +305,26 @@ function HomeView(props: {
             <For
               each={people()}
               fallback={
-                <li class="p-home-empty">
-                  <Show
-                    when={!searching()}
-                    fallback={<>一致する友だちはいません</>}
-                  >
-                    まだ友だちはいません
-                    <button
-                      type="button"
-                      class="p-home-empty-cta"
-                      onClick={() => setQrOpen(true)}
+                props.contactsError ? null : (
+                  <li class="p-home-empty">
+                    <Show
+                      when={!searching()}
+                      fallback={<>一致する友だちはいません</>}
                     >
-                      QRコードで友だち追加
-                    </button>
-                    <A class="p-home-empty-cta" href="/?tab=timeline">
-                      タイムラインで友だちを探す
-                    </A>
-                  </Show>
-                </li>
+                      まだ友だちはいません
+                      <button
+                        type="button"
+                        class="p-home-empty-cta"
+                        onClick={() => setQrOpen(true)}
+                      >
+                        QRコードで友だち追加
+                      </button>
+                      <A class="p-home-empty-cta" href="/?tab=timeline">
+                        タイムラインで友だちを探す
+                      </A>
+                    </Show>
+                  </li>
+                )
               }
             >
               {(contact) => (
@@ -356,11 +374,13 @@ function HomeView(props: {
             <For
               each={groups()}
               fallback={
-                <li class="p-home-empty">
-                  {searching()
-                    ? "一致するグループはありません"
-                    : "参加中のグループはありません"}
-                </li>
+                props.contactsError ? null : (
+                  <li class="p-home-empty">
+                    {searching()
+                      ? "一致するグループはありません"
+                      : "参加中のグループはありません"}
+                  </li>
+                )
               }
             >
               {(contact) => (
@@ -800,6 +820,9 @@ function HomeNoteBar(props: {
 function TalkListPane(props: {
   contacts: DMContact[];
   contactsLoading: boolean;
+  contactsError: boolean;
+  contactsRefreshing: boolean;
+  onRetryContacts: () => void;
   selected: DMContact | null;
   onSelect: (contact: DMContact) => void;
 }) {
@@ -988,6 +1011,20 @@ function TalkListPane(props: {
         </div>
       </Show>
 
+      <Show when={view() === "list" && props.contactsError}>
+        <div class="p-home-empty" role="alert">
+          トークを読み込めませんでした。
+          <button
+            type="button"
+            class="p-home-empty-cta"
+            disabled={props.contactsRefreshing}
+            onClick={props.onRetryContacts}
+          >
+            {props.contactsRefreshing ? "再読み込み中..." : "再試行"}
+          </button>
+        </div>
+      </Show>
+
       <Show when={view() === "list"}>
         <div class="p-talk-list-search">
           <label>
@@ -1039,11 +1076,13 @@ function TalkListPane(props: {
               <For
                 each={contacts()}
                 fallback={
-                  <li class="p-home-empty">
-                    {searching()
-                      ? "一致するトークはありません"
-                      : "まだトークはありません"}
-                  </li>
+                  props.contactsError ? null : (
+                    <li class="p-home-empty">
+                      {searching()
+                        ? "一致するトークはありません"
+                        : "まだトークはありません"}
+                    </li>
+                  )
                 }
               >
                 {(contact) => (
@@ -2312,6 +2351,9 @@ export default function App() {
           actor={app.actor()}
           contacts={chat.contacts()}
           contactsLoading={chat.contactsLoading()}
+          contactsError={chat.contactsError()}
+          contactsRefreshing={chat.contactsRefreshing()}
+          onRetryContacts={() => void chat.refetchContacts()}
           notes={notes() ?? []}
           notesLoading={notes.loading}
           onTalk={chat.selectContact}
@@ -2329,6 +2371,9 @@ export default function App() {
         <TalkListPane
           contacts={chat.contacts()}
           contactsLoading={chat.contactsLoading()}
+          contactsError={chat.contactsError()}
+          contactsRefreshing={chat.contactsRefreshing()}
+          onRetryContacts={() => void chat.refetchContacts()}
           selected={chat.selected()}
           onSelect={chat.selectContact}
         />

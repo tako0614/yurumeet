@@ -60,3 +60,17 @@ published app + Provider + Host Plan/Apply/State/Output/URL, deployment recovery
 live federation/Queue/Cron and shared session/replay contracts remain separate.
 No deploy, publication, live D1 apply, new billing/permissions/resources, merge,
 real-data deletion or other-worktree edits are authorized by this change.
+
+Exact-head CI also reached a separate contact-resource failure during logout.
+A held native contact read returned real401 after session revocation; the SDK
+ApiError401 reached the root rendering boundary and prevented sign-in, despite
+an anonymous current-user observation. Guarding the draft memo alone did not
+remove the failure. Both contact-resource value readers now check the error
+before reading; a retry can retain the previous error while its state is
+refreshing, so a state-only guard is insufficient. Failed refresh retains the
+last confirmed contacts. Home/Talk show an explicit retry and suppress empty-list
+success claims on initial failure. The strengthened existing ACK-loss lane first
+proves initial503, retry while the old error is present and preserved rows across
+refresh503 in both views, then releases a real contact401 during logout. Its
+original sign-out, old-cookie401, exact session preservation and 20s UI deadline
+remain. Added recovery steps do not change the prior114 ordered check prefix.
