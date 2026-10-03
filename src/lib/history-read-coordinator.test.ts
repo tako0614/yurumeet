@@ -46,6 +46,27 @@ function historyReads() {
 }
 
 describe("history read coordination", () => {
+  test("an older apply that reenters a full read cannot authorize a later frame", async () => {
+    const reads = createHistoryReadCoordinator();
+    const full = deferred<string>();
+    const ticket = await reads.runOlder(async () => "older", {
+      isScopeCurrent: () => true,
+      onSuccess: () => {
+        void reads.runFull(() => full.promise, {
+          isScopeCurrent: () => true,
+          onStart: () => {},
+          onSuccess: () => {},
+          onFailure: () => {},
+          onFinally: () => {},
+        });
+        return true;
+      },
+      onFailure: () => {},
+    });
+    expect(ticket).toBeNull();
+    full.resolve("refreshed");
+  });
+
   test("a successful poll takes over a pending full read and suppresses its late failure", async () => {
     const history = historyReads();
     const initial = deferred<string>();

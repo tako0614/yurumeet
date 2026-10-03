@@ -16,6 +16,7 @@ import { createEscapeClose, DialogA11y } from "../lib/dialog.tsx";
 import { createDraftSession, type DraftState } from "../lib/draft-store.ts";
 import { createScopedDraftIdentity } from "../lib/outgoing-journal.ts";
 import { searchMessages } from "../lib/message-search.ts";
+import { createOlderHistoryScroll } from "../lib/older-history-scroll.ts";
 import {
   attachmentSrc,
   CloseIcon,
@@ -44,6 +45,8 @@ type StagedMedia = MediaAttachment & { preview: string };
 export function ChatPane() {
   const app = useApp();
   const chat = useChat();
+  const olderHistoryScroll = createOlderHistoryScroll();
+  onCleanup(() => olderHistoryScroll.invalidate());
   const [draft, setDraft] = createSignal("");
   const draftSession = createDraftSession();
   const [draftStorageStatus, setDraftStorageStatus] =
@@ -137,6 +140,7 @@ export function ChatPane() {
   };
   createEffect(
     on(draftIdentity, (identity, previousIdentity) => {
+      olderHistoryScroll.invalidate();
       if (previousIdentity) draftSession.save(previousIdentity);
       stagedGeneration++;
       setStaged((prev) => {
@@ -369,15 +373,11 @@ export function ChatPane() {
   const loadOlderPreservingScroll = async () => {
     const el = scrollRef;
     if (!el || chat.loadingOlder() || !chat.messagesHasMore()) return;
-    const prevHeight = el.scrollHeight;
-    const prevTop = el.scrollTop;
-    await chat.loadOlderMessages();
-    // Prepended history grows scrollHeight above the viewport; compensate so
-    // the message the user was reading stays put.
-    requestAnimationFrame(() => {
-      const grown = el.scrollHeight - prevHeight;
-      if (grown > 0) el.scrollTop = prevTop + grown;
-    });
+    await olderHistoryScroll.run(
+      el,
+      chat.loadOlderMessages,
+      () => scrollRef === el,
+    );
   };
 
   const onScroll = () => {

@@ -31,6 +31,7 @@ import { qualifyBookmarks } from "./release-browser-bookmarks.mjs";
 import { qualifyBookmarkAuthLoss } from "./release-browser-bookmark-auth-loss.mjs";
 import { qualifyBrowserHistoryReadOrder } from "./release-browser-history-read-order.mjs";
 import { qualifyBrowserHistoryPagination } from "./release-browser-history-pagination.mjs";
+import { qualifyBrowserHistoryScroll } from "./release-browser-history-scroll.mjs";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const password = " browser-smoke-only ";
@@ -439,6 +440,7 @@ async function smoke(artifact, digest) {
       actorApId: ownerId,
       checks,
     });
+
     check(
       pageErrors.length === 0,
       "draft storage browser raised a runtime error",
@@ -832,6 +834,29 @@ async function smoke(artifact, digest) {
       await paginationPage.close();
     }
 
+    const scrollPage = await context.newPage();
+    let historyScroll;
+    const scrollPageErrors = [];
+    try {
+      scrollPage.on("pageerror", (error) =>
+        scrollPageErrors.push(String(error)),
+      );
+      historyScroll = await qualifyBrowserHistoryScroll({
+        page: scrollPage,
+        db,
+        origin,
+        actorApId: ownerId,
+        checks,
+      });
+      check(
+        scrollPageErrors.length === 0,
+        "history scroll raised a page error",
+      );
+      historyScroll.pageErrors = scrollPageErrors;
+    } finally {
+      await scrollPage.close();
+    }
+
     check(
       pageErrors.length === 0,
       "community delete browser raised a runtime error",
@@ -864,6 +889,7 @@ async function smoke(artifact, digest) {
       bookmarkAuthLoss,
       historyReadOrder,
       historyPagination,
+      historyScroll,
       status: "PASSED",
     };
   } catch (error) {

@@ -4,6 +4,8 @@
  * started after that read takes ownership of its result, so a slower full
  * response cannot replace or fail the usable history.
  */
+export type AppliedOlderHistory = { isCurrent: () => boolean };
+
 export function createHistoryReadCoordinator() {
   let generation = 0;
   let pollSucceeded = false;
@@ -16,6 +18,29 @@ export function createHistoryReadCoordinator() {
     invalidate: () => {
       generation++;
       pollSucceeded = false;
+    },
+    runOlder: async <T>(
+      read: () => Promise<T>,
+      handlers: {
+        isScopeCurrent: () => boolean;
+        /** True only when new canonical rows remain in the displayed list. */
+        onSuccess: (value: T) => boolean;
+        onFailure: () => void;
+      },
+    ): Promise<AppliedOlderHistory | null> => {
+      const token = generation;
+      const canApply = () => isCurrent(token) && handlers.isScopeCurrent();
+      let value: T;
+      try {
+        value = await read();
+      } catch {
+        if (canApply()) handlers.onFailure();
+        return null;
+      }
+      if (!canApply()) return null;
+      const prepended = handlers.onSuccess(value);
+      // A consumer may refresh or switch scope inside its apply callback.
+      return prepended && canApply() ? { isCurrent: canApply } : null;
     },
     runFull: async <T>(
       read: () => Promise<T>,
