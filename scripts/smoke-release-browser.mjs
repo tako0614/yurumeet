@@ -29,6 +29,7 @@ import {
 import { qualifyLogoutOutcome } from "./release-browser-logout-outcome.mjs";
 import { qualifyBookmarks } from "./release-browser-bookmarks.mjs";
 import { qualifyBookmarkAuthLoss } from "./release-browser-bookmark-auth-loss.mjs";
+import { qualifyBrowserHistoryReadOrder } from "./release-browser-history-read-order.mjs";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const password = " browser-smoke-only ";
@@ -704,6 +705,78 @@ async function smoke(artifact, digest) {
       sessionSalt: salt,
     });
 
+    // Keep all prior ordered checks as a prefix. This uses the existing owner
+    // session, with a disposable page and communities on the same native Worker.
+    const historyPage = await context.newPage();
+    let historyReadOrder;
+    const historyPageErrors = [];
+    const historyServerErrors = [];
+    const historyBlockedOutbound = [];
+    try {
+      historyPage.on("pageerror", (error) =>
+        historyPageErrors.push(String(error)),
+      );
+      historyPage.on("response", (response) => {
+        if (response.status() >= 500) {
+          historyServerErrors.push({
+            path: new URL(response.url()).pathname,
+            status: response.status(),
+          });
+        }
+      });
+      await historyPage.route("**/*", (route) => {
+        const url = new URL(route.request().url());
+        if (
+          url.origin === origin ||
+          url.protocol === "data:" ||
+          url.protocol === "blob:"
+        )
+          return route.continue();
+        historyBlockedOutbound.push({
+          method: route.request().method(),
+          url: url.href,
+        });
+        return route.abort("blockedbyclient");
+      });
+      historyReadOrder = await qualifyBrowserHistoryReadOrder({
+        page: historyPage,
+        db,
+        origin,
+        actorApId: ownerId,
+        checks,
+        mode: "candidate",
+      });
+      check(
+        historyPageErrors.length === 0 &&
+          historyServerErrors.length === 2 &&
+          new Set(
+            historyServerErrors.map(
+              (response) => `${response.status}:${response.path}`,
+            ),
+          ).size === 2 &&
+          [
+            historyReadOrder.lanes.failure.communityApId,
+            historyReadOrder.lanes.retry.communityApId,
+          ].every((apId) =>
+            historyServerErrors.some(
+              (response) =>
+                response.status === 503 &&
+                response.path ===
+                  `/api/communities/${encodeURIComponent(apId)}/messages`,
+            ),
+          ) &&
+          historyBlockedOutbound.length === 0,
+        "history ordering raised a page error, unexpected HTTP 5xx or external request",
+      );
+      historyReadOrder.runtimeObservations = {
+        pageErrors: historyPageErrors,
+        serverErrors: historyServerErrors,
+        blockedOutbound: historyBlockedOutbound,
+      };
+    } finally {
+      await historyPage.close();
+    }
+
     check(
       pageErrors.length === 0,
       "community delete browser raised a runtime error",
@@ -734,6 +807,7 @@ async function smoke(artifact, digest) {
       logoutOutcome,
       bookmarks,
       bookmarkAuthLoss,
+      historyReadOrder,
       status: "PASSED",
     };
   } catch (error) {
