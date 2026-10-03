@@ -1,7 +1,6 @@
 import { render } from "solid-js/web";
 import {
   createEffect,
-  createResource,
   createSignal,
   ErrorBoundary,
   For,
@@ -14,7 +13,6 @@ import {
 import { DialogA11y } from "./lib/dialog.tsx";
 import { A, Route, Router } from "@solidjs/router";
 import {
-  fetchCurrentActor,
   fetchDMUnreadCount,
   fetchUnreadCount,
   refreshBrowserNotificationPush,
@@ -35,7 +33,17 @@ import {
   configureYurumeetServerOrigin,
   readYurumeetServerOrigin,
 } from "./server-config.ts";
-import { resolveYurumeBrowserPushConfig } from "./lib/browser-push.ts";
+import {
+  clearYurumeBrowserPushBeforeSignOut,
+  createGuardedBrowserPushRuntime,
+  resolveYurumeBrowserPushConfig,
+} from "./lib/browser-push.ts";
+import { suppressTakosumiOidcAutoStart } from "./lib/auth-config.ts";
+import { createAuthSessionController } from "./lib/auth-session.ts";
+import {
+  postYurumeetLogout,
+  readYurumeetCurrentActor,
+} from "./lib/auth-request.ts";
 import { installStaleAssetReload } from "./lib/chunk-reload.ts";
 import "./styles.css";
 
@@ -55,10 +63,40 @@ function AppRoot(props: { children?: JSX.Element }) {
   const [serverOrigin, setServerOrigin] = createSignal<string | null>(
     initialOrigin,
   );
-  const [actor, { refetch: refetchActor }] = createResource(
-    serverOrigin,
-    fetchCurrentActor,
+  const authSession = createAuthSessionController(
+    {
+      readCurrentActor: readYurumeetCurrentActor,
+      postLogout: postYurumeetLogout,
+      clearPush: clearYurumeBrowserPushBeforeSignOut,
+      suppressOidc: suppressTakosumiOidcAutoStart,
+    },
+    {
+      origin: initialOrigin,
+      actor: null,
+      logoutErrorText:
+        "ログアウトできませんでした。現在もログインしています。もう一度ログアウトしてください。",
+      observationErrorText:
+        "認証状態を確認できませんでした。サーバーへの接続を確認して再試行してください。",
+    },
   );
+  const [auth, setAuth] = createSignal(authSession.read());
+  let authScopeEpoch = 0;
+  let authScope = JSON.stringify([initialOrigin, null]);
+  const unsubscribeAuth = authSession.subscribe((state) => {
+    const scope = JSON.stringify([state.origin, state.actor?.ap_id ?? null]);
+    if (scope !== authScope) {
+      authScope = scope;
+      authScopeEpoch += 1;
+    }
+    setAuth(state);
+  });
+  const actor = () => auth().actor;
+  const refetchActor = () => authSession.refresh();
+  onCleanup(() => {
+    unsubscribeAuth();
+    authSession.dispose();
+  });
+  if (initialOrigin) void refetchActor();
   const [toasts, setToasts] = createSignal<
     { id: number; message: string; tone: ToastTone; action?: ToastAction }[]
   >([]);
@@ -71,6 +109,7 @@ function AppRoot(props: { children?: JSX.Element }) {
 
   const confirm = (options: ConfirmOptions) =>
     new Promise<boolean>((resolve) => {
+      confirmState()?.resolve(false);
       setConfirmState({ options, resolve });
     });
 
@@ -81,8 +120,47 @@ function AppRoot(props: { children?: JSX.Element }) {
     state.resolve(value);
   };
 
+  let logoutConfirmPending = false;
+  const requestLogout = async () => {
+    const captured = authSession.read();
+    const capturedEpoch = authScopeEpoch;
+    if (
+      logoutConfirmPending ||
+      captured.logoutBusy ||
+      !captured.actor ||
+      !captured.origin
+    )
+      return;
+    logoutConfirmPending = true;
+    try {
+      const accepted = await confirm({
+        title: "ログアウト",
+        message: "ログアウトしますか?",
+        confirmLabel: "ログアウト",
+      });
+      const current = authSession.read();
+      if (
+        !accepted ||
+        authScopeEpoch !== capturedEpoch ||
+        current.origin !== captured.origin ||
+        current.actor?.ap_id !== captured.actor.ap_id ||
+        current.logoutBusy
+      )
+        return;
+      // The confirmation has settled before auth state can unmount its host.
+      await authSession.logout();
+    } finally {
+      logoutConfirmPending = false;
+    }
+  };
+
+  createEffect(() => {
+    if (auth().error || !actor()) settleConfirm(false);
+  });
+  onCleanup(() => settleConfirm(false));
+
   const refreshBadges = () => {
-    if (actor.error || actor.loading || !actor()) return;
+    if (auth().error || auth().loading || !actor()) return;
     fetchDMUnreadCount()
       .then((r) => setUnreadTalk(r.total ?? 0))
       .catch(() => {});
@@ -105,12 +183,27 @@ function AppRoot(props: { children?: JSX.Element }) {
     });
   });
   createEffect(() => {
-    if (actor.error || actor.loading || !actor()) return;
+    if (auth().error || auth().loading || !actor()) return;
+    const origin = auth().origin;
+    if (!origin) return;
+    const epoch = authScopeEpoch;
+    const cleanup = new AbortController();
+    onCleanup(() => cleanup.abort());
+    const runtime = createGuardedBrowserPushRuntime(cleanup.signal, origin);
     refreshBadges();
     void resolveYurumeBrowserPushConfig()
-      .then((config) =>
-        config ? refreshBrowserNotificationPush(config) : undefined,
-      )
+      .then((config) => {
+        if (
+          cleanup.signal.aborted ||
+          authScopeEpoch !== epoch ||
+          auth().error ||
+          auth().loading ||
+          !actor() ||
+          config?.serverOrigin !== origin
+        )
+          return;
+        return refreshBrowserNotificationPush(config, runtime);
+      })
       .catch(() => {});
   });
 
@@ -130,6 +223,8 @@ function AppRoot(props: { children?: JSX.Element }) {
   };
 
   const connectServer = (origin: string) => {
+    settleConfirm(false);
+    authSession.configure(origin, null, true);
     setServerOrigin(origin);
     void refetchActor();
   };
@@ -175,23 +270,40 @@ function AppRoot(props: { children?: JSX.Element }) {
           // A server/network failure is NOT "signed out": show a connection
           // error with retry instead of the sign-in screen. While a retry is
           // in flight the normal loading branch below takes over.
-          when={!actor.error || actor.loading}
-          fallback={<ConnectionError onRetry={() => void refetchActor()} />}
+          when={!auth().error || auth().loading}
+          fallback={
+            <ConnectionError
+              message={
+                auth().logoutError
+                  ? "ログアウトの完了を確認できませんでした。認証状態を再確認してください。"
+                  : (auth().error ?? undefined)
+              }
+              onRetry={() => void refetchActor()}
+            />
+          }
         >
           <Show
-            when={!actor.error && actor()}
+            when={!auth().error && actor()?.ap_id}
+            keyed
             fallback={
-              <Show when={!actor.loading} fallback={<div class="yc-boot" />}>
+              <Show
+                when={!auth().loading && auth().navigationAllowed}
+                fallback={<div class="yc-boot" />}
+              >
                 <SignedOut origin={origin()} />
               </Show>
             }
           >
-            {(currentActor) => (
+            {(_principal) => (
               <AppProvider
                 value={{
-                  actor: currentActor,
+                  // Key the provider lifetime by AP identity, preserving the
+                  // current same-principal profile through ordinary refresh.
+                  actor: () => actor()!,
                   origin,
                   refetchActor: () => void refetchActor(),
+                  logout: requestLogout,
+                  logoutBusy: () => auth().logoutBusy,
                   toast,
                   confirm,
                   unreadTalk,
@@ -199,6 +311,26 @@ function AppRoot(props: { children?: JSX.Element }) {
                   refreshBadges,
                 }}
               >
+                <Show when={auth().logoutBusy || auth().logoutError}>
+                  <div
+                    class="yc-logout-status"
+                    role={auth().logoutError ? "alert" : "status"}
+                  >
+                    <span>
+                      {auth().logoutBusy
+                        ? "ログアウトの結果を確認しています…"
+                        : auth().logoutError}
+                    </span>
+                    <Show when={auth().logoutError && !auth().logoutBusy}>
+                      <button
+                        type="button"
+                        onClick={() => void requestLogout()}
+                      >
+                        もう一度ログアウト
+                      </button>
+                    </Show>
+                  </div>
+                </Show>
                 <ChatProvider>
                   <Shell>{props.children}</Shell>
                 </ChatProvider>
@@ -225,7 +357,7 @@ function NotFoundPage() {
   );
 }
 
-function ConnectionError(props: { onRetry: () => void }) {
+function ConnectionError(props: { onRetry: () => void; message?: string }) {
   return (
     <main class="p-connect">
       <section>
@@ -233,7 +365,9 @@ function ConnectionError(props: { onRetry: () => void }) {
           <span>yurumeet</span>
         </div>
         <h1>接続エラー</h1>
-        <p>サーバーに接続できませんでした。</p>
+        <p role="alert">
+          {props.message ?? "サーバーに接続できませんでした。"}
+        </p>
         <button type="button" onClick={props.onRetry}>
           再試行
         </button>

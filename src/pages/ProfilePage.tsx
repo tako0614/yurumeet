@@ -9,7 +9,6 @@ import {
   fetchFollowers,
   fetchFollowing,
   follow,
-  logout,
   muteUser,
   type Post,
   reportContent,
@@ -24,8 +23,6 @@ import { ProfileEditModal } from "../components/profile/ProfileEditModal.tsx";
 import { useApp } from "../lib/app-context.tsx";
 import { useChat } from "../lib/chat-context.tsx";
 import { createEscapeClose, DialogA11y } from "../lib/dialog.tsx";
-import { clearYurumeBrowserPushBeforeSignOut } from "../lib/browser-push.ts";
-import { suppressTakosumiOidcAutoStart } from "../lib/auth-config.ts";
 import {
   attachmentSrc,
   CloseIcon,
@@ -224,24 +221,9 @@ export default function ProfilePage() {
     }
   };
 
-  const handleLogout = async () => {
+  const handleLogout = () => {
     setOwnMenuOpen(false);
-    const ok = await app.confirm({
-      title: "ログアウト",
-      message: "ログアウトしますか?",
-      confirmLabel: "ログアウト",
-    });
-    if (!ok) return;
-    // See SettingsPage: suppress the OIDC auto-start before the reload so
-    // signing out cannot immediately sign the user back in.
-    suppressTakosumiOidcAutoStart();
-    try {
-      await clearYurumeBrowserPushBeforeSignOut();
-      await logout();
-    } catch {
-      /* proceed to reload anyway */
-    }
-    window.location.reload();
+    void app.logout();
   };
 
   const copyLink = () => {
@@ -396,6 +378,7 @@ export default function ProfilePage() {
                                       type="button"
                                       role="menuitem"
                                       class="is-danger"
+                                      disabled={app.logoutBusy()}
                                       onClick={() => void handleLogout()}
                                     >
                                       ログアウト

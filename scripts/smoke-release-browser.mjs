@@ -26,6 +26,7 @@ import {
   qualifyStoryOutcome,
   qualifyStoryOutcomeConfirmed,
 } from "./release-browser-story-outcome.mjs";
+import { qualifyLogoutOutcome } from "./release-browser-logout-outcome.mjs";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const password = " browser-smoke-only ";
@@ -670,6 +671,18 @@ async function smoke(artifact, digest) {
       await outcomeContext.close();
     }
 
+    // Keep every preceding check in order. Sign-out gets independent browser
+    // contexts and respects the same native runtime's public auth rate window.
+    const logoutOutcome = await qualifyLogoutOutcome({
+      browser,
+      worker,
+      db,
+      origin,
+      checks,
+      password,
+      sessionSalt: salt,
+    });
+
     check(
       pageErrors.length === 0,
       "community delete browser raised a runtime error",
@@ -697,6 +710,7 @@ async function smoke(artifact, digest) {
       storySubmit,
       storyOutcome,
       storyOutcomeConfirmed,
+      logoutOutcome,
       status: "PASSED",
     };
   } catch (error) {
