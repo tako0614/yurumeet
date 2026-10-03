@@ -1,7 +1,7 @@
 /**
  * Per-talk unsent-message drafts, persisted so switching away from a
  * conversation (or reloading the tab) restores the text you had typed. Keyed
- * by the contact's AP id; text-only (staged media is intentionally NOT
+ * by a versioned origin/principal/contact identity; text-only (staged media is intentionally NOT
  * persisted — object URLs don't survive a reload and re-sending a stale upload
  * to the wrong thread would be worse than losing it).
  *
@@ -16,7 +16,9 @@ export type DraftStorage = {
   removeItem(key: string): void;
 };
 
-const DRAFT_PREFIX = "yurume:draft:";
+// Legacy contact-only keys are neither imported nor deleted: their author
+// cannot safely be inferred when another actor signs in.
+const DRAFT_PREFIX = "yurume:draft:v2:";
 
 export function draftKey(apId: string): string {
   return `${DRAFT_PREFIX}${apId}`;

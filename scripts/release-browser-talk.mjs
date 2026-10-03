@@ -1157,12 +1157,36 @@ export async function qualifyBrowserTalk({
   checks.push("browser-talk-media-dm-d1-r2-http-readback-and-private-denial");
 
   const failedText = `browser controlled failure ${crypto.randomUUID()}`;
+  const failedPng = await sendMediaFile(page, {
+    name: "recovery.png",
+    mimeType: "image/png",
+    buffer: pngBytes,
+  });
+  requireTalk(
+    typeof failedPng.url === "string" &&
+      typeof failedPng.r2_key === "string" &&
+      failedPng.content_type === "image/png",
+    "recovery PNG upload lacks its real object reference",
+  );
+  await page
+    .locator(".p-talk-chat-attach-strip img")
+    .waitFor({ state: "visible", timeout: 10_000 });
   let releaseAbort;
   let notifyIntercept;
   const abortGate = new Promise((resolve) => (releaseAbort = resolve));
   const intercepted = new Promise((resolve) => (notifyIntercept = resolve));
   let abortCount = 0;
   let beforeBackendAbortError = null;
+  let heldSendPayload = null;
+  const abortedSendRequest = page.waitForEvent("requestfailed", {
+    predicate: (request) =>
+      request.method() === "POST" &&
+      new URL(request.url()).pathname ===
+        `/api/dm/user/${encodeURIComponent(peerApId)}/messages` &&
+      request.postDataJSON()?.content === failedText,
+    timeout: 10_000,
+  });
+  abortedSendRequest.catch(() => {});
   const abortBeforeBackend = async (route) => {
     const request = route.request();
     if (
@@ -1173,6 +1197,7 @@ export async function qualifyBrowserTalk({
       request.postDataJSON()?.content === failedText
     ) {
       abortCount += 1;
+      heldSendPayload = request.postDataJSON();
       notifyIntercept();
       await abortGate;
       try {
@@ -1188,6 +1213,16 @@ export async function qualifyBrowserTalk({
   const failedRow = page
     .locator("li.c-talk-chat")
     .filter({ hasText: failedText });
+  const failedPostTargets = [];
+  const recordFailedPost = (request) => {
+    if (
+      request.method() === "POST" &&
+      request.postDataJSON()?.content === failedText
+    ) {
+      failedPostTargets.push(new URL(request.url()).pathname);
+    }
+  };
+  page.on("request", recordFailedPost);
   await page.route("**/api/dm/user/**/messages", abortBeforeBackend);
   let interceptTimeout;
   try {
@@ -1211,12 +1246,55 @@ export async function qualifyBrowserTalk({
       .locator("li.c-talk-chat.is-pending")
       .filter({ hasText: failedText });
     await pending.waitFor({ state: "visible", timeout: 10_000 });
-    releaseAbort();
-    const unknownRow = await expectUnknownDelivery(page, failedText);
-    await unknownRow.getByRole("button", { name: "再送" }).waitFor({
+    const awayContact = page
+      .locator("li.c-talk-rooms > button")
+      .filter({ hasText: unreadPeerName });
+    await awayContact.waitFor({ state: "visible", timeout: 10_000 });
+    await awayContact.click();
+    await page.getByText(unreadOpenerText, { exact: true }).waitFor({
       state: "visible",
       timeout: 10_000,
     });
+    const awayComposer = page.locator('textarea[name="message"]');
+    await awayComposer.waitFor({ state: "visible", timeout: 10_000 });
+    requireTalk(
+      (await awayComposer.inputValue()) === "" &&
+        (await page
+          .locator("li.c-talk-chat")
+          .filter({ hasText: failedText })
+          .count()) === 0,
+      "pending recovery payload leaked into the other talk",
+    );
+    releaseAbort();
+    await abortedSendRequest;
+    requireTalk(
+      (
+        await all(
+          db,
+          "SELECT ap_id FROM objects WHERE attributed_to = ? AND content = ?",
+          actorApId,
+          failedText,
+        )
+      ).length === 0,
+      "held send reached the backend while another talk was selected",
+    );
+    await page
+      .locator("li.c-talk-rooms > button")
+      .filter({ hasText: peerName })
+      .click();
+    await page.getByText(openerText, { exact: true }).waitFor({
+      state: "visible",
+      timeout: 10_000,
+    });
+    const unknownRow = await expectUnknownDelivery(page, failedText);
+    const failedImage = unknownRow.locator(".c-talk-chat-media img");
+    await failedImage.waitFor({ state: "visible", timeout: 10_000 });
+    const failedImageUrl = await failedImage.getAttribute("src");
+    requireTalk(
+      failedImageUrl === new URL(failedPng.url, origin).href,
+      "recovered failed row did not retain the exact uploaded PNG reference",
+    );
+    checks.push("browser-talk-switch-failed-media-retains-uploaded-png");
   } finally {
     clearTimeout(interceptTimeout);
     releaseAbort();
@@ -1233,6 +1311,51 @@ export async function qualifyBrowserTalk({
     failedText,
   );
   requireTalk(failedDbRows.length === 0, "before-backend abort left a D1 Note");
+  requireTalk(
+    abortCount === 1 &&
+      heldSendPayload &&
+      JSON.stringify(heldSendPayload).includes(failedPng.url) &&
+      JSON.stringify(heldSendPayload).includes(failedPng.r2_key),
+    "held request did not carry the staged text and actual uploaded PNG reference exactly once",
+  );
+
+  await page.reload({ waitUntil: "domcontentloaded", timeout: 20_000 });
+  await page
+    .locator("li.c-talk-rooms > button")
+    .filter({ hasText: peerName })
+    .click();
+  await page.getByText(openerText, { exact: true }).waitFor({
+    state: "visible",
+    timeout: 10_000,
+  });
+  const reloadedUnknownRow = await expectUnknownDelivery(page, failedText);
+  await reloadedUnknownRow
+    .locator(".c-talk-chat-media img")
+    .waitFor({ state: "visible", timeout: 10_000 });
+  requireTalk(
+    (await reloadedUnknownRow
+      .locator(".c-talk-chat-media img")
+      .getAttribute("src")) === new URL(failedPng.url, origin).href,
+    "reload recovery changed or lost the actual uploaded PNG reference",
+  );
+  requireTalk(
+    failedPostTargets.length === 1 &&
+      failedPostTargets[0] ===
+        `/api/dm/user/${encodeURIComponent(peerApId)}/messages`,
+    "reload recovery automatically posted or targeted a different conversation",
+  );
+  requireTalk(
+    (
+      await all(
+        db,
+        "SELECT ap_id FROM objects WHERE attributed_to = ? AND content = ?",
+        actorApId,
+        failedText,
+      )
+    ).length === 0,
+    "reload recovery persisted a Note without an explicit retry",
+  );
+  checks.push("browser-talk-reload-recovery-does-not-auto-post");
 
   const retryWait = waitForDmPost(page, origin, peerApId, failedText);
   await failedRow.getByRole("button", { name: "再送" }).click();
@@ -1245,8 +1368,13 @@ export async function qualifyBrowserTalk({
     peerApId,
     content: failedText,
   });
+  const retriedAttachments = JSON.parse(retriedObject.attachments_json);
   requireTalk(
     retriedObject.conversation === conversationId &&
+      retriedAttachments.length === 1 &&
+      retriedAttachments[0].url === failedPng.url &&
+      retriedAttachments[0].r2_key === failedPng.r2_key &&
+      retriedAttachments[0].content_type === failedPng.content_type &&
       (
         await all(
           db,
@@ -1257,21 +1385,640 @@ export async function qualifyBrowserTalk({
       ).length === 1,
     "before-backend retry did not create exactly one persisted Note",
   );
+  requireTalk(
+    failedPostTargets.length === 2 &&
+      failedPostTargets.every(
+        (pathname) =>
+          pathname === `/api/dm/user/${encodeURIComponent(peerApId)}/messages`,
+      ),
+    "explicit retry duplicated or changed the failed send target",
+  );
   const retriedRow = page
     .locator("li.c-talk-chat")
     .filter({ hasText: failedText });
   await retriedRow.waitFor({ state: "visible", timeout: 10_000 });
   await settledBubble(page, failedText);
+  requireTalk(
+    (await retriedRow.count()) === 1 &&
+      !(await retriedRow.evaluate(
+        (element) =>
+          element.classList.contains("is-pending") ||
+          element.classList.contains("is-failed"),
+      )),
+    "manual recovery retry did not reconcile to one canonical message row",
+  );
   await page.waitForFunction(
     () => document.querySelector('textarea[name="message"]')?.value === "",
     undefined,
     { timeout: 10_000 },
   );
+  checks.push("browser-talk-reload-recovery-explicit-manual-retry");
+  page.off("request", recordFailedPost);
   checks.push(
     "browser-talk-before-backend-loss-shows-unknown-warning-and-real-retry-persists-one",
   );
 
+  const pendingReloadText = `browser pending reload ${crypto.randomUUID()}`;
+  let releasePendingReload;
+  let notifyPendingReload;
+  const pendingReloadGate = new Promise(
+    (resolve) => (releasePendingReload = resolve),
+  );
+  const pendingReloadIntercepted = new Promise(
+    (resolve) => (notifyPendingReload = resolve),
+  );
+  let pendingReloadPostCount = 0;
+  let pendingReloadAbortError = null;
+  let pendingReloadRequestFailure = null;
+  let resolvePendingReloadRouteDone;
+  const pendingReloadRouteDone = new Promise(
+    (resolve) => (resolvePendingReloadRouteDone = resolve),
+  );
+  const pendingReloadTargets = [];
+  const recordPendingReloadPost = (request) => {
+    if (
+      request.method() === "POST" &&
+      request.postDataJSON()?.content === pendingReloadText
+    ) {
+      pendingReloadTargets.push(new URL(request.url()).pathname);
+    }
+  };
+  const pendingReloadRequestFailed = (request) => {
+    if (
+      request.method() === "POST" &&
+      request.postDataJSON()?.content === pendingReloadText
+    ) {
+      pendingReloadRequestFailure =
+        request.failure()?.errorText ?? "unknown request failure";
+    }
+  };
+  const holdPendingBeforeBackend = async (route) => {
+    const request = route.request();
+    if (
+      request.method() === "POST" &&
+      new URL(request.url()).origin === origin &&
+      new URL(request.url()).pathname ===
+        `/api/dm/user/${encodeURIComponent(peerApId)}/messages` &&
+      request.postDataJSON()?.content === pendingReloadText
+    ) {
+      pendingReloadPostCount += 1;
+      notifyPendingReload();
+      await pendingReloadGate;
+      try {
+        await route.abort("failed");
+      } catch (error) {
+        pendingReloadAbortError =
+          error instanceof Error ? error.message : String(error);
+      } finally {
+        resolvePendingReloadRouteDone();
+      }
+      return;
+    }
+    await route.fallback();
+  };
+  page.on("request", recordPendingReloadPost);
+  page.on("requestfailed", pendingReloadRequestFailed);
+  await page.route("**/api/dm/user/**/messages", holdPendingBeforeBackend);
+  let pendingReloadTimeout;
+  let pendingEnvelopeBeforeReload = null;
+  let pendingReloadOutcome = null;
+  let pendingReloadPrimaryFailure = false;
+  try {
+    await textarea.fill(pendingReloadText);
+    await sendButton.click();
+    await Promise.race([
+      pendingReloadIntercepted,
+      new Promise((_, reject) => {
+        pendingReloadTimeout = setTimeout(
+          () =>
+            reject(new Error("pending reload DM request was not intercepted")),
+          10_000,
+        );
+      }),
+    ]);
+    const pendingReloadRow = page
+      .locator("li.c-talk-chat.is-pending")
+      .filter({ hasText: pendingReloadText });
+    await pendingReloadRow.waitFor({ state: "visible", timeout: 10_000 });
+    pendingEnvelopeBeforeReload = await page.evaluate(
+      ({ base, principal, target, content }) => {
+        const prefix = `yurume:outgoing:v1:${encodeURIComponent(base)}:${encodeURIComponent(principal)}:`;
+        for (let index = 0; index < sessionStorage.length; index += 1) {
+          const key = sessionStorage.key(index);
+          if (!key?.startsWith(prefix)) continue;
+          try {
+            const envelope = JSON.parse(sessionStorage.getItem(key) ?? "null");
+            const record = envelope?.record;
+            if (
+              envelope?.scope?.serverOrigin === base &&
+              envelope.scope.principalApId === principal &&
+              record?.target?.type === "user" &&
+              record.target.ap_id === target &&
+              record.content === content
+            )
+              return { key, state: record.state, record };
+          } catch {
+            // Malformed records cannot qualify the requested durable pending state.
+          }
+        }
+        return null;
+      },
+      {
+        base: origin,
+        principal: actorApId,
+        target: peerApId,
+        content: pendingReloadText,
+      },
+    );
+    requireTalk(
+      pendingReloadPostCount === 1 &&
+        pendingReloadTargets.length === 1 &&
+        pendingReloadTargets[0] ===
+          `/api/dm/user/${encodeURIComponent(peerApId)}/messages` &&
+        pendingEnvelopeBeforeReload?.record?.state === "pending",
+      "pending reload did not capture exactly one held POST and its real pending journal envelope",
+    );
+    await page.reload({ waitUntil: "domcontentloaded", timeout: 20_000 });
+    await page
+      .locator("li.c-talk-rooms > button")
+      .filter({ hasText: peerName })
+      .click();
+    await page.getByText(openerText, { exact: true }).waitFor({
+      state: "visible",
+      timeout: 10_000,
+    });
+    const restoredPendingRow = await expectUnknownDelivery(
+      page,
+      pendingReloadText,
+    );
+    requireTalk(
+      pendingReloadPostCount === 1 &&
+        pendingReloadTargets.length === 1 &&
+        (await page
+          .locator("li.c-talk-chat")
+          .filter({ hasText: pendingReloadText })
+          .count()) === 1 &&
+        (
+          await all(
+            db,
+            "SELECT ap_id FROM objects WHERE attributed_to = ? AND content = ?",
+            actorApId,
+            pendingReloadText,
+          )
+        ).length === 0,
+      "pending reload triggered another POST or created a D1 Note",
+    );
+    const postReloadEnvelope = await page.evaluate(
+      ({ base, principal, target, content }) => {
+        const prefix = `yurume:outgoing:v1:${encodeURIComponent(base)}:${encodeURIComponent(principal)}:`;
+        for (let index = 0; index < sessionStorage.length; index += 1) {
+          const key = sessionStorage.key(index);
+          if (!key?.startsWith(prefix)) continue;
+          try {
+            const envelope = JSON.parse(sessionStorage.getItem(key) ?? "null");
+            const record = envelope?.record;
+            if (
+              envelope?.scope?.serverOrigin === base &&
+              envelope.scope.principalApId === principal &&
+              record?.target?.type === "user" &&
+              record.target.ap_id === target &&
+              record.content === content
+            )
+              return { key, state: record.state };
+          } catch {
+            // Ignore unrelated or malformed scoped entries.
+          }
+        }
+        return null;
+      },
+      {
+        base: origin,
+        principal: actorApId,
+        target: peerApId,
+        content: pendingReloadText,
+      },
+    );
+    requireTalk(
+      postReloadEnvelope?.key === pendingEnvelopeBeforeReload.key &&
+        (postReloadEnvelope.state === "pending" ||
+          postReloadEnvelope.state === "unconfirmed"),
+      "reload removed or changed the identity of the pending journal entry unexpectedly",
+    );
+    await restoredPendingRow
+      .getByRole("button", { name: "表示を消す" })
+      .click();
+    await restoredPendingRow.waitFor({ state: "detached", timeout: 10_000 });
+    const envelopeAfterDismiss = await page.evaluate(
+      ({ base, principal, target, content }) => {
+        const prefix = `yurume:outgoing:v1:${encodeURIComponent(base)}:${encodeURIComponent(principal)}:`;
+        for (let index = 0; index < sessionStorage.length; index += 1) {
+          const key = sessionStorage.key(index);
+          if (!key?.startsWith(prefix)) continue;
+          try {
+            const record = JSON.parse(
+              sessionStorage.getItem(key) ?? "null",
+            )?.record;
+            if (record?.target?.ap_id === target && record.content === content)
+              return key;
+          } catch {
+            // Ignore unrelated or malformed scoped entries.
+          }
+        }
+        return null;
+      },
+      {
+        base: origin,
+        principal: actorApId,
+        target: peerApId,
+        content: pendingReloadText,
+      },
+    );
+    requireTalk(
+      envelopeAfterDismiss === null &&
+        (await page
+          .locator("li.c-talk-chat")
+          .filter({ hasText: pendingReloadText })
+          .count()) === 0 &&
+        (
+          await all(
+            db,
+            "SELECT ap_id FROM objects WHERE attributed_to = ? AND content = ?",
+            actorApId,
+            pendingReloadText,
+          )
+        ).length === 0 &&
+        pendingReloadTargets.length === 1,
+      "explicit dismissal did not remove the scoped journal entry without a POST or D1 Note",
+    );
+    pendingReloadOutcome = {
+      heldPosts: pendingReloadPostCount,
+      reloadPostTargets: pendingReloadTargets.length,
+      pendingBeforeReload: pendingEnvelopeBeforeReload.record.state,
+      stateAfterReload: "unconfirmed",
+      diskStateAfterReload: postReloadEnvelope.state,
+      journalRemovedAfterDismiss: envelopeAfterDismiss === null,
+      noD1Note: true,
+    };
+  } catch (error) {
+    pendingReloadPrimaryFailure = true;
+    throw error;
+  } finally {
+    clearTimeout(pendingReloadTimeout);
+    releasePendingReload();
+    const cleanupErrors = [];
+    try {
+      await page.unroute(
+        "**/api/dm/user/**/messages",
+        holdPendingBeforeBackend,
+      );
+    } catch (error) {
+      cleanupErrors.push(error);
+    }
+    if (pendingReloadPostCount > 0) {
+      let routeDeadline;
+      try {
+        await Promise.race([
+          pendingReloadRouteDone,
+          new Promise((_, reject) => {
+            routeDeadline = setTimeout(
+              () => reject(new Error("pending reload route cleanup timed out")),
+              10_000,
+            );
+          }),
+        ]);
+      } catch (error) {
+        cleanupErrors.push(error);
+      } finally {
+        clearTimeout(routeDeadline);
+      }
+    }
+    if (cleanupErrors.length) {
+      if (pendingReloadPrimaryFailure)
+        process.stderr.write(
+          `pending reload cleanup also failed (${cleanupErrors.length})\n`,
+        );
+      else
+        throw new AggregateError(
+          cleanupErrors,
+          "pending reload cleanup failed",
+        );
+    }
+  }
+  requireTalk(
+    pendingReloadPostCount === 1 && pendingReloadTargets.length === 1,
+    "held pending reload send created another POST",
+  );
+  requireTalk(
+    (
+      await all(
+        db,
+        "SELECT ap_id FROM objects WHERE attributed_to = ? AND content = ?",
+        actorApId,
+        pendingReloadText,
+      )
+    ).length === 0,
+    "aborting the held pending reload request left a D1 Note",
+  );
+  pendingReloadOutcome = {
+    ...pendingReloadOutcome,
+    requestFailureDiagnostic: pendingReloadRequestFailure,
+    abortError: pendingReloadAbortError,
+  };
+  page.off("request", recordPendingReloadPost);
+  page.off("requestfailed", pendingReloadRequestFailed);
+  checks.push(
+    "browser-talk-pending-journal-reload-restores-unconfirmed-without-repost",
+  );
+
+  const committedAwayText = `browser acknowledged while away ${crypto.randomUUID()}`;
+  let releaseCommittedResponse;
+  let notifyCommittedResponse;
+  const committedResponseGate = new Promise(
+    (resolve) => (releaseCommittedResponse = resolve),
+  );
+  const committedResponseObserved = new Promise(
+    (resolve) => (notifyCommittedResponse = resolve),
+  );
+  let committedResponseFailure = null;
+  let committedMessage = null;
+  let committedPostCount = 0;
+  const holdCommittedResponse = async (route) => {
+    const request = route.request();
+    if (
+      request.method() === "POST" &&
+      new URL(request.url()).origin === origin &&
+      new URL(request.url()).pathname ===
+        `/api/dm/user/${encodeURIComponent(peerApId)}/messages` &&
+      request.postDataJSON()?.content === committedAwayText
+    ) {
+      committedPostCount += 1;
+      try {
+        const response = await route.fetch({ maxRedirects: 0 });
+        const bodyBytes = await response.body();
+        const body = JSON.parse(bodyBytes.toString("utf8"));
+        requireTalk(
+          response.status() === 201 && typeof body.message?.id === "string",
+          "while-away send did not commit through the real Worker",
+        );
+        await assertDmPersistence(db, {
+          apId: body.message.id,
+          actorApId,
+          peerApId,
+          content: committedAwayText,
+        });
+        committedMessage = {
+          status: response.status(),
+          body,
+          headers: response.headers(),
+          bodyBytes,
+        };
+      } catch (error) {
+        committedResponseFailure =
+          error instanceof Error
+            ? error.message
+            : "backend commit verification failed";
+      }
+      notifyCommittedResponse();
+      await committedResponseGate;
+      if (committedMessage) {
+        await route.fulfill({
+          status: committedMessage.status,
+          headers: committedMessage.headers,
+          body: committedMessage.bodyBytes,
+        });
+      } else {
+        await route.abort("failed");
+      }
+      return;
+    }
+    await route.fallback();
+  };
+  const committedWait = waitForDmPost(
+    page,
+    origin,
+    peerApId,
+    committedAwayText,
+  );
+  await page.route("**/api/dm/user/**/messages", holdCommittedResponse);
+  let committedOutcome;
+  try {
+    await textarea.fill(committedAwayText);
+    await sendButton.click();
+    await Promise.race([
+      committedResponseObserved,
+      new Promise((_, reject) =>
+        setTimeout(
+          () => reject(new Error("while-away send did not reach the Worker")),
+          15_000,
+        ),
+      ),
+    ]);
+    requireTalk(
+      committedMessage?.status === 201 && !committedResponseFailure,
+      `while-away Worker commit failed: ${committedResponseFailure ?? "no committed response"}`,
+    );
+    const awayContact = page
+      .locator("li.c-talk-rooms > button")
+      .filter({ hasText: unreadPeerName });
+    await awayContact.waitFor({ state: "visible", timeout: 10_000 });
+    await awayContact.click();
+    await page.getByText(unreadOpenerText, { exact: true }).waitFor({
+      state: "visible",
+      timeout: 10_000,
+    });
+    requireTalk(
+      (await page
+        .locator("li.c-talk-chat")
+        .filter({ hasText: committedAwayText })
+        .count()) === 0 &&
+        (await page.locator('textarea[name="message"]').inputValue()) === "" &&
+        committedPostCount === 1,
+      "committed message appeared in the other talk or was automatically reposted",
+    );
+    releaseCommittedResponse();
+    const actualResponse = await committedWait;
+    requireTalk(
+      actualResponse.status() === 201,
+      "held real 201 was not returned to the browser",
+    );
+    const actualBody = await jsonResponse(
+      actualResponse,
+      "while-away committed send",
+    );
+    requireTalk(
+      actualBody.message?.id === committedMessage.body.message.id &&
+        committedPostCount === 1,
+      "while-away response changed canonical identity or triggered a second POST",
+    );
+    await page
+      .locator("li.c-talk-rooms > button")
+      .filter({ hasText: peerName })
+      .click();
+    await page.getByText(openerText, { exact: true }).waitFor({
+      state: "visible",
+      timeout: 10_000,
+    });
+    await page.getByText(committedAwayText, { exact: true }).waitFor({
+      state: "visible",
+      timeout: 10_000,
+    });
+    const committedRow = page
+      .locator("li.c-talk-chat")
+      .filter({ hasText: committedAwayText });
+    await settledBubble(page, committedAwayText);
+    const committedRows = await all(
+      db,
+      "SELECT ap_id FROM objects WHERE attributed_to = ? AND content = ?",
+      actorApId,
+      committedAwayText,
+    );
+    requireTalk(
+      committedRows.length === 1 &&
+        committedRows[0].ap_id === actualBody.message.id &&
+        (await committedRow.count()) === 1,
+      "returning after an acknowledged while-away send did not show exactly one canonical row",
+    );
+    committedOutcome = {
+      status: actualResponse.status(),
+      canonicalIdMatchesD1: true,
+      persistedRows: committedRows.length,
+      visibleRows: await committedRow.count(),
+    };
+    checks.push("browser-talk-successful-send-completes-while-away");
+  } finally {
+    releaseCommittedResponse();
+    await page.unroute("**/api/dm/user/**/messages", holdCommittedResponse);
+  }
+
+  let storageDeniedOutcome = null;
+  const deniedContext = await page
+    .context()
+    .browser()
+    .newContext({
+      locale: "ja-JP",
+      viewport: { width: 1280, height: 900 },
+      serviceWorkers: "block",
+    });
+  try {
+    await deniedContext.addCookies(await page.context().cookies(origin));
+    const deniedPage = await deniedContext.newPage();
+    await deniedPage.addInitScript(() => {
+      const write = Storage.prototype.setItem;
+      Storage.prototype.setItem = function (key, value) {
+        if (
+          this === window.sessionStorage &&
+          key.startsWith("yurume:outgoing:v1:")
+        ) {
+          throw new DOMException("storage denied", "QuotaExceededError");
+        }
+        return write.call(this, key, value);
+      };
+    });
+    await deniedPage.route("**/*", (route) => {
+      const url = new URL(route.request().url());
+      return url.protocol === "data:" ||
+        url.protocol === "blob:" ||
+        url.origin === origin
+        ? route.continue()
+        : route.abort("blockedbyclient");
+    });
+    await deniedPage.goto(origin, {
+      waitUntil: "domcontentloaded",
+      timeout: 20_000,
+    });
+    const deniedIdentity = await deniedPage.evaluate(async (base) => {
+      const response = await fetch(`${base}/api/auth/me`, {
+        credentials: "include",
+      });
+      const body = await response.json();
+      return { status: response.status, apId: body.actor?.ap_id };
+    }, origin);
+    requireTalk(
+      deniedIdentity.status === 200 && deniedIdentity.apId === actorApId,
+      "storage-denied context did not retain the local signed-in principal",
+    );
+    const deniedContact = deniedPage
+      .locator("li.c-talk-rooms > button")
+      .filter({ hasText: peerName });
+    await deniedContact.waitFor({ state: "visible", timeout: 10_000 });
+    await deniedContact.click();
+    await deniedPage.getByText(openerText, { exact: true }).waitFor({
+      state: "visible",
+      timeout: 10_000,
+    });
+    const deniedUpload = await sendMediaFile(deniedPage, {
+      name: "denied-recovery.png",
+      mimeType: "image/png",
+      buffer: pngBytes,
+    });
+    const deniedText = `browser storage denied ${crypto.randomUUID()}`;
+    const deniedPosts = [];
+    deniedPage.on("request", (request) => {
+      if (
+        request.method() === "POST" &&
+        request.postDataJSON()?.content === deniedText
+      ) {
+        deniedPosts.push(new URL(request.url()).pathname);
+      }
+    });
+    const deniedComposer = deniedPage.locator('textarea[name="message"]');
+    await deniedComposer.fill(deniedText);
+    await deniedPage.getByRole("button", { name: "送信" }).click();
+    await deniedPage
+      .getByText("送信内容を保存できません。入力を残しています", {
+        exact: true,
+      })
+      .waitFor({ state: "visible", timeout: 10_000 });
+    const deniedStagedImage = deniedPage.locator(
+      ".p-talk-chat-attach-strip img",
+    );
+    await deniedStagedImage.waitFor({ state: "visible", timeout: 10_000 });
+    requireTalk(
+      (await deniedComposer.inputValue()) === deniedText &&
+        (await deniedStagedImage.evaluate((image) => image.naturalWidth)) ===
+          1 &&
+        deniedPosts.length === 0 &&
+        (await deniedPage
+          .locator("li.c-talk-chat")
+          .filter({ hasText: deniedText })
+          .count()) === 0,
+      "storage denial did not preserve text and staged media before any POST",
+    );
+    requireTalk(
+      typeof deniedUpload.r2_key === "string" &&
+        (
+          await all(
+            db,
+            "SELECT ap_id FROM objects WHERE attributed_to = ? AND content = ?",
+            actorApId,
+            deniedText,
+          )
+        ).length === 0,
+      "storage-denied send had server-side message effects",
+    );
+    storageDeniedOutcome = {
+      refusedBeforePost: deniedPosts.length === 0,
+      composerRetained: true,
+      stagedPngRetained: true,
+    };
+    checks.push(
+      "browser-talk-storage-denial-retains-composer-and-staged-media",
+    );
+  } finally {
+    await deniedContext.close();
+  }
+
   const lostAckText = `browser committed lost acknowledgement ${crypto.randomUUID()}`;
+  const lostAckPostTargets = [];
+  const recordLostAckPost = (request) => {
+    if (
+      request.method() === "POST" &&
+      request.postDataJSON()?.content === lostAckText
+    ) {
+      lostAckPostTargets.push(new URL(request.url()).pathname);
+    }
+  };
+  page.on("request", recordLostAckPost);
   let releaseLostAck;
   let notifyLostAck;
   const lostAckGate = new Promise((resolve) => (releaseLostAck = resolve));
@@ -1413,15 +2160,6 @@ export async function qualifyBrowserTalk({
       `unknown delivery controls overflow or leave the viewport at 390px: ${JSON.stringify({ narrowWidth, narrowBounds })}`,
     );
     await page.setViewportSize({ width: 1280, height: 900 });
-    await unknownRow.getByRole("button", { name: "表示を消す" }).click();
-    await page
-      .getByText(
-        "再送すると重複する可能性があります。履歴を確認してください。",
-        {
-          exact: true,
-        },
-      )
-      .waitFor({ state: "detached", timeout: 10_000 });
   } finally {
     clearTimeout(lostAckTimeout);
     releaseLostAck();
@@ -1433,15 +2171,6 @@ export async function qualifyBrowserTalk({
       !browserAbortError &&
       lostAckObservation?.status === 201,
     `lost-ACK injection did not complete exactly once: ${backendError ?? browserAbortError ?? "missing backend result"}`,
-  );
-  const afterLostAckDismiss = await dmSideEffectCounts(db, {
-    actorApId,
-    peerApId,
-    content: lostAckText,
-  });
-  requireTalk(
-    hasSideEffectCounts(afterLostAckDismiss, 1),
-    `dismissing an unknown placeholder changed persisted DM side effects: ${JSON.stringify(afterLostAckDismiss)}`,
   );
   checks.push(
     "browser-talk-after-commit-lost-ack-warns-dismisses-placeholder-and-keeps-one-real-dm",
@@ -1487,7 +2216,7 @@ export async function qualifyBrowserTalk({
     .locator("li.c-talk-rooms > button")
     .filter({ hasText: peerName })
     .click();
-  for (const content of [text, mediaText, failedText, lostAckText]) {
+  for (const content of [text, mediaText, failedText]) {
     await page.getByText(content, { exact: true }).waitFor({
       state: "visible",
       timeout: 15_000,
@@ -1496,13 +2225,70 @@ export async function qualifyBrowserTalk({
   const persistedLostAckRows = page
     .locator("li.c-talk-chat")
     .filter({ hasText: lostAckText });
-  requireTalk(
-    (await persistedLostAckRows.count()) === 1,
-    "reload did not show exactly one server-persisted lost-ACK message",
-  );
-  await persistedLostAckRows
+  const reloadedLostAckPlaceholder = persistedLostAckRows.filter({
+    has: page.locator(".c-talk-chat-failed"),
+  });
+  const reloadedLostAckCanonical = page
+    .locator("li.c-talk-chat")
+    .filter({ hasText: lostAckText })
+    .filter({
+      hasNot: page.locator(".c-talk-chat-failed"),
+    });
+  await reloadedLostAckCanonical
+    .getByText(lostAckText, { exact: true })
+    .waitFor({ state: "visible", timeout: 15_000 });
+  await reloadedLostAckPlaceholder
     .getByText("送信結果を確認できません", { exact: true })
-    .waitFor({ state: "detached", timeout: 10_000 });
+    .waitFor({ state: "visible", timeout: 10_000 });
+  await reloadedLostAckPlaceholder
+    .getByText("再送すると重複する可能性があります。履歴を確認してください。", {
+      exact: true,
+    })
+    .waitFor({ state: "visible", timeout: 10_000 });
+  requireTalk(
+    (await persistedLostAckRows.count()) === 2,
+    "reload did not show one canonical lost-ACK message and one cautious placeholder",
+  );
+  requireTalk(
+    (await reloadedLostAckPlaceholder.count()) === 1 &&
+      (await reloadedLostAckCanonical.count()) === 1 &&
+      lostAckPostTargets.length === 1 &&
+      lostAckPostTargets[0] ===
+        `/api/dm/user/${encodeURIComponent(peerApId)}/messages`,
+    "lost-ACK reload did not retain exactly one canonical row and one placeholder without an automatic POST",
+  );
+  const afterLostAckReload = await dmSideEffectCounts(db, {
+    actorApId,
+    peerApId,
+    content: lostAckText,
+  });
+  requireTalk(
+    hasSideEffectCounts(afterLostAckReload, 1),
+    `lost-ACK reload changed persisted DM side effects: ${JSON.stringify(afterLostAckReload)}`,
+  );
+  checks.push(
+    "browser-talk-lost-ack-reload-restores-canonical-and-cautious-placeholder",
+  );
+  await reloadedLostAckPlaceholder
+    .getByRole("button", { name: "表示を消す" })
+    .click();
+  await reloadedLostAckPlaceholder.waitFor({
+    state: "detached",
+    timeout: 10_000,
+  });
+  const afterLostAckDismiss = await dmSideEffectCounts(db, {
+    actorApId,
+    peerApId,
+    content: lostAckText,
+  });
+  requireTalk(
+    (await persistedLostAckRows.count()) === 1 &&
+      (await reloadedLostAckCanonical.count()) === 1 &&
+      hasSideEffectCounts(afterLostAckDismiss, 1),
+    `dismissing the reloaded placeholder changed the canonical row or D1 side effects: ${JSON.stringify(afterLostAckDismiss)}`,
+  );
+  page.off("request", recordLostAckPost);
+  checks.push("browser-talk-lost-ack-dismiss-keeps-canonical-row-and-d1-count");
   await page.setViewportSize({ width: 390, height: 844 });
   await page.waitForFunction(
     () => {
@@ -1549,6 +2335,9 @@ export async function qualifyBrowserTalk({
         retryMessageId: retryBody.message.id,
         persistedNoteCount: 1,
       },
+      pendingJournalReload: pendingReloadOutcome,
+      storageDenied: storageDeniedOutcome,
+      successfulCompletionWhileAway: committedOutcome,
       afterCommitLostAck: {
         abortedPosts: lostAckAbortCount,
         backendStatus: lostAckObservation.status,
