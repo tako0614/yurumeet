@@ -59,6 +59,12 @@ if (initialOrigin) configureYurumeetServerOrigin(initialOrigin);
 
 let toastSeq = 0;
 
+type ConfirmState = {
+  options: ConfirmOptions;
+  resolve: (value: boolean) => void;
+  cleanup: () => void;
+};
+
 function AppRoot(props: { children?: JSX.Element }) {
   const [serverOrigin, setServerOrigin] = createSignal<string | null>(
     initialOrigin,
@@ -102,23 +108,36 @@ function AppRoot(props: { children?: JSX.Element }) {
   >([]);
   const [unreadTalk, setUnreadTalk] = createSignal(0);
   const [unreadNotifications, setUnreadNotifications] = createSignal(0);
-  const [confirmState, setConfirmState] = createSignal<{
-    options: ConfirmOptions;
-    resolve: (value: boolean) => void;
-  } | null>(null);
+  const [confirmState, setConfirmState] = createSignal<ConfirmState | null>(
+    null,
+  );
+
+  const settleConfirm = (value: boolean, expected = confirmState()) => {
+    const state = confirmState();
+    if (!state || state !== expected) return;
+    setConfirmState(null);
+    state.cleanup();
+    state.resolve(value);
+  };
 
   const confirm = (options: ConfirmOptions) =>
     new Promise<boolean>((resolve) => {
-      confirmState()?.resolve(false);
-      setConfirmState({ options, resolve });
+      // An already-retired caller must not replace another live dialog.
+      if (options.signal?.aborted) {
+        resolve(false);
+        return;
+      }
+      settleConfirm(false);
+      const abort = () => settleConfirm(false, state);
+      const state: ConfirmState = {
+        options,
+        resolve,
+        cleanup: () => options.signal?.removeEventListener("abort", abort),
+      };
+      setConfirmState(state);
+      options.signal?.addEventListener("abort", abort, { once: true });
+      if (options.signal?.aborted) abort();
     });
-
-  const settleConfirm = (value: boolean) => {
-    const state = confirmState();
-    if (!state) return;
-    setConfirmState(null);
-    state.resolve(value);
-  };
 
   let logoutConfirmPending = false;
   const requestLogout = async () => {
@@ -398,34 +417,35 @@ function Shell(props: { children?: JSX.Element }) {
 }
 
 function ConfirmHost(props: {
-  state: { options: ConfirmOptions; resolve: (value: boolean) => void } | null;
-  onSettle: (value: boolean) => void;
+  state: ConfirmState | null;
+  onSettle: (value: boolean, state: ConfirmState) => void;
 }) {
   let dialogRoot: HTMLDivElement | undefined;
   return (
-    <Show when={props.state}>
+    <Show when={props.state} keyed>
       {(state) => (
         <div
           class="yc-confirm-scrim"
           role="presentation"
           onClick={(event) => {
-            if (event.target === event.currentTarget) props.onSettle(false);
+            if (event.target === event.currentTarget)
+              props.onSettle(false, state);
           }}
         >
           <div
             class="yc-confirm"
             role="alertdialog"
             aria-modal="true"
-            aria-label={state().options.title}
+            aria-label={state.options.title}
             ref={(el) => (dialogRoot = el)}
           >
             <DialogA11y
               root={() => dialogRoot}
-              onClose={() => props.onSettle(false)}
+              onClose={() => props.onSettle(false, state)}
             />
-            <strong>{state().options.title}</strong>
-            <Show when={state().options.message}>
-              <p>{state().options.message}</p>
+            <strong>{state.options.title}</strong>
+            <Show when={state.options.message}>
+              <p>{state.options.message}</p>
             </Show>
             <div class="yc-confirm-actions">
               {/* Destructive confirms start focused on the SAFE choice so a
@@ -433,21 +453,21 @@ function ConfirmHost(props: {
               <button
                 type="button"
                 class="yc-confirm-cancel"
-                autofocus={!!state().options.danger}
-                onClick={() => props.onSettle(false)}
+                autofocus={!!state.options.danger}
+                onClick={() => props.onSettle(false, state)}
               >
-                {state().options.cancelLabel ?? "キャンセル"}
+                {state.options.cancelLabel ?? "キャンセル"}
               </button>
               <button
                 type="button"
-                autofocus={!state().options.danger}
+                autofocus={!state.options.danger}
                 classList={{
                   "yc-confirm-ok": true,
-                  "is-danger": !!state().options.danger,
+                  "is-danger": !!state.options.danger,
                 }}
-                onClick={() => props.onSettle(true)}
+                onClick={() => props.onSettle(true, state)}
               >
-                {state().options.confirmLabel ?? "OK"}
+                {state.options.confirmLabel ?? "OK"}
               </button>
             </div>
           </div>

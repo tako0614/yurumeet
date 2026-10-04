@@ -65,7 +65,8 @@ export default function ProfilePage() {
   const [menuOpen, setMenuOpen] = createSignal(false);
   const [ownMenuOpen, setOwnMenuOpen] = createSignal(false);
   const [qrOpen, setQrOpen] = createSignal(false);
-  const [reportOpen, setReportOpen] = createSignal(false);
+  type ReportWindow = { actor: Actor; isCurrent: () => boolean };
+  const [reportOpen, setReportOpen] = createSignal<ReportWindow | null>(null);
   const [muted, setMuted] = createSignal(false);
   const [blocked, setBlocked] = createSignal(false);
   const [cursor, setCursor] = createSignal<string | null>(null);
@@ -82,6 +83,8 @@ export default function ProfilePage() {
   };
 
   let gen = 0;
+  // A remote profile may canonicalize the requested route to another Actor ID.
+  let loadedProfileRouteId: string | null = null;
   // ID equality alone cannot reject outcomes from an earlier A→B→A visit.
   let routeEpoch = 0;
   const captureRoute = () => {
@@ -89,13 +92,27 @@ export default function ProfilePage() {
     const id = targetActorId();
     return () => epoch === routeEpoch && id === targetActorId();
   };
+  const captureProfile = (target: Actor) => {
+    const myGen = gen;
+    const routeIsCurrent = captureRoute();
+    return () =>
+      myGen === gen &&
+      routeIsCurrent() &&
+      loadedProfileRouteId === targetActorId() &&
+      profile()?.ap_id === target.ap_id;
+  };
+  let actionScope = new AbortController();
   onCleanup(() => {
     ++routeEpoch;
     ++gen;
+    actionScope.abort();
   });
   const load = () => {
+    actionScope.abort();
+    actionScope = new AbortController();
     const id = targetActorId();
     const myGen = ++gen;
+    loadedProfileRouteId = null;
     const isCurrent = captureRoute();
     setLoading(true);
     setError(false);
@@ -106,6 +123,7 @@ export default function ProfilePage() {
     // state. Its eventual response belongs to that earlier visit only.
     setFollowBusy(false);
     setMenuOpen(false);
+    setReportOpen(null);
     setMuted(false);
     setBlocked(false);
     setCursor(null);
@@ -114,6 +132,7 @@ export default function ProfilePage() {
       try {
         const actor = await fetchActor(id);
         if (myGen !== gen || !isCurrent()) return;
+        loadedProfileRouteId = id;
         setProfile(actor);
         setIsFollowing(!!actor.is_following);
         const page = await fetchActorPosts(id, { limit: 20 });
@@ -135,7 +154,7 @@ export default function ProfilePage() {
       setFollowList(null);
       setOwnMenuOpen(false);
       setQrOpen(false);
-      setReportOpen(false);
+      setReportOpen(null);
       setLoadingMore(false);
       load();
     }),
@@ -178,8 +197,11 @@ export default function ProfilePage() {
   const openMessage = async () => {
     const p = profile();
     if (!p) return;
+    const isCurrent = captureProfile(p);
+    if (!isCurrent()) return;
     try {
       const contact = await fetchDMContact(p.ap_id);
+      if (!isCurrent()) return;
       if (contact) {
         // Navigate FIRST so the chat's history entry sits on top of the talk
         // tab (back then closes the chat instead of resurrecting this page).
@@ -189,36 +211,46 @@ export default function ProfilePage() {
         app.toast("相互フォローになるとトークできます");
       }
     } catch {
-      app.toast("トークを開けませんでした", "error");
+      if (isCurrent()) app.toast("トークを開けませんでした", "error");
     }
   };
 
   const toggleMute = async () => {
     const p = profile();
     if (!p) return;
+    const isCurrent = captureProfile(p);
+    if (!isCurrent()) return;
+    const wasMuted = muted();
     setMenuOpen(false);
     try {
-      if (muted()) {
+      if (wasMuted) {
         await unmuteUser(p.ap_id);
+        if (!isCurrent()) return;
         setMuted(false);
         app.toast("ミュートを解除しました");
       } else {
         await muteUser(p.ap_id);
+        if (!isCurrent()) return;
         setMuted(true);
         app.toast("ミュートしました");
       }
     } catch {
-      app.toast("操作に失敗しました", "error");
+      if (isCurrent()) app.toast("操作に失敗しました", "error");
     }
   };
 
   const toggleBlock = async () => {
     const p = profile();
     if (!p) return;
+    const isCurrent = captureProfile(p);
+    if (!isCurrent()) return;
+    const wasBlocked = blocked();
+    const signal = actionScope.signal;
     setMenuOpen(false);
     try {
-      if (blocked()) {
+      if (wasBlocked) {
         await unblockUser(p.ap_id);
+        if (!isCurrent()) return;
         setBlocked(false);
         app.toast("ブロックを解除しました");
       } else {
@@ -227,33 +259,40 @@ export default function ProfilePage() {
           message: `${titleFor(p)} をブロックしますか?`,
           confirmLabel: "ブロック",
           danger: true,
+          signal,
         });
-        if (!ok) return;
+        if (!ok || !isCurrent()) return;
         await blockUser(p.ap_id);
+        if (!isCurrent()) return;
         setBlocked(true);
         setIsFollowing(false);
+        setFollowPending(false);
         app.toast("ブロックしました");
       }
     } catch {
-      app.toast("操作に失敗しました", "error");
+      if (isCurrent()) app.toast("操作に失敗しました", "error");
     }
   };
 
   const report = () => {
-    setMenuOpen(false);
-    setReportOpen(true);
-  };
-
-  const submitReport = async (reason: string) => {
     const p = profile();
     if (!p) return;
+    const isCurrent = captureProfile(p);
+    if (!isCurrent()) return;
+    setMenuOpen(false);
+    setReportOpen({ actor: p, isCurrent });
+  };
+
+  const submitReport = async (opening: ReportWindow, reason: string) => {
+    const isCurrent = () => reportOpen() === opening && opening.isCurrent();
+    if (!isCurrent()) return;
     try {
-      await reportContent({ targetActorApId: p.ap_id, reason });
-      app.toast("報告しました");
+      await reportContent({ targetActorApId: opening.actor.ap_id, reason });
+      if (isCurrent()) app.toast("報告しました");
     } catch {
-      app.toast("報告に失敗しました", "error");
+      if (isCurrent()) app.toast("報告に失敗しました", "error");
     } finally {
-      setReportOpen(false);
+      if (isCurrent()) setReportOpen(null);
     }
   };
 
@@ -265,12 +304,18 @@ export default function ProfilePage() {
   const copyLink = () => {
     const p = profile();
     if (!p) return;
+    const isCurrent = captureProfile(p);
+    if (!isCurrent()) return;
     setMenuOpen(false);
     const url = `${app.origin()}${profilePath(p.ap_id)}`;
     void navigator.clipboard
       ?.writeText(url)
-      .then(() => app.toast("リンクをコピーしました"))
-      .catch(() => app.toast("コピーに失敗しました", "error"));
+      .then(() => {
+        if (isCurrent()) app.toast("リンクをコピーしました");
+      })
+      .catch(() => {
+        if (isCurrent()) app.toast("コピーに失敗しました", "error");
+      });
   };
 
   const handleFollow = async () => {
@@ -700,12 +745,16 @@ export default function ProfilePage() {
         />
       </Show>
 
-      <Show when={reportOpen() && profile()}>
-        <ReportModal
-          name={titleFor(profile()!)}
-          onClose={() => setReportOpen(false)}
-          onSubmit={submitReport}
-        />
+      <Show when={reportOpen()} keyed>
+        {(opening) => (
+          <ReportModal
+            name={titleFor(opening.actor)}
+            onClose={() => {
+              if (reportOpen() === opening) setReportOpen(null);
+            }}
+            onSubmit={(reason) => submitReport(opening, reason)}
+          />
+        )}
       </Show>
 
       <Show when={qrOpen()}>
