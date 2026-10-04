@@ -515,8 +515,13 @@ async function laneMuteRouteSwitch({
     } else if (mode === "unmount") {
       await spaNavigate(page, `${origin}/?tab=talk`);
       await page
-        .getByText("まだトークはありません", { exact: true })
+        .getByRole("heading", { name: "トーク", exact: true })
         .waitFor({ state: "visible", timeout: 10_000 });
+      requireAction(
+        (await page.locator(".p-profile-name").count()) === 0 &&
+          (await page.locator(".p-profile-more").count()) === 0,
+        "Talk mounted without unmounting the profile before mute delivery",
+      );
     }
     const before = await toastMessages(page);
     held.release();
