@@ -67,7 +67,7 @@ async function smoke(artifactPath: string) {
   const started = performance.now();
   const result = Bun.spawnSync(
     [
-      "bun",
+      "node",
       "scripts/smoke-release-worker.mjs",
       artifactPath,
       `sha256:${digest}`,
@@ -633,7 +633,7 @@ describe("release Worker smoke", () => {
 
     const result = Bun.spawnSync(
       [
-        "bun",
+        "node",
         "scripts/smoke-release-worker.mjs",
         artifactPath,
         `sha256:${"0".repeat(64)}`,

@@ -148,7 +148,11 @@ the same `tsc --noEmit` under the hood).
 
 `bun run check` is the complete repository gate for formatting, types, tests,
 portable build and artifact smoke. An additional browser check uses installed
-Chrome and the Worker produced by that gate:
+Chrome and the Worker produced by that gate.
+
+The artifact and browser smoke run Miniflare under Node.js, so `bun run check`
+also uses Node.js 24.21.0; CI pins the same version. Bun handles install,
+type checking, tests and builds.
 
 ```sh
 bun run smoke:release-browser -- dist/takos-worker.js

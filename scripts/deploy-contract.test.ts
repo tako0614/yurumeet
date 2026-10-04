@@ -125,6 +125,19 @@ describe("deploy contract", () => {
     expect(wranglerConfig.secrets).toBeUndefined();
   });
 
+  test("declares the supported Node host for native release qualification", () => {
+    expect(surfaceOf("yurumeet-worker")?.requiresTools).toContain("node");
+    expect(surfaceOf("yurumeet-worker-release")?.requiresTools).toContain(
+      "node",
+    );
+    expect(packageJson.scripts?.["smoke:release-artifact"]).toBe(
+      "node scripts/smoke-release-worker.mjs",
+    );
+    expect(packageJson.scripts?.["smoke:release-browser"]).toBe(
+      "node scripts/smoke-release-browser.mjs",
+    );
+  });
+
   test("names only package scripts that exist", () => {
     for (const entry of contract.surfaces) {
       for (const script of entry.requiresScripts ?? []) {
@@ -151,6 +164,7 @@ interface Contract {
     covers?: string[];
     triggers: string[];
     requiresScripts?: string[];
+    requiresTools?: string[];
     requiresEnv?: string[];
     obligations: Record<string, string>;
   }>;

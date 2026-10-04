@@ -110,7 +110,7 @@ const CONTRACT = {
         "scripts/check-media-deletion-schema.mjs",
       ],
       requiresScripts: ["check", "build:takos-worker", "smoke:postdeploy"],
-      requiresTools: ["git", "bun", "wrangler"],
+      requiresTools: ["git", "bun", "node", "wrangler"],
       requiresEnv: [
         "TAKOSUMI_CAPSULE_OUTPUTS_FILE",
         "YURUMEET_E2E_PASSWORD",
@@ -147,7 +147,7 @@ const CONTRACT = {
         "scripts/yurumeet-worker-bindings.ts",
       ],
       requiresScripts: ["check", "build:takos-worker", R.smokeScript],
-      requiresTools: ["git", "bun", "gh"],
+      requiresTools: ["git", "bun", "node", "gh"],
       requiresEnv: [],
       triggers: ["published-identity", "authority"],
       obligations: {

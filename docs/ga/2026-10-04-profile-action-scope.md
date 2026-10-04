@@ -34,3 +34,14 @@ candidate before merge. No generic Core or Yurumeet single-owner rule is added.
 Packages remain published4.1.11. Existing operator-data update/restore (including
 0.1.2/0019 lineage), real issuer custody, public environment, federation,
 Provider/Host lifecycle and native mobile remain separate evidence.
+
+Native artifact and browser qualification use Node.js 24.21.0, matching CI and
+Miniflare's supported Node host. Bun continues to run the portable tests and
+build. The prior canonical Bun1.3.14 run failed at MF-Op-Sync socket closure;
+the exact upstream cause remains unproven. A same-Worker Node comparison with
+global FormData failed the authenticated upload with HTTP400. The three native
+multipart fixture owners now use Miniflare's public FormData constructor; the
+same artifact passes all33 native predicates and password/synthetic-OIDC closed
+restore. This adapts qualification fixtures, without changing product behavior,
+package pins, credentials or schema. Final canonical browser and exact-source
+CI qualification remain required; failed attempts stay retained.
