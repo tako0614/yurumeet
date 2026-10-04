@@ -1,4 +1,4 @@
-import { createEffect, createSignal, For, on, Show } from "solid-js";
+import { createEffect, createSignal, For, on, onCleanup, Show } from "solid-js";
 import { A, useNavigate, useParams } from "@solidjs/router";
 import {
   type Actor,
@@ -55,7 +55,10 @@ export default function ProfilePage() {
   const [isFollowing, setIsFollowing] = createSignal(false);
   const [followPending, setFollowPending] = createSignal(false);
   const [followBusy, setFollowBusy] = createSignal(false);
-  const [editOpen, setEditOpen] = createSignal(false);
+  const [editOpen, setEditOpen] = createSignal<{
+    actor: Actor;
+    isCurrent: () => boolean;
+  } | null>(null);
   const [followList, setFollowList] = createSignal<
     "followers" | "following" | null
   >(null);
@@ -79,9 +82,21 @@ export default function ProfilePage() {
   };
 
   let gen = 0;
+  // ID equality alone cannot reject outcomes from an earlier A→B→A visit.
+  let routeEpoch = 0;
+  const captureRoute = () => {
+    const epoch = routeEpoch;
+    const id = targetActorId();
+    return () => epoch === routeEpoch && id === targetActorId();
+  };
+  onCleanup(() => {
+    ++routeEpoch;
+    ++gen;
+  });
   const load = () => {
     const id = targetActorId();
     const myGen = ++gen;
+    const isCurrent = captureRoute();
     setLoading(true);
     setError(false);
     setProfile(null);
@@ -95,35 +110,53 @@ export default function ProfilePage() {
     void (async () => {
       try {
         const actor = await fetchActor(id);
-        if (myGen !== gen) return;
+        if (myGen !== gen || !isCurrent()) return;
         setProfile(actor);
         setIsFollowing(!!actor.is_following);
         const page = await fetchActorPosts(id, { limit: 20 });
-        if (myGen !== gen) return;
+        if (myGen !== gen || !isCurrent()) return;
         setPosts(page.posts);
         setCursor(page.nextCursor);
         setHasMore(page.hasMore);
       } catch {
-        if (myGen === gen) setError(true);
+        if (myGen === gen && isCurrent()) setError(true);
       } finally {
-        if (myGen === gen) setLoading(false);
+        if (myGen === gen && isCurrent()) setLoading(false);
       }
     })();
   };
-  createEffect(on(targetActorId, load));
+  createEffect(
+    on(targetActorId, () => {
+      ++routeEpoch;
+      setEditOpen(null);
+      setFollowList(null);
+      setOwnMenuOpen(false);
+      setQrOpen(false);
+      setReportOpen(false);
+      setLoadingMore(false);
+      load();
+    }),
+  );
+
+  const openEdit = () => {
+    const actor = profile();
+    if (!actor || !isOwn()) return;
+    setEditOpen({ actor, isCurrent: captureRoute() });
+  };
 
   const loadMorePosts = () => {
     const p = profile();
     if (!p || loadingMore() || !hasMore() || !cursor()) return;
     setLoadingMore(true);
     const myGen = gen;
+    const isCurrent = captureRoute();
     void (async () => {
       try {
         const page = await fetchActorPosts(p.ap_id, {
           limit: 20,
           before: cursor() ?? undefined,
         });
-        if (myGen !== gen) return;
+        if (myGen !== gen || !isCurrent()) return;
         const seen = new Set(posts().map((x) => x.ap_id));
         setPosts((prev) => [
           ...prev,
@@ -134,7 +167,7 @@ export default function ProfilePage() {
       } catch {
         /* keep what we have */
       } finally {
-        if (myGen === gen) setLoadingMore(false);
+        if (myGen === gen && isCurrent()) setLoadingMore(false);
       }
     })();
   };
@@ -389,7 +422,7 @@ export default function ProfilePage() {
                               <button
                                 type="button"
                                 class="p-profile-edit"
-                                onClick={() => setEditOpen(true)}
+                                onClick={openEdit}
                               >
                                 プロフィールを編集
                               </button>
@@ -624,17 +657,23 @@ export default function ProfilePage() {
         </Show>
       </div>
 
-      <Show when={editOpen() && profile()}>
-        <ProfileEditModal
-          actor={profile()!}
-          onClose={() => setEditOpen(false)}
-          onSaved={(updated) => {
-            setProfile(updated);
-            app.refetchActor();
-            setEditOpen(false);
-            app.toast("プロフィールを更新しました");
-          }}
-        />
+      <Show when={editOpen()} keyed>
+        {(opened) => (
+          <ProfileEditModal
+            actor={opened.actor}
+            onClose={() => {
+              if (editOpen() === opened) setEditOpen(null);
+            }}
+            onSaved={(updated) => {
+              app.refetchActor();
+              if (!opened.isCurrent() || editOpen() !== opened) return;
+              if (updated.ap_id !== opened.actor.ap_id) return;
+              setProfile(updated);
+              setEditOpen(null);
+              app.toast("プロフィールを更新しました");
+            }}
+          />
+        )}
       </Show>
 
       <Show when={followList() && profile()}>

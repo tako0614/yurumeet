@@ -32,6 +32,7 @@ import { qualifyBookmarkAuthLoss } from "./release-browser-bookmark-auth-loss.mj
 import { qualifyBrowserHistoryReadOrder } from "./release-browser-history-read-order.mjs";
 import { qualifyBrowserHistoryPagination } from "./release-browser-history-pagination.mjs";
 import { qualifyBrowserHistoryScroll } from "./release-browser-history-scroll.mjs";
+import { qualifyBrowserRouteActionScope } from "./release-browser-route-action-scope.mjs";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const password = " browser-smoke-only ";
@@ -857,6 +858,61 @@ async function smoke(artifact, digest) {
       await scrollPage.close();
     }
 
+    // Append route-action races after every prior ordered browser check.
+    const routeActionPage = await context.newPage();
+    const routeActionPageErrors = [];
+    const routeActionServerErrors = [];
+    const routeActionBlockedOutbound = [];
+    let routeActionScope;
+    try {
+      routeActionPage.on("pageerror", (error) =>
+        routeActionPageErrors.push(String(error)),
+      );
+      routeActionPage.on("response", (response) => {
+        if (response.status() >= 500) {
+          routeActionServerErrors.push({
+            path: new URL(response.url()).pathname,
+            status: response.status(),
+          });
+        }
+      });
+      await routeActionPage.route("**/*", (route) => {
+        const url = new URL(route.request().url());
+        if (
+          url.origin === origin ||
+          url.protocol === "data:" ||
+          url.protocol === "blob:"
+        ) {
+          return route.continue();
+        }
+        routeActionBlockedOutbound.push({
+          method: route.request().method(),
+          url: url.href,
+        });
+        return route.abort("blockedbyclient");
+      });
+      routeActionScope = await qualifyBrowserRouteActionScope({
+        page: routeActionPage,
+        db,
+        origin,
+        actorApId: ownerId,
+        checks,
+      });
+      check(
+        routeActionPageErrors.length === 0 &&
+          routeActionServerErrors.length === 0 &&
+          routeActionBlockedOutbound.length === 0,
+        "route-action fixture raised a page error, HTTP 5xx or external request",
+      );
+      routeActionScope.runtimeObservations = {
+        pageErrors: routeActionPageErrors,
+        serverErrors: routeActionServerErrors,
+        blockedOutbound: routeActionBlockedOutbound,
+      };
+    } finally {
+      await routeActionPage.close();
+    }
+
     check(
       pageErrors.length === 0,
       "community delete browser raised a runtime error",
@@ -890,6 +946,7 @@ async function smoke(artifact, digest) {
       historyReadOrder,
       historyPagination,
       historyScroll,
+      routeActionScope,
       status: "PASSED",
     };
   } catch (error) {

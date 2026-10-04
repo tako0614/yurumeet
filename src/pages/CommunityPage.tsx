@@ -1,4 +1,4 @@
-import { createEffect, createSignal, For, on, Show } from "solid-js";
+import { createEffect, createSignal, For, on, onCleanup, Show } from "solid-js";
 import { A, useNavigate, useParams, useSearchParams } from "@solidjs/router";
 import {
   acceptCommunityJoinRequest,
@@ -64,7 +64,10 @@ export default function CommunityPage() {
   const [error, setError] = createSignal(false);
   const [membersError, setMembersError] = createSignal(false);
   const [busy, setBusy] = createSignal(false);
-  const [settingsOpen, setSettingsOpen] = createSignal(false);
+  const [settingsOpen, setSettingsOpen] = createSignal<{
+    community: CommunityDetail;
+    isCurrent: () => boolean;
+  } | null>(null);
   const [inviting, setInviting] = createSignal(false);
   const [memberMenuFor, setMemberMenuFor] = createSignal<string | null>(null);
   const [memberBusy, setMemberBusy] = createSignal<string | null>(null);
@@ -80,9 +83,21 @@ export default function CommunityPage() {
   );
 
   let gen = 0;
+  // Returning to the same ID starts a new route lifetime too.
+  let routeEpoch = 0;
+  const captureRoute = () => {
+    const epoch = routeEpoch;
+    const id = communityId();
+    return () => epoch === routeEpoch && id === communityId();
+  };
+  onCleanup(() => {
+    ++routeEpoch;
+    ++gen;
+  });
   const load = () => {
     const id = communityId();
     const myGen = ++gen;
+    const isCurrent = captureRoute();
     setLoading(true);
     setError(false);
     setMembersError(false);
@@ -92,32 +107,44 @@ export default function CommunityPage() {
     void (async () => {
       try {
         const detail = await fetchCommunity(id);
-        if (myGen !== gen) return;
+        if (myGen !== gen || !isCurrent()) return;
         setCommunity(detail);
         // A members fetch failure must not render as 「メンバーがいません」.
         const list = await fetchCommunityMembers(id).catch(() => null);
-        if (myGen !== gen) return;
+        if (myGen !== gen || !isCurrent()) return;
         setMembersError(list === null);
         setMembers(list ?? []);
         if (detail.member_role === "owner") {
           const reqs = await fetchCommunityJoinRequests(id).catch(() => []);
-          if (myGen !== gen) return;
+          if (myGen !== gen || !isCurrent()) return;
           setRequests(reqs);
         }
       } catch {
-        if (myGen === gen) setError(true);
+        if (myGen === gen && isCurrent()) setError(true);
       } finally {
-        if (myGen === gen) setLoading(false);
+        if (myGen === gen && isCurrent()) setLoading(false);
       }
     })();
   };
-  createEffect(on(communityId, load));
+  createEffect(
+    on(communityId, () => {
+      ++routeEpoch;
+      setSettingsOpen(null);
+      setBusy(false);
+      setInviting(false);
+      setMemberMenuFor(null);
+      setMemberBusy(null);
+      load();
+    }),
+  );
 
   const openChat = async () => {
     const c = community();
     if (!c) return;
+    const isCurrent = captureRoute();
     try {
       const contact = await fetchDMContact(c.ap_id);
+      if (!isCurrent()) return;
       if (contact) {
         // Navigate FIRST so the chat's history entry sits on top of the talk
         // tab (back then closes the chat instead of resurrecting this page).
@@ -129,13 +156,14 @@ export default function CommunityPage() {
         app.toast("トークを開けませんでした", "error");
       }
     } catch {
-      app.toast("トークを開けませんでした", "error");
+      if (isCurrent()) app.toast("トークを開けませんでした", "error");
     }
   };
 
   const handleJoin = async () => {
     const c = community();
     if (!c || busy()) return;
+    const isCurrent = captureRoute();
     setBusy(true);
     try {
       const invite = inviteId();
@@ -143,9 +171,10 @@ export default function CommunityPage() {
         c.ap_id,
         invite ? { inviteId: invite } : undefined,
       );
+      if (status === "joined") chat.refetchContacts();
+      if (!isCurrent()) return;
       if (status === "joined") {
         setCommunity({ ...c, is_member: true, member_role: "member" });
-        chat.refetchContacts();
         app.toast("参加しました");
         load();
       } else if (status === "pending") {
@@ -160,32 +189,34 @@ export default function CommunityPage() {
         );
       }
     } catch {
-      app.toast("参加に失敗しました", "error");
+      if (isCurrent()) app.toast("参加に失敗しました", "error");
     } finally {
-      setBusy(false);
+      if (isCurrent()) setBusy(false);
     }
   };
 
   const handleLeave = async () => {
     const c = community();
     if (!c || busy()) return;
-    const ok = await app.confirm({
-      title: "グループを退出",
-      message: `${c.display_name} を退出しますか?`,
-      confirmLabel: "退出",
-      danger: true,
-    });
-    if (!ok) return;
+    const isCurrent = captureRoute();
     setBusy(true);
     try {
+      const ok = await app.confirm({
+        title: "グループを退出",
+        message: `${c.display_name} を退出しますか?`,
+        confirmLabel: "退出",
+        danger: true,
+      });
+      if (!ok || !isCurrent()) return;
       await leaveCommunity(c.ap_id);
-      setCommunity({ ...c, is_member: false, member_role: null });
       chat.refetchContacts();
+      if (!isCurrent()) return;
+      setCommunity({ ...c, is_member: false, member_role: null });
       app.toast("退出しました");
     } catch {
-      app.toast("退出に失敗しました", "error");
+      if (isCurrent()) app.toast("退出に失敗しました", "error");
     } finally {
-      setBusy(false);
+      if (isCurrent()) setBusy(false);
     }
   };
 
@@ -195,25 +226,29 @@ export default function CommunityPage() {
   ) => {
     const c = community();
     if (!c) return;
+    const isCurrent = captureRoute();
     try {
       if (action === "accept") {
         await acceptCommunityJoinRequest(c.ap_id, req.ap_id);
       } else {
         await rejectCommunityJoinRequest(c.ap_id, req.ap_id);
       }
+      if (!isCurrent()) return;
       setRequests((prev) => prev.filter((r) => r.ap_id !== req.ap_id));
       app.toast(action === "accept" ? "承認しました" : "拒否しました");
     } catch {
-      app.toast("操作に失敗しました", "error");
+      if (isCurrent()) app.toast("操作に失敗しました", "error");
     }
   };
 
   const handleCreateInvite = async () => {
     const c = community();
     if (!c || inviting()) return;
+    const isCurrent = captureRoute();
     setInviting(true);
     try {
       const invite = await createCommunityInvite(c.ap_id);
+      if (!isCurrent()) return;
       // Canonical share origin = the server origin, matching QR / profile
       // share links (which must resolve there for federation). The yurumeet
       // worker serves the app at that origin, so the invite route works.
@@ -221,28 +256,30 @@ export default function CommunityPage() {
         c.ap_id,
       )}?invite=${encodeURIComponent(invite.invite_id)}`;
       await navigator.clipboard.writeText(url);
-      app.toast("招待リンクをコピーしました");
+      if (isCurrent()) app.toast("招待リンクをコピーしました");
     } catch {
-      app.toast("招待リンクを作成できませんでした", "error");
+      if (isCurrent()) app.toast("招待リンクを作成できませんでした", "error");
     } finally {
-      setInviting(false);
+      if (isCurrent()) setInviting(false);
     }
   };
 
   const handleKick = async (member: CommunityMember) => {
     const c = community();
     if (!c || memberBusy()) return;
+    const isCurrent = captureRoute();
     setMemberMenuFor(null);
-    const ok = await app.confirm({
-      title: "メンバーを削除",
-      message: `${titleFor(member)} をグループから削除しますか?`,
-      confirmLabel: "削除",
-      danger: true,
-    });
-    if (!ok) return;
     setMemberBusy(member.ap_id);
     try {
+      const ok = await app.confirm({
+        title: "メンバーを削除",
+        message: `${titleFor(member)} をグループから削除しますか?`,
+        confirmLabel: "削除",
+        danger: true,
+      });
+      if (!ok || !isCurrent()) return;
       await removeCommunityMember(c.ap_id, member.ap_id);
+      if (!isCurrent()) return;
       setMembers((prev) => prev.filter((m) => m.ap_id !== member.ap_id));
       setCommunity((prev) =>
         prev
@@ -251,9 +288,9 @@ export default function CommunityPage() {
       );
       app.toast("メンバーを削除しました");
     } catch {
-      app.toast("操作に失敗しました", "error");
+      if (isCurrent()) app.toast("操作に失敗しました", "error");
     } finally {
-      setMemberBusy(null);
+      if (isCurrent()) setMemberBusy(null);
     }
   };
 
@@ -263,10 +300,12 @@ export default function CommunityPage() {
   ) => {
     const c = community();
     if (!c || memberBusy()) return;
+    const isCurrent = captureRoute();
     setMemberMenuFor(null);
     setMemberBusy(member.ap_id);
     try {
       await updateCommunityMemberRole(c.ap_id, member.ap_id, role);
+      if (!isCurrent()) return;
       setMembers((prev) =>
         prev.map((m) => (m.ap_id === member.ap_id ? { ...m, role } : m)),
       );
@@ -276,9 +315,9 @@ export default function CommunityPage() {
           : "メンバーに戻しました",
       );
     } catch {
-      app.toast("操作に失敗しました", "error");
+      if (isCurrent()) app.toast("操作に失敗しました", "error");
     } finally {
-      setMemberBusy(null);
+      if (isCurrent()) setMemberBusy(null);
     }
   };
 
@@ -369,7 +408,12 @@ export default function CommunityPage() {
                         <button
                           type="button"
                           class="p-community-settings"
-                          onClick={() => setSettingsOpen(true)}
+                          onClick={() =>
+                            setSettingsOpen({
+                              community: c(),
+                              isCurrent: captureRoute(),
+                            })
+                          }
                         >
                           設定
                         </button>
@@ -537,18 +581,24 @@ export default function CommunityPage() {
                   </For>
                 </section>
 
-                <Show when={settingsOpen()}>
-                  <CommunitySettingsModal
-                    community={c()}
-                    onClose={() => setSettingsOpen(false)}
-                    onSaved={(updated) => {
-                      setCommunity((prev) =>
-                        prev ? { ...prev, ...updated } : prev,
-                      );
-                      setSettingsOpen(false);
-                      app.toast("グループ設定を更新しました");
-                    }}
-                  />
+                <Show when={settingsOpen()} keyed>
+                  {(opened) => (
+                    <CommunitySettingsModal
+                      community={opened.community}
+                      onClose={() => {
+                        if (settingsOpen() === opened) setSettingsOpen(null);
+                      }}
+                      onSaved={(updated) => {
+                        if (!opened.isCurrent() || settingsOpen() !== opened)
+                          return;
+                        setCommunity((prev) =>
+                          prev ? { ...prev, ...updated } : prev,
+                        );
+                        setSettingsOpen(null);
+                        app.toast("グループ設定を更新しました");
+                      }}
+                    />
+                  )}
                 </Show>
               </>
             )}
@@ -564,12 +614,19 @@ function CommunitySettingsModal(props: {
   onClose: () => void;
   onSaved: (updated: Partial<CommunityDetail>) => void;
 }) {
+  const initialCommunity = props.community;
+  let active = true;
+  onCleanup(() => {
+    active = false;
+  });
   const [displayName, setDisplayName] = createSignal(
-    props.community.display_name,
+    initialCommunity.display_name,
   );
-  const [summary, setSummary] = createSignal(props.community.summary ?? "");
-  const [iconUrl, setIconUrl] = createSignal(props.community.icon_url ?? "");
-  const [joinPolicy, setJoinPolicy] = createSignal(props.community.join_policy);
+  const [summary, setSummary] = createSignal(initialCommunity.summary ?? "");
+  const [iconUrl, setIconUrl] = createSignal(initialCommunity.icon_url ?? "");
+  const [joinPolicy, setJoinPolicy] = createSignal(
+    initialCommunity.join_policy,
+  );
   const [uploading, setUploading] = createSignal(false);
   const [saving, setSaving] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
@@ -577,22 +634,23 @@ function CommunitySettingsModal(props: {
     displayName().trim().length > 0 && !saving() && !uploading();
 
   const uploadIcon = async (file: File | undefined) => {
-    if (!file) return;
+    if (!file || !active || saving() || uploading()) return;
     setUploading(true);
     setError(null);
     try {
       const uploaded = await uploadProductMedia(file);
+      if (!active) return;
       setIconUrl(uploaded.url ?? "");
     } catch {
-      setError("画像のアップロードに失敗しました");
+      if (active) setError("画像のアップロードに失敗しました");
     } finally {
-      setUploading(false);
+      if (active) setUploading(false);
     }
   };
 
   const save = async (event: Event) => {
     event.preventDefault();
-    if (!canSave()) return;
+    if (!active || !canSave()) return;
     setSaving(true);
     setError(null);
     const settings: CommunitySettings = {
@@ -602,16 +660,18 @@ function CommunitySettingsModal(props: {
       ...(iconUrl() ? { icon_url: iconUrl() } : {}),
     };
     try {
-      await updateCommunitySettings(props.community.ap_id, settings);
+      await updateCommunitySettings(initialCommunity.ap_id, settings);
+      if (!active) return;
       props.onSaved({
         display_name: settings.display_name,
         summary: settings.summary || null,
-        icon_url: iconUrl() || props.community.icon_url,
-        join_policy: joinPolicy(),
+        icon_url: settings.icon_url || initialCommunity.icon_url,
+        join_policy: settings.join_policy,
       });
     } catch {
-      setError("設定を保存できませんでした");
-      setSaving(false);
+      if (active) setError("設定を保存できませんでした");
+    } finally {
+      if (active) setSaving(false);
     }
   };
 
@@ -650,7 +710,7 @@ function CommunitySettingsModal(props: {
           <label class="p-edit-avatar p-edit-avatar--community">
             <UserAvatar
               value={{
-                name: displayName() || props.community.display_name,
+                name: displayName() || initialCommunity.display_name,
                 icon_url: iconUrl() || null,
               }}
               size={72}
