@@ -102,6 +102,9 @@ export default function ProfilePage() {
     setProfile(null);
     setPosts([]);
     setFollowPending(false);
+    // Reload/navigation retires the old mutation window, including its busy
+    // state. Its eventual response belongs to that earlier visit only.
+    setFollowBusy(false);
     setMenuOpen(false);
     setMuted(false);
     setBlocked(false);
@@ -273,21 +276,28 @@ export default function ProfilePage() {
   const handleFollow = async () => {
     const target = profile();
     if (!target || followBusy()) return;
+    const myGen = gen;
+    const routeIsCurrent = captureRoute();
+    const isCurrent = () =>
+      myGen === gen && routeIsCurrent() && profile()?.ap_id === target.ap_id;
     setFollowBusy(true);
     try {
       if (followPending()) {
         // A pending request is cancellable (Undo Follow), not a dead end.
         await unfollow(target.ap_id);
+        if (!isCurrent()) return;
         setFollowPending(false);
         app.toast("リクエストを取り消しました");
       } else if (isFollowing()) {
         await unfollow(target.ap_id);
+        if (!isCurrent()) return;
         setIsFollowing(false);
         setProfile((p) =>
           p ? { ...p, follower_count: Math.max(0, p.follower_count - 1) } : p,
         );
       } else {
         const { status } = await follow(target.ap_id);
+        if (!isCurrent()) return;
         if (status === "pending") {
           setFollowPending(true);
           app.toast("フォローリクエストを送りました");
@@ -299,9 +309,10 @@ export default function ProfilePage() {
         }
       }
     } catch {
+      if (!isCurrent()) return;
       app.toast("操作に失敗しました", "error");
     } finally {
-      setFollowBusy(false);
+      if (isCurrent()) setFollowBusy(false);
     }
   };
 
