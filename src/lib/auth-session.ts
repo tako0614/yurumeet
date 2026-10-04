@@ -32,6 +32,8 @@ export interface AuthSessionInitialState {
 
 export interface AuthSessionController {
   read(): AuthSessionState;
+  /** Monotonic local auth lifetime; same-principal metadata refresh preserves it. */
+  epoch(): number;
   subscribe(listener: (state: AuthSessionState) => void): () => void;
   configure(
     origin: string | null,
@@ -99,6 +101,9 @@ export function createAuthSessionController(
   return {
     read() {
       return state;
+    },
+    epoch() {
+      return generation;
     },
     subscribe(listener) {
       if (disposed) return () => {};

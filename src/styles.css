@@ -899,7 +899,8 @@ ul {
 }
 
 .p-talk-chat-main {
-  flex-grow: 1;
+  min-height: 0;
+  flex: 1 1 0;
   overflow-y: auto;
 }
 
@@ -1125,7 +1126,16 @@ ul {
 }
 
 .p-talk-chat-send {
+  display: flex;
+  max-height: 60%;
+  flex: 0 0 auto;
+  flex-direction: column;
   padding: 0 18px calc(12px + env(safe-area-inset-bottom, 0px));
+}
+
+.p-talk-chat-send__staging {
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .p-talk-draft-warning {
@@ -1163,6 +1173,39 @@ ul {
   gap: 8px;
   margin-bottom: 8px;
   overflow-x: auto;
+}
+
+.p-talk-chat-attach-recovery {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+
+.p-talk-chat-attach-recovery small {
+  max-width: 200px;
+  font-size: 11px;
+}
+
+.p-talk-chat-attach-recovery .is-expired {
+  color: var(--danger, #b42318);
+}
+
+.p-talk-chat-attach-recovery > button {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.p-talk-chat-media-note {
+  margin: 4px 0;
+  font-size: 11px;
+  opacity: 0.8;
 }
 
 .p-talk-chat-attach-item {
@@ -1251,8 +1294,8 @@ ul {
 
 .p-talk-chat-send__form {
   display: flex;
-  height: 100%;
   min-height: 44px;
+  flex: 0 0 auto;
   border-radius: 12px;
   background-color: #ffffff;
 }
@@ -1272,9 +1315,9 @@ ul {
 
 .p-talk-chat-send__dummy {
   min-height: 44px;
-  /* Cap auto-grow at ~6 lines (6 × 24px line + 20px padding); the textarea
-     scrolls internally past that instead of swallowing the thread. */
-  max-height: 164px;
+  /* Keep input and send controls visible with attachment recovery or draft
+     warnings. Longer text scrolls internally, especially on short screens. */
+  max-height: min(164px, 30dvh);
   overflow: hidden;
   visibility: hidden;
   white-space: break-spaces;

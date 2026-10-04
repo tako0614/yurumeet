@@ -320,6 +320,10 @@ function AppRoot(props: { children?: JSX.Element }) {
                   // current same-principal profile through ordinary refresh.
                   actor: () => actor()!,
                   origin,
+                  authEpoch: () => {
+                    auth();
+                    return authSession.epoch();
+                  },
                   refetchActor: () => void refetchActor(),
                   logout: requestLogout,
                   logoutBusy: () => auth().logoutBusy,

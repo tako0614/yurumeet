@@ -17,6 +17,7 @@ import { createDraftSession, type DraftState } from "../lib/draft-store.ts";
 import { createScopedDraftIdentity } from "../lib/outgoing-journal.ts";
 import { searchMessages } from "../lib/message-search.ts";
 import { createOlderHistoryScroll } from "../lib/older-history-scroll.ts";
+import { captureTalkMediaGuard, talkMediaExpired } from "../lib/talk-media.ts";
 import {
   attachmentSrc,
   CloseIcon,
@@ -40,7 +41,12 @@ const NEAR_TOP_PX = 60;
 const MAX_CHAT_ATTACHMENTS = 4;
 const MAX_CHAT_MEDIA_SIZE = 20 * 1024 * 1024;
 
-type StagedMedia = MediaAttachment & { preview: string };
+type StagedMedia = MediaAttachment & {
+  preview: string;
+  sourceFile: File;
+  expires_at?: string;
+  isScopeCurrent: () => boolean;
+};
 
 export function ChatPane() {
   const app = useApp();
@@ -59,6 +65,24 @@ export function ChatPane() {
   const [incoming, setIncoming] = createSignal("");
   const [staged, setStaged] = createSignal<StagedMedia[]>([]);
   const [uploading, setUploading] = createSignal(false);
+  const [mediaNow, setMediaNow] = createSignal(Date.now());
+  const mediaClock = setInterval(() => {
+    if (
+      staged().length ||
+      chat
+        .messages()
+        .some((message) => message.failed && message.mediaDeadlines)
+    )
+      setMediaNow(Date.now());
+  }, 1000);
+  onCleanup(() => clearInterval(mediaClock));
+  let mounted = true;
+  let draftRevision = 0;
+  let stagedRevision = 0;
+  onCleanup(() => {
+    mounted = false;
+    staged().forEach((item) => URL.revokeObjectURL(item.preview));
+  });
   /** Src of the image opened in the in-app lightbox (null = closed). */
   const [lightbox, setLightbox] = createSignal<string | null>(null);
   let lightboxRoot: HTMLDivElement | undefined;
@@ -111,6 +135,7 @@ export function ChatPane() {
       : "";
   });
   const applyDraft = (state: DraftState) => {
+    if (draft() !== state.text) draftRevision++;
     setDraft(state.text);
     setDraftStorageStatus(state.status);
   };
@@ -143,6 +168,7 @@ export function ChatPane() {
       olderHistoryScroll.invalidate();
       if (previousIdentity) draftSession.save(previousIdentity);
       stagedGeneration++;
+      stagedRevision++;
       setStaged((prev) => {
         prev.forEach((item) => URL.revokeObjectURL(item.preview));
         return [];
@@ -157,6 +183,21 @@ export function ChatPane() {
         identity ? draftSession.enter(identity) : { text: "", status: "saved" },
       );
     }),
+  );
+
+  createEffect(
+    on(
+      app.authEpoch,
+      () => {
+        // A failed same-user sign-out attempt still retires the old local lifetime.
+        stagedGeneration++;
+        stagedRevision++;
+        staged().forEach((item) => URL.revokeObjectURL(item.preview));
+        setStaged([]);
+        setUploading(false);
+      },
+      { defer: true },
+    ),
   );
 
   // Save the open talk's draft when the tab is backgrounded or closed, so a
@@ -250,11 +291,34 @@ export function ChatPane() {
   };
 
   const canSend = () =>
-    (draft().trim().length > 0 || staged().length > 0) && !uploading();
+    (draft().trim().length > 0 || staged().length > 0) &&
+    !uploading() &&
+    !app.logoutBusy();
+
+  const mediaGuard = (isCurrent: () => boolean) =>
+    captureTalkMediaGuard(
+      () => {
+        const contact = chat.selected();
+        if (!contact) throw new Error("No selected talk");
+        return {
+          origin: app.origin(),
+          principal: app.actor().ap_id,
+          authEpoch: app.authEpoch(),
+          target: contact,
+        };
+      },
+      () => mounted && !app.logoutBusy() && isCurrent(),
+    );
+
+  const requireCurrent = (guard: () => boolean) => {
+    if (!guard()) throw new Error("Talk media scope changed");
+  };
 
   const handleFiles = async (files: FileList | null) => {
-    if (!files || files.length === 0) return;
+    if (!files || files.length === 0 || uploading() || !chat.selected()) return;
     const generation = stagedGeneration;
+    const mayUpload = mediaGuard(() => generation === stagedGeneration);
+    if (!mayUpload()) return;
     let skippedType = 0;
     let skippedCap = 0;
     // Hold canSend off for the WHOLE batch (not per file) so a multi-image
@@ -262,6 +326,7 @@ export function ChatPane() {
     setUploading(true);
     try {
       for (const file of Array.from(files)) {
+        if (!mayUpload()) return;
         if (
           !file.type.startsWith("image/") &&
           !file.type.startsWith("video/")
@@ -278,10 +343,13 @@ export function ChatPane() {
           continue;
         }
         try {
-          const uploaded = await uploadProductMedia(file);
+          const uploaded = await uploadProductMedia(file, () =>
+            requireCurrent(mayUpload),
+          );
           // The conversation switched while uploading: this file belongs to
           // the previous thread — drop it instead of staging it here.
-          if (generation !== stagedGeneration) return;
+          if (!mayUpload()) return;
+          stagedRevision++;
           setStaged((prev) => [
             ...prev,
             {
@@ -292,10 +360,13 @@ export function ChatPane() {
               // video whose first frame hasn't decoded.
               ...(file.type.startsWith("video/") ? { name: file.name } : {}),
               preview: URL.createObjectURL(file),
+              sourceFile: file,
+              expires_at: uploaded.expires_at,
+              isScopeCurrent: mayUpload,
             },
           ]);
         } catch {
-          app.toast("アップロードに失敗しました", "error");
+          if (mayUpload()) app.toast("アップロードに失敗しました", "error");
         }
       }
       if (skippedType > 0) {
@@ -306,16 +377,144 @@ export function ChatPane() {
       }
     } finally {
       if (generation === stagedGeneration) setUploading(false);
-      if (fileInput) fileInput.value = "";
+      if (mounted && generation === stagedGeneration && fileInput)
+        fileInput.value = "";
     }
   };
 
   const removeStaged = (index: number) => {
+    stagedRevision++;
     setStaged((prev) => {
       const target = prev[index];
       if (target) URL.revokeObjectURL(target.preview);
       return prev.filter((_, i) => i !== index);
     });
+  };
+
+  const hasExpiredReferences = (message: ChatMessage) =>
+    message.mediaDeadlines?.some((deadline) =>
+      talkMediaExpired(deadline ?? undefined, mediaNow()),
+    ) ?? false;
+  const definiteMediaExpiry = (message: ChatMessage) =>
+    message.mediaExpired === true ||
+    (message.deliveryFailure === "rejected" && hasExpiredReferences(message));
+
+  const renewStaged = async (item: StagedMedia) => {
+    if (uploading() || !chat.selected()) return;
+    const generation = stagedGeneration;
+    const mayRenew = mediaGuard(
+      () =>
+        generation === stagedGeneration &&
+        staged().includes(item) &&
+        item.isScopeCurrent(),
+    );
+    if (!mayRenew()) return;
+    setUploading(true);
+    try {
+      const uploaded = await uploadProductMedia(item.sourceFile, () =>
+        requireCurrent(mayRenew),
+      );
+      if (!mayRenew()) return;
+      stagedRevision++;
+      setStaged((current) =>
+        current.map((row) =>
+          row === item
+            ? {
+                ...row,
+                url: uploaded.url,
+                r2_key: uploaded.r2_key,
+                content_type: uploaded.content_type,
+                expires_at: uploaded.expires_at,
+              }
+            : row,
+        ),
+      );
+    } catch {
+      if (mayRenew()) app.toast("添付の再アップロードに失敗しました", "error");
+    } finally {
+      if (mounted && generation === stagedGeneration) setUploading(false);
+    }
+  };
+
+  const recoverExpiredMessage = async (messageId: string) => {
+    if (uploading() || !chat.selected()) return;
+    const snapshot = chat.expiredMessageDraft(messageId);
+    if (!snapshot) return;
+    const generation = stagedGeneration;
+    const identity = draftIdentity();
+    const revision = draftRevision;
+    const attachmentsRevision = stagedRevision;
+    const mayRecover = mediaGuard(
+      () =>
+        generation === stagedGeneration &&
+        identity === draftIdentity() &&
+        revision === draftRevision &&
+        attachmentsRevision === stagedRevision &&
+        snapshot.isCurrent(),
+    );
+    if (!mayRecover()) return;
+    if (
+      (draft().length > 0 || staged().length > 0) &&
+      !(await app.confirm({
+        title: "期限切れの送信内容を下書きに戻しますか？",
+        message:
+          "現在の入力を置き換えます。元の送信記録は残り、自動では送信しません。",
+        confirmLabel: "下書きに戻す",
+        cancelLabel: "キャンセル",
+      }))
+    )
+      return;
+    if (!mayRecover()) return;
+    setUploading(true);
+    const renewed: StagedMedia[] = [];
+    // Row guards survive adoption without tying future edits to this recovery.
+    const isScopeCurrent = mediaGuard(() => generation === stagedGeneration);
+    try {
+      const files = snapshot.sourceFiles;
+      if (files) {
+        for (const [index, file] of files.entries()) {
+          requireCurrent(mayRecover);
+          const uploaded = await uploadProductMedia(file, () =>
+            requireCurrent(mayRecover),
+          );
+          requireCurrent(mayRecover);
+          const previous = snapshot.record.attachments![index];
+          renewed.push({
+            ...previous,
+            url: uploaded.url,
+            r2_key: uploaded.r2_key,
+            content_type: uploaded.content_type,
+            expires_at: uploaded.expires_at,
+            preview: URL.createObjectURL(file),
+            sourceFile: file,
+            isScopeCurrent,
+          });
+        }
+      }
+      requireCurrent(mayRecover);
+      const previous = staged();
+      // Restoring a draft is separate from deliberate submit/new outgoing intent.
+      applyDraft(draftSession.edit(identity, snapshot.record.content));
+      applyDraft(draftSession.save(identity));
+      stagedRevision++;
+      setStaged(renewed);
+      previous.forEach((item) => URL.revokeObjectURL(item.preview));
+      app.toast(
+        files
+          ? "添付を更新して下書きに戻しました。内容を確認して送信してください"
+          : "本文を下書きに戻しました。元のファイルを選び直してください",
+      );
+      draftInput?.focus();
+    } catch {
+      renewed.forEach((item) => URL.revokeObjectURL(item.preview));
+      if (mayRecover())
+        app.toast(
+          "添付を復旧できませんでした。元の送信記録は残っています",
+          "error",
+        );
+    } finally {
+      if (mounted && generation === stagedGeneration) setUploading(false);
+    }
   };
 
   // "既読" for OWN messages, LINE-style. 1:1: shown when the partner's local
@@ -399,7 +598,27 @@ export function ChatPane() {
   const send = () => {
     const content = draft().trim();
     const attachments = staged();
-    if ((!content && attachments.length === 0) || uploading()) return;
+    if (
+      (!content && attachments.length === 0) ||
+      uploading() ||
+      !chat.selected()
+    )
+      return;
+    if (attachments.some((item) => !item.isScopeCurrent())) {
+      app.toast(
+        "添付の接続状態が変わりました。削除してファイルを選び直してください",
+        "error",
+      );
+      return;
+    }
+    if (attachments.some((item) => talkMediaExpired(item.expires_at))) {
+      setMediaNow(Date.now());
+      app.toast(
+        "期限切れの添付を再アップロードするか、削除してください",
+        "error",
+      );
+      return;
+    }
     const identity = draftIdentity();
     const generation = stagedGeneration;
     void chat.send(
@@ -417,6 +636,12 @@ export function ChatPane() {
         setStaged([]);
         attachments.forEach((item) => URL.revokeObjectURL(item.preview));
       },
+      attachments.length
+        ? attachments.map((item) => item.sourceFile)
+        : undefined,
+      attachments.some((item) => item.expires_at)
+        ? attachments.map((item) => item.expires_at ?? null)
+        : undefined,
     );
   };
 
@@ -897,7 +1122,9 @@ export function ChatPane() {
                                         <span>
                                           {message.deliveryFailure ===
                                           "rejected"
-                                            ? "送信を受け付けられませんでした"
+                                            ? definiteMediaExpiry(message)
+                                              ? "添付の有効期限が切れています"
+                                              : "送信を受け付けられませんでした"
                                             : "送信結果を確認できません"}
                                         </span>
                                         <Show
@@ -910,14 +1137,47 @@ export function ChatPane() {
                                             再送すると重複する可能性があります。履歴を確認してください。
                                           </span>
                                         </Show>
-                                        <button
-                                          type="button"
-                                          onClick={() =>
-                                            void chat.resendMessage(message.id)
+                                        <Show
+                                          when={definiteMediaExpiry(message)}
+                                          fallback={
+                                            <Show
+                                              when={
+                                                !hasExpiredReferences(message)
+                                              }
+                                              fallback={
+                                                <span>
+                                                  添付の期限が切れたため再送できません。最初の送信結果は不明です。履歴を確認してください。
+                                                </span>
+                                              }
+                                            >
+                                              <button
+                                                type="button"
+                                                onClick={() =>
+                                                  void chat.resendMessage(
+                                                    message.id,
+                                                  )
+                                                }
+                                              >
+                                                再送
+                                              </button>
+                                            </Show>
                                           }
                                         >
-                                          再送
-                                        </button>
+                                          <span>
+                                            下書きへの復旧後、確認して新しく送信してください。再読込後はファイルを選び直します。
+                                          </span>
+                                          <button
+                                            type="button"
+                                            disabled={uploading()}
+                                            onClick={() =>
+                                              void recoverExpiredMessage(
+                                                message.id,
+                                              )
+                                            }
+                                          >
+                                            添付を復旧して下書きに戻す
+                                          </button>
+                                        </Show>
                                         <button
                                           type="button"
                                           class="is-danger"
@@ -964,85 +1224,115 @@ export function ChatPane() {
                 </button>
               </Show>
               <div class="p-talk-chat-send">
-                <Show when={draftStorageStatus() !== "saved"}>
-                  <div
-                    id="talk-draft-storage-warning"
-                    class="p-talk-draft-warning"
-                    role="alert"
-                    data-draft-storage-warning
-                    data-draft-storage-status={draftStorageStatus()}
-                  >
-                    <p>
-                      {draftStorageStatus() === "conflict"
-                        ? "保存済みの下書きが変わっています。現在の入力と保存済みの内容を残しています。"
-                        : draftStorageStatus() === "read-error"
-                          ? "下書きを読み込めません。保存済みの内容は確認できず、現在の入力を残しています。"
-                          : "下書きを保存できません。現在の入力はこの画面に残しています。"}
-                      再読込や画面を閉じると未保存の入力を失うことがあります。必要な内容をコピーしてください。
-                    </p>
-                    <div class="p-talk-draft-warning-actions">
-                      <button type="button" onClick={saveCurrentDraft}>
-                        下書きを保存
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => void reloadStoredDraft()}
-                      >
-                        保存済みの下書きを読み込む
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          draftInput?.focus();
-                          draftInput?.select();
-                        }}
-                      >
-                        入力を選択
-                      </button>
+                <div class="p-talk-chat-send__staging">
+                  <Show when={draftStorageStatus() !== "saved"}>
+                    <div
+                      id="talk-draft-storage-warning"
+                      class="p-talk-draft-warning"
+                      role="alert"
+                      data-draft-storage-warning
+                      data-draft-storage-status={draftStorageStatus()}
+                    >
+                      <p>
+                        {draftStorageStatus() === "conflict"
+                          ? "保存済みの下書きが変わっています。現在の入力と保存済みの内容を残しています。"
+                          : draftStorageStatus() === "read-error"
+                            ? "下書きを読み込めません。保存済みの内容は確認できず、現在の入力を残しています。"
+                            : "下書きを保存できません。現在の入力はこの画面に残しています。"}
+                        再読込や画面を閉じると未保存の入力を失うことがあります。必要な内容をコピーしてください。
+                      </p>
+                      <div class="p-talk-draft-warning-actions">
+                        <button type="button" onClick={saveCurrentDraft}>
+                          下書きを保存
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void reloadStoredDraft()}
+                        >
+                          保存済みの下書きを読み込む
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            draftInput?.focus();
+                            draftInput?.select();
+                          }}
+                        >
+                          入力を選択
+                        </button>
+                      </div>
                     </div>
-                  </div>
-                </Show>
-                <Show when={staged().length > 0 || uploading()}>
-                  <div class="p-talk-chat-attach-strip">
-                    <For each={staged()}>
-                      {(item, index) => (
-                        <span class="p-talk-chat-attach-item">
-                          <Show
-                            when={(item.content_type ?? "").startsWith(
-                              "video/",
-                            )}
-                            fallback={<img src={item.preview} alt="" />}
-                          >
-                            <video
-                              src={item.preview}
-                              muted
-                              playsinline
-                              preload="metadata"
-                            />
-                            <Show when={item.name}>
-                              <span class="p-talk-chat-attach-name">
-                                {item.name}
-                              </span>
+                  </Show>
+                  <Show when={staged().length > 0 || uploading()}>
+                    <div class="p-talk-chat-attach-strip">
+                      <For each={staged()}>
+                        {(item, index) => (
+                          <div class="p-talk-chat-attach-recovery">
+                            <span class="p-talk-chat-attach-item">
+                              <Show
+                                when={(item.content_type ?? "").startsWith(
+                                  "video/",
+                                )}
+                                fallback={<img src={item.preview} alt="" />}
+                              >
+                                <video
+                                  src={item.preview}
+                                  muted
+                                  playsinline
+                                  preload="metadata"
+                                />
+                                <Show when={item.name}>
+                                  <span class="p-talk-chat-attach-name">
+                                    {item.name}
+                                  </span>
+                                </Show>
+                              </Show>
+                              <button
+                                type="button"
+                                aria-label="添付を削除"
+                                onClick={() => removeStaged(index())}
+                              >
+                                <CloseIcon />
+                              </button>
+                            </span>
+                            <Show when={item.expires_at}>
+                              <small
+                                classList={{
+                                  "is-expired": talkMediaExpired(
+                                    item.expires_at,
+                                    mediaNow(),
+                                  ),
+                                }}
+                              >
+                                {talkMediaExpired(item.expires_at, mediaNow())
+                                  ? "添付の期限切れ"
+                                  : `有効期限 ${new Date(item.expires_at!).toLocaleString()}`}
+                              </small>
                             </Show>
-                          </Show>
-                          <button
-                            type="button"
-                            aria-label="添付を削除"
-                            onClick={() => removeStaged(index())}
-                          >
-                            <CloseIcon />
-                          </button>
-                        </span>
-                      )}
-                    </For>
-                    <Show when={uploading()}>
-                      <span
-                        class="p-talk-chat-attach-item is-uploading"
-                        aria-label="アップロード中"
-                      />
-                    </Show>
-                  </div>
-                </Show>
+                            <button
+                              type="button"
+                              disabled={uploading()}
+                              onClick={() => void renewStaged(item)}
+                            >
+                              再アップロード
+                            </button>
+                          </div>
+                        )}
+                      </For>
+                      <Show when={uploading()}>
+                        <span
+                          class="p-talk-chat-attach-item is-uploading"
+                          aria-label="アップロード中"
+                        />
+                      </Show>
+                    </div>
+                  </Show>
+                  <Show when={staged().length > 0}>
+                    <p class="p-talk-chat-media-note">
+                      添付ファイルはこの画面の間だけ保持します。再読込後は選び直してください。
+                    </p>
+                  </Show>
+                </div>
                 <form
                   class="p-talk-chat-send__form"
                   onSubmit={(event) => {

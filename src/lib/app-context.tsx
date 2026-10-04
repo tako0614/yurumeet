@@ -25,6 +25,8 @@ export type AppContextValue = {
   actor: Accessor<Actor>;
   /** The resolved server origin. */
   origin: Accessor<string>;
+  /** Root-owned local authentication lifetime, including same-user sign-out attempts. */
+  authEpoch: Accessor<number>;
   /** Re-fetch the signed-in actor (e.g. after editing own profile). */
   refetchActor: () => void;
   /** One root-owned confirmation, logout attempt and read-only reconciliation. */

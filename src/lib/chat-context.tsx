@@ -34,9 +34,14 @@ import {
 } from "./history-read-coordinator.ts";
 import {
   classifyMessageDeliveryFailure,
+  isExpiredMessageMedia,
   type MessageDeliveryFailure,
 } from "./message-delivery.ts";
-import { createOutgoingRecovery } from "./outgoing-recovery.ts";
+import {
+  createOutgoingRecovery,
+  type ExpiredOutgoingDraft,
+} from "./outgoing-recovery.ts";
+import { captureTalkMediaGuard, talkMediaExpired } from "./talk-media.ts";
 import { restoreDeletedMessage } from "./restore-deleted-message.ts";
 import {
   newOutgoingIntentId,
@@ -52,6 +57,8 @@ export type ChatMessage = (DMMessage | CommunityMessage) & {
   pending?: boolean;
   failed?: boolean;
   deliveryFailure?: MessageDeliveryFailure;
+  mediaExpired?: boolean;
+  mediaDeadlines?: (string | null)[];
 };
 
 const POLL_MS = 4000;
@@ -218,6 +225,8 @@ export type ChatContextValue = {
     content: string,
     attachments?: MediaAttachment[],
     onJournaled?: () => void,
+    sourceFiles?: readonly File[],
+    mediaDeadlines?: (string | null)[],
   ) => Promise<boolean>;
   /**
    * Forward a message's text (and any media refs) to another talk via the same
@@ -231,6 +240,8 @@ export type ChatContextValue = {
   ) => Promise<boolean>;
   /** Retry a message whose delivery failed. */
   resendMessage: (messageId: string) => Promise<boolean>;
+  /** A definite expiry rejection may restore a fresh draft, never resend itself. */
+  expiredMessageDraft: (messageId: string) => ExpiredOutgoingDraft | null;
   /** Drop a failed optimistic message without sending it. */
   discardMessage: (messageId: string) => void;
   /** Delete a message. Only community messages are deletable (no DM delete API). */
@@ -257,6 +268,10 @@ export function useChat(): ChatContextValue {
 
 export function ChatProvider(props: { children: JSX.Element }) {
   const app = useApp();
+  let mounted = true;
+  onCleanup(() => {
+    mounted = false;
+  });
   const location = useLocation();
   const [contactsResource, { refetch: refetchContacts }] = createResource(
     app.origin,
@@ -278,7 +293,22 @@ export function ChatProvider(props: { children: JSX.Element }) {
     string,
     ReturnType<typeof createOutgoingRecovery>
   >();
-  const scopeKey = () => JSON.stringify([app.origin(), app.actor().ap_id]);
+  const scopeKey = () =>
+    JSON.stringify([app.origin(), app.actor().ap_id, app.authEpoch()]);
+  createEffect(
+    on(scopeKey, (key) => {
+      for (const [previousKey, store] of recoveries) {
+        if (previousKey !== key) {
+          store.releaseSourceFiles();
+          recoveries.delete(previousKey);
+        }
+      }
+    }),
+  );
+  onCleanup(() => {
+    for (const store of recoveries.values()) store.releaseSourceFiles();
+    recoveries.clear();
+  });
   const recovery = () => {
     const key = scopeKey();
     let value = recoveries.get(key);
@@ -701,11 +731,27 @@ export function ChatProvider(props: { children: JSX.Element }) {
   const storageWarning = () =>
     app.toast("送信内容を保存できません。入力を残しています", "error");
 
+  const deliveryGuard = (contact: DMContact, requireSelected: boolean) =>
+    captureTalkMediaGuard(
+      () => ({
+        origin: app.origin(),
+        principal: app.actor().ap_id,
+        authEpoch: app.authEpoch(),
+        target: contact,
+      }),
+      () =>
+        mounted &&
+        !app.logoutBusy() &&
+        (!requireSelected || isSelectedContact(contact)),
+    );
+
   const deliverMessage = async (
     contact: DMContact,
     record: OutgoingJournalRecord,
     store: ReturnType<typeof createOutgoingRecovery>,
     principal: string,
+    maySend: () => boolean,
+    refusedState: MessageDeliveryFailure = "rejected",
   ): Promise<boolean> => {
     const refresh = () => {
       if (principal === scopeKey() && isSelectedContact(contact)) {
@@ -713,6 +759,18 @@ export function ChatProvider(props: { children: JSX.Element }) {
       }
     };
     try {
+      // No await may separate this fence from public SDK destination resolution.
+      if (
+        !maySend() ||
+        record.mediaDeadlines?.some((deadline) =>
+          talkMediaExpired(deadline ?? undefined),
+        )
+      ) {
+        // A refused retry cannot prove the previous request was rejected.
+        store.fail(record.id, refusedState);
+        refresh();
+        return false;
+      }
       const sent: ChatMessage =
         contact.type === "community"
           ? await sendCommunityMessage(
@@ -739,9 +797,20 @@ export function ChatProvider(props: { children: JSX.Element }) {
       }
       return true;
     } catch (error) {
-      const deliveryFailure = classifyMessageDeliveryFailure(error);
-      store.fail(record.id, deliveryFailure);
+      const deliveryFailure = record.hadUnconfirmedAttempt
+        ? "unconfirmed"
+        : classifyMessageDeliveryFailure(error);
+      const failureSaved = store.fail(
+        record.id,
+        deliveryFailure,
+        isExpiredMessageMedia(error) ? "MEDIA_EXPIRED" : undefined,
+      );
       refresh();
+      if (!failureSaved && principal === scopeKey())
+        app.toast(
+          "送信結果の復旧記録を保存できません。再読込後は履歴を確認してください",
+          "error",
+        );
       if (principal === scopeKey())
         app.toast(
           deliveryFailure === "rejected"
@@ -758,12 +827,16 @@ export function ChatProvider(props: { children: JSX.Element }) {
     content: string,
     attachments?: MediaAttachment[],
     onJournaled?: () => void,
+    sourceFiles?: readonly File[],
+    mediaDeadlines?: (string | null)[],
+    requireSelected = false,
   ): Promise<boolean> => {
     content = content.trim();
     if (!content && (attachments?.length ?? 0) === 0) return false;
     const contact = { ...target };
     const principal = scopeKey();
     const store = recovery();
+    const maySend = deliveryGuard(contact, requireSelected);
     const record: OutgoingJournalRecord = {
       version: 1,
       id: newOutgoingIntentId(),
@@ -783,8 +856,10 @@ export function ChatProvider(props: { children: JSX.Element }) {
         : {}),
       created_at: new Date().toISOString(),
       state: "pending",
+      ...(mediaDeadlines ? { mediaDeadlines: [...mediaDeadlines] } : {}),
     };
-    if (!store.queue(record)) {
+    if (!maySend()) return false;
+    if (!store.queue(record, sourceFiles)) {
       storageWarning();
       return false;
     }
@@ -803,17 +878,27 @@ export function ChatProvider(props: { children: JSX.Element }) {
       );
       return false;
     }
-    return deliverMessage(contact, record, store, principal);
+    return deliverMessage(contact, record, store, principal, maySend);
   };
 
   const send = async (
     content: string,
     attachments?: MediaAttachment[],
     onJournaled?: () => void,
+    sourceFiles?: readonly File[],
+    mediaDeadlines?: (string | null)[],
   ): Promise<boolean> => {
     const contact = selected();
     return contact
-      ? queueMessage(contact, content, attachments, onJournaled)
+      ? queueMessage(
+          contact,
+          content,
+          attachments,
+          onJournaled,
+          sourceFiles,
+          mediaDeadlines,
+          true,
+        )
       : false;
   };
 
@@ -829,13 +914,47 @@ export function ChatProvider(props: { children: JSX.Element }) {
     const contact = { ...current };
     const principal = scopeKey();
     const store = recovery();
+    const maySend = deliveryGuard(contact, true);
+    if (!maySend()) return false;
+    if (store.expiredDraft(contact, messageId)) {
+      app.toast(
+        "期限切れの添付を復旧してから、新しい送信をしてください",
+        "error",
+      );
+      return false;
+    }
     const retry = store.retry(contact, messageId);
     if (!retry) {
-      storageWarning();
+      app.toast(
+        "再送を開始できません。送信結果が不明な期限切れ添付は再アップロードせず、履歴を確認してください",
+        "error",
+      );
       return false;
     }
     setMessages((rows) => store.merge(contact, rows, sender()));
-    return deliverMessage(contact, retry, store, principal);
+    return deliverMessage(
+      contact,
+      retry,
+      store,
+      principal,
+      maySend,
+      "unconfirmed",
+    );
+  };
+
+  const expiredMessageDraft = (
+    messageId: string,
+  ): ExpiredOutgoingDraft | null => {
+    const contact = selected();
+    if (!contact) return null;
+    const mayRecover = deliveryGuard({ ...contact }, true);
+    if (!mayRecover()) return null;
+    const snapshot = recovery().expiredDraft(contact, messageId);
+    if (!snapshot) return null;
+    return {
+      ...snapshot,
+      isCurrent: () => mayRecover() && snapshot.isCurrent(),
+    };
   };
 
   const discardMessage = (messageId: string) => {
@@ -923,6 +1042,7 @@ export function ChatProvider(props: { children: JSX.Element }) {
         send,
         forwardMessage,
         resendMessage,
+        expiredMessageDraft,
         discardMessage,
         deleteMessage,
         refetchContacts: () => void refetchContacts(),
