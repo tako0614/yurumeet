@@ -16,6 +16,8 @@ export type ConfirmOptions = {
   confirmLabel?: string;
   cancelLabel?: string;
   danger?: boolean;
+  /** Cancel the dialog when the requesting view is no longer current. */
+  signal?: AbortSignal;
 };
 
 export type AppContextValue = {

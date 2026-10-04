@@ -21,8 +21,8 @@
     "prepare:takoform-v1": "bun scripts/prepare-takoform-v1-source.ts",
     "check:opentofu": "tofu fmt -check -recursive && tofu init -backend=false -input=false -lockfile=readonly && tofu validate && tofu test -no-color -filter=tests/session-salt.tftest.hcl -filter=tests/auth-password.tftest.hcl && bun run build:takos-worker && bun run prepare:takoform-v1 && bun scripts/validate-takoform-v1.ts",
     "smoke:postdeploy": "bun scripts/post-deploy-smoke.ts",
-    "smoke:release-artifact": "bun scripts/smoke-release-worker.mjs",
-    "smoke:release-browser": "bun scripts/smoke-release-browser.mjs",
+    "smoke:release-artifact": "node scripts/smoke-release-worker.mjs",
+    "smoke:release-browser": "node scripts/smoke-release-browser.mjs",
     "lint": "tsc --noEmit && bun scripts/check-brand-assets.mjs",
     "fmt": "bunx prettier --write package.json index.html vite.config.ts src site scripts README.md README.en.md && tofu fmt main.tf tests/auth-password.tftest.hcl",
     "fmt:check": "bunx prettier --check package.json index.html vite.config.ts src site scripts README.md README.en.md"

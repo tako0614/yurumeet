@@ -1,4 +1,4 @@
-#!/usr/bin/env bun
+#!/usr/bin/env node
 
 import { createHash } from "node:crypto";
 import { accessSync, constants, readFileSync, statSync } from "node:fs";
@@ -34,6 +34,7 @@ import { qualifyBrowserHistoryPagination } from "./release-browser-history-pagin
 import { qualifyBrowserHistoryScroll } from "./release-browser-history-scroll.mjs";
 import { qualifyBrowserRouteActionScope } from "./release-browser-route-action-scope.mjs";
 import { qualifyBrowserProfileFollowScope } from "./release-browser-profile-follow-scope.mjs";
+import { qualifyBrowserProfileActionScope } from "./release-browser-profile-action-scope.mjs";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const password = " browser-smoke-only ";
@@ -983,6 +984,71 @@ async function smoke(artifact, digest) {
       await profileFollowPage.close();
     }
 
+    // Profile mutations run after follow checks on a fresh owner page. This
+    // first lane holds a successful native mute response across SPA navigation.
+    const profileActionPage = await context.newPage();
+    const profileActionPageErrors = [];
+    const profileActionServerErrors = [];
+    const profileActionBlockedOutbound = [];
+    let profileActionScope;
+    try {
+      profileActionPage.on("pageerror", (error) =>
+        profileActionPageErrors.push(String(error)),
+      );
+      profileActionPage.on("response", (response) => {
+        if (response.status() >= 500) {
+          profileActionServerErrors.push({
+            path: new URL(response.url()).pathname,
+            status: response.status(),
+          });
+        }
+      });
+      await profileActionPage.route("**/*", (route) => {
+        const url = new URL(route.request().url());
+        if (
+          url.origin === origin ||
+          url.protocol === "data:" ||
+          url.protocol === "blob:"
+        ) {
+          return route.continue();
+        }
+        profileActionBlockedOutbound.push({
+          method: route.request().method(),
+          url: url.href,
+        });
+        return route.abort("blockedbyclient");
+      });
+      profileActionScope = await qualifyBrowserProfileActionScope({
+        page: profileActionPage,
+        db,
+        origin,
+        actorApId: ownerId,
+        checks,
+        scenario: process.env.PROFILE_ACTION_SCOPE_SCENARIO ?? "all",
+      });
+      check(
+        workerOutboundRequests === 0,
+        "profile-action fixture attempted an external Worker fetch",
+      );
+      check(
+        profileActionPageErrors.length === 0 &&
+          profileActionServerErrors.length === 0 &&
+          profileActionBlockedOutbound.length === 0,
+        "profile-action fixture raised a page error, HTTP 5xx or external request",
+      );
+      profileActionScope.runtimeObservations = {
+        pageErrors: profileActionPageErrors,
+        serverErrors: profileActionServerErrors,
+        blockedOutbound: profileActionBlockedOutbound,
+        workerExternalFetches: {
+          denied: true,
+          attempted: workerOutboundRequests,
+        },
+      };
+    } finally {
+      await profileActionPage.close();
+    }
+
     check(
       pageErrors.length === 0,
       "community delete browser raised a runtime error",
@@ -1018,6 +1084,7 @@ async function smoke(artifact, digest) {
       historyScroll,
       routeActionScope,
       profileFollowScope,
+      profileActionScope,
       status: "PASSED",
     };
   } catch (error) {
@@ -1048,7 +1115,7 @@ async function main() {
   const [argument, expected] = process.argv.slice(2);
   if (!argument || process.argv.length > 4)
     throw new Error(
-      "usage: bun scripts/smoke-release-browser.mjs <artifact.js> [sha256:<digest>]",
+      "usage: node scripts/smoke-release-browser.mjs <artifact.js> [sha256:<digest>]",
     );
   const artifact = resolve(process.cwd(), argument);
   check(statSync(artifact).isFile(), "artifact argument is not a file");

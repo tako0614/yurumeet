@@ -12,7 +12,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { Writable } from "node:stream";
-import { Miniflare } from "miniflare";
+import { FormData, Miniflare } from "miniflare";
 import { unstable_splitSqlQuery } from "wrangler";
 
 import { createManagedNativeRuntime } from "./native-runtime-stdio.mjs";

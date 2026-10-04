@@ -39,6 +39,9 @@ mock は Yurucommu と同じ `/api/auth/me` / `/api/auth/login` のパスワー�
 `bun run check` は format・型・テスト・portable build と artifact smoke を通す
 repo の完全な検証入口です。追加のブラウザ検証には、インストール済みの Chrome と
 `bun run check` が生成した Worker を使います。
+artifact・browser smoke は Miniflare を Node で動かすため、`bun run check` にも Node.js
+24.21.0 を使います。CI も同じバージョンを使います。Bun は install・型チェック・テスト・build
+に使います。
 
 ```sh
 bun run smoke:release-browser -- dist/takos-worker.js
