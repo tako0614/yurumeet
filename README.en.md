@@ -178,6 +178,10 @@ checks the original cookie, schema/data, post/media bytes, Core KV origin pin
 and unchanged original snapshot. This disposable same-artifact fixture requires
 separate evidence for published-version upgrades, live backup, Secret custody
 and OIDC recovery.
+Native smoke has a 120-second execution deadline. On failure or timeout it
+sends TERM/KILL within bounded cleanup grace only to the child and process group
+it started. It releases success output only
+after the child and its group have exited.
 
 ## Runtime API
 
