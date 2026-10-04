@@ -68,6 +68,9 @@ artifact smoke は、同じ現行 Worker の native D1/KV/R2 を閉じて複製�
 schema/data、投稿・media bytes、Core の KV origin pin と元 snapshot の不変性を
 検証します。使い捨ての fixture に対する同一 artifact の復元であり、公開旧版からの
 更新、実環境の backup・Secret 保全・OIDC 復旧は別の証拠が必要です。
+native smoke の実行期限は120秒です。期限超過や失敗時は、有限の終了猶予内で自身が
+起動した子とそのprocess groupだけをTERM/KILLで終了します。成功出力は子とgroupの
+終了後に返します。
 
 ## 仕組み
 
