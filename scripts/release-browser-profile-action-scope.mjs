@@ -918,7 +918,7 @@ async function laneLocalMessageScope({ page, db, origin, actorApId, checks }) {
   );
   await installProbe(page, "GET", path);
   try {
-    await page.getByRole("button", { name: "メッセージ" }).click();
+    await page.getByRole("button", { name: "メッセージ", exact: true }).click();
     const native = await bounded(entered.promise, "DMContact native read");
     await spaNavigate(page, profilePath(origin, localB));
     await page.waitForFunction(
