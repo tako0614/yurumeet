@@ -78,6 +78,26 @@ function controller(
   };
 }
 
+test("media auth epoch survives profile refresh but retires on failed same-user logout", async () => {
+  const original = actor();
+  const h = controller({
+    readCurrentActor: async () => ({ ...original, name: "updated metadata" }),
+    postLogout: async () => new Response(null, { status: 503 }),
+  });
+  const epoch = h.session.epoch();
+  await h.session.refresh();
+  expect(h.session.epoch()).toBe(epoch);
+  const logout = h.session.logout();
+  expect(h.session.epoch()).toBeGreaterThan(epoch);
+  const logoutEpoch = h.session.epoch();
+  expect(await logout).toBe(false);
+  expect(h.session.read().actor?.ap_id).toBe(original.ap_id);
+  expect(h.session.epoch()).toBe(logoutEpoch);
+  h.session.configure(ORIGIN, original);
+  expect(h.session.epoch()).toBeGreaterThan(logoutEpoch);
+  h.session.dispose();
+});
+
 test("non-success acknowledgement keeps the observed actor and explicit retry error", async () => {
   const observed = actor();
   let currentActor: Actor | null = observed;

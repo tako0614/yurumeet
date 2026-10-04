@@ -26,8 +26,21 @@ export async function uploadProductMedia(
     type: file.type,
     lastModified: file.lastModified,
   });
-  // A Story caller can reject a changed principal/transport after byte reads.
+  // Callers can reject a changed principal/transport after byte reads.
   // No await separates this check from the SDK resolving its destination.
   beforeUpload?.();
-  return uploadMedia(transportFile);
+  const result = await uploadMedia(transportFile);
+  // Public API4.1.11 preserves this JSON field but predates its declaration.
+  // Older servers advertise no deadline; never invent a TTL for them.
+  const expiresAt = (result as typeof result & { expires_at?: unknown })
+    .expires_at;
+  return {
+    ...result,
+    expires_at:
+      typeof expiresAt === "string" &&
+      expiresAt.length <= 256 &&
+      Number.isFinite(Date.parse(expiresAt))
+        ? expiresAt
+        : undefined,
+  };
 }

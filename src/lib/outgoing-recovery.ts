@@ -11,11 +11,14 @@ import {
   type OutgoingJournalRecord,
 } from "./outgoing-journal.ts";
 import type { MessageDeliveryFailure } from "./message-delivery.ts";
+import { talkMediaExpired } from "./talk-media.ts";
 
 export type RecoveryMessage = (DMMessage | CommunityMessage) & {
   pending?: boolean;
   failed?: boolean;
   deliveryFailure?: MessageDeliveryFailure;
+  mediaExpired?: boolean;
+  mediaDeadlines?: (string | null)[];
 };
 
 type Entry = {
@@ -24,6 +27,14 @@ type Entry = {
   acknowledged?: RecoveryMessage;
   observedInHistory?: boolean;
   acknowledgementSaved?: boolean;
+  /** Browser File objects are retained only in memory, never journaled. */
+  sourceFiles?: readonly File[];
+};
+
+export type ExpiredOutgoingDraft = {
+  record: OutgoingJournalRecord;
+  sourceFiles?: readonly File[];
+  isCurrent: () => boolean;
 };
 
 type DeleteSuppression = {
@@ -114,10 +125,16 @@ export function createOutgoingRecovery(
     });
   }
 
-  const queue = (record: OutgoingJournalRecord): boolean => {
+  const queue = (
+    record: OutgoingJournalRecord,
+    sourceFiles?: readonly File[],
+  ): boolean => {
     if (
       entries.has(record.id) ||
       record.state !== "pending" ||
+      (sourceFiles !== undefined &&
+        (sourceFiles.length !== (record.attachments?.length ?? 0) ||
+          !sourceFiles.every((file) => file instanceof File))) ||
       !journal.write(record)
     )
       return false;
@@ -125,7 +142,11 @@ export function createOutgoingRecovery(
     const snapshot = JSON.parse(
       JSON.stringify(record),
     ) as OutgoingJournalRecord;
-    entries.set(snapshot.id, { record: snapshot, revision: ++revision });
+    entries.set(snapshot.id, {
+      record: snapshot,
+      revision: ++revision,
+      ...(sourceFiles ? { sourceFiles: [...sourceFiles] } : {}),
+    });
     return true;
   };
 
@@ -136,23 +157,69 @@ export function createOutgoingRecovery(
     const entry = entries.get(id);
     if (
       !entry ||
+      entry.record.failureCode === "MEDIA_EXPIRED" ||
+      entry.record.mediaDeadlines?.some((deadline) =>
+        talkMediaExpired(deadline ?? undefined),
+      ) ||
       !sameTarget(entry.record.target, target) ||
       (entry.record.state !== "unconfirmed" &&
         entry.record.state !== "rejected")
     )
       return null;
-    const record: OutgoingJournalRecord = { ...entry.record, state: "pending" };
+    const record: OutgoingJournalRecord = {
+      ...entry.record,
+      state: "pending",
+      ...(entry.record.state === "unconfirmed"
+        ? { hadUnconfirmedAttempt: true }
+        : {}),
+    };
     if (!journal.write(record)) return null;
-    entries.set(id, { record, revision: ++revision });
+    entries.set(id, { ...entry, record, revision: ++revision });
     return record;
   };
 
-  const fail = (id: string, state: MessageDeliveryFailure): boolean => {
+  const fail = (
+    id: string,
+    state: MessageDeliveryFailure,
+    failureCode?: "MEDIA_EXPIRED",
+  ): boolean => {
     const entry = entries.get(id);
     if (!entry || entry.record.state !== "pending") return false;
-    const record: OutgoingJournalRecord = { ...entry.record, state };
-    entries.set(id, { record, revision: ++revision });
+    if (entry.record.hadUnconfirmedAttempt) state = "unconfirmed";
+    const record: OutgoingJournalRecord = {
+      ...entry.record,
+      state,
+      ...(state === "rejected" &&
+      failureCode === "MEDIA_EXPIRED" &&
+      entry.record.attachments?.length
+        ? { failureCode }
+        : {}),
+    };
+    entries.set(id, { ...entry, record, revision: ++revision });
     return journal.write(record);
+  };
+
+  const expiredDraft = (
+    target: JournalTarget,
+    id: string,
+  ): ExpiredOutgoingDraft | null => {
+    const entry = entries.get(id);
+    if (
+      !entry ||
+      !sameTarget(entry.record.target, target) ||
+      entry.record.state !== "rejected" ||
+      (entry.record.failureCode !== "MEDIA_EXPIRED" &&
+        !entry.record.mediaDeadlines?.some((deadline) =>
+          talkMediaExpired(deadline ?? undefined),
+        ))
+    )
+      return null;
+    const capturedRevision = entry.revision;
+    return {
+      record: JSON.parse(JSON.stringify(entry.record)) as OutgoingJournalRecord,
+      ...(entry.sourceFiles ? { sourceFiles: [...entry.sourceFiles] } : {}),
+      isCurrent: () => entries.get(id)?.revision === capturedRevision,
+    };
   };
 
   const confirm = (id: string, message: RecoveryMessage): boolean => {
@@ -336,8 +403,18 @@ export function createOutgoingRecovery(
           created_at: record.created_at,
           pending: record.state === "pending",
           failed: record.state !== "pending",
+          ...(record.mediaDeadlines
+            ? { mediaDeadlines: [...record.mediaDeadlines] }
+            : {}),
           ...(record.state !== "pending"
             ? { deliveryFailure: record.state }
+            : {}),
+          ...(record.state === "rejected" &&
+          (record.failureCode === "MEDIA_EXPIRED" ||
+            record.mediaDeadlines?.some((deadline) =>
+              talkMediaExpired(deadline ?? undefined),
+            ))
+            ? { mediaExpired: true }
             : {}),
         });
       }
@@ -354,9 +431,13 @@ export function createOutgoingRecovery(
   };
 
   return {
+    releaseSourceFiles: () => {
+      for (const entry of entries.values()) delete entry.sourceFiles;
+    },
     queue,
     retry,
     fail,
+    expiredDraft,
     confirm,
     discard,
     beginDelete,

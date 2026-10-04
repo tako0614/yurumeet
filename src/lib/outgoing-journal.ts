@@ -19,6 +19,12 @@ export type OutgoingJournalRecord = {
   created_at: string;
   state: "pending" | "unconfirmed" | "rejected" | "confirmed";
   serverId?: string;
+  /** Exact server expiry rejection only; never attached to an unknown outcome. */
+  failureCode?: "MEDIA_EXPIRED";
+  /** Advertised deadlines aligned with exact immutable attachment references. */
+  mediaDeadlines?: (string | null)[];
+  /** A later retry rejection cannot settle an earlier unknown acceptance. */
+  hadUnconfirmedAttempt?: true;
 };
 
 /** A successful server delete, stored at the former confirmed intent's key. */
@@ -162,6 +168,9 @@ function validRecord(value: unknown): value is OutgoingJournalRecord {
     "created_at",
     "state",
     "serverId",
+    "failureCode",
+    "mediaDeadlines",
+    "hadUnconfirmedAttempt",
   ];
   if (
     Object.keys(record).some((key) => !allowed.includes(key)) ||
@@ -191,6 +200,33 @@ function validRecord(value: unknown): value is OutgoingJournalRecord {
   } else if (record.serverId !== undefined) {
     return false;
   }
+  if (
+    record.failureCode !== undefined &&
+    (record.failureCode !== "MEDIA_EXPIRED" ||
+      record.state !== "rejected" ||
+      !Array.isArray(record.attachments) ||
+      record.attachments.length === 0)
+  )
+    return false;
+  if (
+    record.mediaDeadlines !== undefined &&
+    (!Array.isArray(record.attachments) ||
+      !Array.isArray(record.mediaDeadlines) ||
+      record.mediaDeadlines.length !== record.attachments.length ||
+      !Array.from(record.mediaDeadlines).every(
+        (deadline) =>
+          deadline === null ||
+          (typeof deadline === "string" &&
+            deadline.length <= 256 &&
+            Number.isFinite(Date.parse(deadline))),
+      ))
+  )
+    return false;
+  if (
+    record.hadUnconfirmedAttempt !== undefined &&
+    (record.hadUnconfirmedAttempt !== true || record.state === "rejected")
+  )
+    return false;
   return true;
 }
 
@@ -238,6 +274,8 @@ function sameIntentPayload(
     sameTarget(current.target, snapshot.target) &&
     current.content === snapshot.content &&
     current.created_at === snapshot.created_at &&
+    JSON.stringify(current.mediaDeadlines) ===
+      JSON.stringify(snapshot.mediaDeadlines) &&
     JSON.stringify(current.attachments) === JSON.stringify(snapshot.attachments)
   );
 }
