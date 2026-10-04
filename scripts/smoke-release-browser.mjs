@@ -33,6 +33,7 @@ import { qualifyBrowserHistoryReadOrder } from "./release-browser-history-read-o
 import { qualifyBrowserHistoryPagination } from "./release-browser-history-pagination.mjs";
 import { qualifyBrowserHistoryScroll } from "./release-browser-history-scroll.mjs";
 import { qualifyBrowserRouteActionScope } from "./release-browser-route-action-scope.mjs";
+import { qualifyBrowserProfileFollowScope } from "./release-browser-profile-follow-scope.mjs";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const password = " browser-smoke-only ";
@@ -170,6 +171,7 @@ async function smoke(artifact, digest) {
   );
   const appPort = await port();
   const origin = `http://127.0.0.1:${appPort}`;
+  let workerOutboundRequests = 0;
   const worker = new Miniflare({
     rootPath: dirname(artifact),
     modules: [{ type: "ESModule", path: artifact }],
@@ -191,6 +193,10 @@ async function smoke(artifact, digest) {
     kvNamespaces: ["KV"],
     r2Buckets: ["MEDIA"],
     queueProducers: ["DELIVERY_QUEUE", "DELIVERY_DLQ"],
+    outboundService: async () => {
+      workerOutboundRequests++;
+      return new Response(null, { status: 502 });
+    },
     handleRuntimeStdio(stdout, stderr) {
       stdout.pipe(process.stderr, { end: false });
       stderr.pipe(process.stderr, { end: false });
@@ -913,6 +919,70 @@ async function smoke(artifact, digest) {
       await routeActionPage.close();
     }
 
+    // Follow actions get a fresh page after all route-action checks, retaining
+    // the existing owner session and the same local-only network boundary.
+    const profileFollowPage = await context.newPage();
+    const profileFollowPageErrors = [];
+    const profileFollowServerErrors = [];
+    const profileFollowBlockedOutbound = [];
+    let profileFollowScope;
+    try {
+      profileFollowPage.on("pageerror", (error) =>
+        profileFollowPageErrors.push(String(error)),
+      );
+      profileFollowPage.on("response", (response) => {
+        if (response.status() >= 500) {
+          profileFollowServerErrors.push({
+            path: new URL(response.url()).pathname,
+            status: response.status(),
+          });
+        }
+      });
+      await profileFollowPage.route("**/*", (route) => {
+        const url = new URL(route.request().url());
+        if (
+          url.origin === origin ||
+          url.protocol === "data:" ||
+          url.protocol === "blob:"
+        ) {
+          return route.continue();
+        }
+        profileFollowBlockedOutbound.push({
+          method: route.request().method(),
+          url: url.href,
+        });
+        return route.abort("blockedbyclient");
+      });
+      profileFollowScope = await qualifyBrowserProfileFollowScope({
+        page: profileFollowPage,
+        db,
+        origin,
+        actorApId: ownerId,
+        checks,
+      });
+      check(
+        workerOutboundRequests === 0,
+        "release browser smoke attempted an external Worker fetch",
+      );
+      check(
+        profileFollowPageErrors.length === 0 &&
+          profileFollowServerErrors.length === 0 &&
+          profileFollowBlockedOutbound.length === 0,
+        "profile-follow fixture raised a page error, HTTP 5xx or external request",
+      );
+      profileFollowScope.runtimeObservations = {
+        pageErrors: profileFollowPageErrors,
+        serverErrors: profileFollowServerErrors,
+        blockedOutbound: profileFollowBlockedOutbound,
+        workerExternalFetches: {
+          denied: true,
+          attempted: workerOutboundRequests,
+        },
+      };
+    } finally {
+      await profileFollowPage.close();
+    }
+
     check(
       pageErrors.length === 0,
       "community delete browser raised a runtime error",
@@ -947,6 +1017,7 @@ async function smoke(artifact, digest) {
       historyPagination,
       historyScroll,
       routeActionScope,
+      profileFollowScope,
       status: "PASSED",
     };
   } catch (error) {
