@@ -1,4 +1,4 @@
-import { createSignal, Index, Show } from "solid-js";
+import { createSignal, Index, onCleanup, Show } from "solid-js";
 import { type Actor, updateProfile } from "@takosjp/yurucommu-api";
 import { uploadProductMedia } from "../../lib/media-upload.ts";
 import { DialogA11y } from "../../lib/dialog.tsx";
@@ -13,13 +13,19 @@ export function ProfileEditModal(props: {
   onClose: () => void;
   onSaved: (updated: Actor) => void;
 }) {
-  const [name, setName] = createSignal(props.actor.name ?? "");
-  const [summary, setSummary] = createSignal(props.actor.summary ?? "");
-  const [iconUrl, setIconUrl] = createSignal(props.actor.icon_url ?? "");
-  const [headerUrl, setHeaderUrl] = createSignal(props.actor.header_url ?? "");
-  const [isPrivate, setIsPrivate] = createSignal(!!props.actor.is_private);
+  const initialActor = props.actor;
+  const onSaved = props.onSaved;
+  let active = true;
+  onCleanup(() => {
+    active = false;
+  });
+  const [name, setName] = createSignal(initialActor.name ?? "");
+  const [summary, setSummary] = createSignal(initialActor.summary ?? "");
+  const [iconUrl, setIconUrl] = createSignal(initialActor.icon_url ?? "");
+  const [headerUrl, setHeaderUrl] = createSignal(initialActor.header_url ?? "");
+  const [isPrivate, setIsPrivate] = createSignal(!!initialActor.is_private);
   const [fields, setFields] = createSignal<{ name: string; value: string }[]>(
-    props.actor.fields?.map((f) => ({ ...f })) ?? [],
+    initialActor.fields?.map((f) => ({ ...f })) ?? [],
   );
   const [uploading, setUploading] = createSignal<null | "icon" | "header">(
     null,
@@ -43,47 +49,48 @@ export function ProfileEditModal(props: {
   const [error, setError] = createSignal<string | null>(null);
 
   const upload = async (file: File | undefined, target: "icon" | "header") => {
-    if (!file) return;
+    if (!file || !active || saving() || uploading()) return;
     setUploading(target);
     setError(null);
     try {
       const uploaded = await uploadProductMedia(file);
+      if (!active) return;
       if (target === "icon") setIconUrl(uploaded.url ?? "");
       else setHeaderUrl(uploaded.url ?? "");
     } catch {
-      setError("画像のアップロードに失敗しました");
+      if (active) setError("画像のアップロードに失敗しました");
     } finally {
-      setUploading(null);
+      if (active) setUploading(null);
     }
   };
 
   const save = async () => {
-    if (saving() || uploading()) return;
+    if (!active || saving() || uploading()) return;
     setSaving(true);
     setError(null);
     try {
-      const nextFields = cleanFields();
-      await updateProfile({
+      const changes = {
         name: name().trim() || undefined,
         summary: summary().trim(),
         icon_url: iconUrl() || undefined,
         header_url: headerUrl() || undefined,
         is_private: isPrivate(),
-        fields: nextFields,
-      });
-      props.onSaved({
-        ...props.actor,
-        name: name().trim() || props.actor.name,
-        summary: summary().trim(),
-        icon_url: iconUrl() || props.actor.icon_url,
-        header_url: headerUrl() || props.actor.header_url,
-        is_private: isPrivate(),
-        fields: nextFields,
+        fields: cleanFields(),
+      };
+      await updateProfile(changes);
+      // Confirmed saves still refresh the app actor; the opening callback
+      // decides whether this editor still owns the page-local result.
+      onSaved({
+        ...initialActor,
+        ...changes,
+        name: changes.name || initialActor.name,
+        icon_url: changes.icon_url || initialActor.icon_url,
+        header_url: changes.header_url || initialActor.header_url,
       });
     } catch {
-      setError("保存に失敗しました");
+      if (active) setError("保存に失敗しました");
     } finally {
-      setSaving(false);
+      if (active) setSaving(false);
     }
   };
 
@@ -144,7 +151,7 @@ export function ProfileEditModal(props: {
 
           <label class="p-edit-avatar">
             <UserAvatar
-              value={{ ...props.actor, icon_url: iconUrl() || null }}
+              value={{ ...initialActor, icon_url: iconUrl() || null }}
               size={72}
             />
             <span class="p-edit-avatar-cta">
