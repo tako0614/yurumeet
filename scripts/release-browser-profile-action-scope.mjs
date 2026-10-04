@@ -46,6 +46,132 @@ async function first(db, sql, ...values) {
     .first();
 }
 
+async function rootSessionRows(db, actorApId) {
+  return (
+    (
+      await db
+        .prepare(
+          "SELECT id, member_id, expires_at FROM sessions WHERE member_id = ? ORDER BY id",
+        )
+        .bind(actorApId)
+        .all()
+    ).results ?? []
+  );
+}
+
+async function readAuthIdentity(response) {
+  const status = response.status();
+  let actor;
+  try {
+    const body = await response.json();
+    actor = body?.actor?.ap_id;
+  } catch {
+    // Keep diagnostics to status and identity only; malformed bodies are not
+    // included in fixture output.
+  }
+  return { status, actor };
+}
+
+async function wait(ms) {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function observeInitialAuth({ page, db, origin, actorApId }) {
+  const path = `${origin}/api/auth/me`;
+  const sessionCookie = async () =>
+    (await page.context().cookies(origin)).find(
+      (cookie) => cookie.name === "session",
+    );
+  const cookieBefore = await sessionCookie();
+  const sessionsBefore = await rootSessionRows(db, actorApId);
+  requireAction(
+    cookieBefore?.value && sessionsBefore.length > 0,
+    "existing owner session is required before profile-action page load",
+  );
+
+  const firstResponsePromise = page.waitForResponse(
+    (response) =>
+      response.url() === path && response.request().method() === "GET",
+    { timeout: 15_000 },
+  );
+  firstResponsePromise.catch(() => {});
+  await page.goto(`${origin}/?tab=talk`, {
+    waitUntil: "domcontentloaded",
+    timeout: 20_000,
+  });
+  const firstResponse = await bounded(
+    firstResponsePromise,
+    "initial native auth observation",
+  );
+  const initialStatus = firstResponse.status();
+  let retryAfterSeconds = null;
+  let retryClicks = 0;
+  let finalIdentity = await readAuthIdentity(firstResponse);
+
+  if (initialStatus === 429) {
+    const header = firstResponse.headers()["retry-after"];
+    retryAfterSeconds = /^\d+$/.test(header ?? "") ? Number(header) : NaN;
+    requireAction(
+      Number.isInteger(retryAfterSeconds) &&
+        retryAfterSeconds >= 1 &&
+        retryAfterSeconds <= 120,
+      `initial GET /api/auth/me returned 429 with invalid Retry-After=${String(header)}`,
+    );
+    await page
+      .getByRole("alert")
+      .filter({ hasText: "認証状態を確認できませんでした" })
+      .waitFor({
+        state: "visible",
+        timeout: 10_000,
+      });
+    await wait(retryAfterSeconds * 1_000 + 150);
+    const retryResponsePromise = page.waitForResponse(
+      (response) =>
+        response.url() === path && response.request().method() === "GET",
+      { timeout: 15_000 },
+    );
+    retryResponsePromise.catch(() => {});
+    await page.getByRole("button", { name: "再試行", exact: true }).click();
+    retryClicks++;
+    const retryResponse = await bounded(
+      retryResponsePromise,
+      "explicit native auth retry",
+    );
+    finalIdentity = await readAuthIdentity(retryResponse);
+    requireAction(
+      retryResponse.status() === 200,
+      `explicit GET /api/auth/me retry returned HTTP ${retryResponse.status()}`,
+    );
+  } else {
+    requireAction(
+      initialStatus === 200,
+      `initial GET /api/auth/me returned HTTP ${initialStatus}`,
+    );
+  }
+
+  requireAction(
+    finalIdentity.actor === actorApId,
+    `native auth observation returned HTTP ${finalIdentity.status} for a different or missing owner`,
+  );
+  const cookieAfter = await sessionCookie();
+  const sessionsAfter = await rootSessionRows(db, actorApId);
+  requireAction(
+    cookieAfter?.value === cookieBefore.value &&
+      JSON.stringify(sessionsAfter) === JSON.stringify(sessionsBefore),
+    "profile-action auth recovery changed the owner session or native root session rows",
+  );
+  return {
+    initialStatus,
+    retryAfterSeconds,
+    uiRetryClicks: retryClicks,
+    finalStatus: finalIdentity.status,
+    sameOwner: finalIdentity.actor === actorApId,
+    sameSessionCookie: cookieAfter.value === cookieBefore.value,
+    rootSessionCountBefore: sessionsBefore.length,
+    rootSessionCountAfter: sessionsAfter.length,
+  };
+}
+
 function profilePath(origin, apId) {
   return `${origin}/profile/${encodeURIComponent(apId)}`;
 }
@@ -903,19 +1029,12 @@ export async function qualifyBrowserProfileActionScope({
     new URL(actorApId).origin === origin,
     "owner actor is not local to Worker",
   );
-  await page.goto(`${origin}/?tab=talk`, {
-    waitUntil: "domcontentloaded",
-    timeout: 20_000,
+  const authRecovery = await observeInitialAuth({
+    page,
+    db,
+    origin,
+    actorApId,
   });
-  const identity = await page.evaluate(async () => {
-    const response = await fetch("/api/auth/me", { credentials: "include" });
-    const body = await response.json();
-    return { status: response.status, actor: body.actor?.ap_id };
-  });
-  requireAction(
-    identity.status === 200 && identity.actor === actorApId,
-    "page lacks owner session",
-  );
   const start = checks.length;
   const lanes = {};
   if (scenario === "all" || scenario === "mute")
@@ -1015,6 +1134,7 @@ export async function qualifyBrowserProfileActionScope({
   );
   return {
     status: "PASSED",
+    authRecovery,
     fixtureScope:
       "native disposable Worker and D1; cached remote moderation targets; local owned personas for DM; browser outbound requests are denied by caller",
     scenario,
