@@ -1,4 +1,5 @@
 import {
+  createEffect,
   createSignal,
   For,
   onCleanup,
@@ -16,6 +17,7 @@ import {
   type Notification,
   rejectFollowRequest,
   unarchiveNotifications,
+  getYurucommuApiTransport,
 } from "@takosjp/yurucommu-api";
 import { PageLayout, PageHeader } from "../components/PageLayout.tsx";
 import { useApp } from "../lib/app-context.tsx";
@@ -136,26 +138,66 @@ export default function NotificationsPage() {
   const [cursor, setCursor] = createSignal<string | null>(null);
   const [hasMore, setHasMore] = createSignal(false);
   const [loadingMore, setLoadingMore] = createSignal(false);
+  const [scopeReady, setScopeReady] = createSignal(false);
   const [viewArchived, setViewArchived] = createSignal(false);
   const [archiving, setArchiving] = createSignal<Record<string, boolean>>({});
   const [archivingAll, setArchivingAll] = createSignal(false);
   const archiveMutationPending = () =>
     archivingAll() || Object.values(archiving()).some(Boolean);
+  const followRequestPending = () => Object.values(pending()).some(Boolean);
 
   let loadGen = 0;
   let loadedAt = 0;
+  let mounted = true;
+  const captureScope = () => {
+    const transport = getYurucommuApiTransport();
+    return {
+      origin: app.origin(),
+      actorApId: app.actor().ap_id,
+      authEpoch: app.authEpoch(),
+      transport,
+      notificationsUrl: transport.resolveUrl("/api/notifications"),
+      markReadUrl: transport.resolveUrl("/api/notifications/read"),
+    };
+  };
+  const scopeIsCurrent = (scope: ReturnType<typeof captureScope>) => {
+    const transport = getYurucommuApiTransport();
+    return (
+      mounted &&
+      !app.logoutBusy() &&
+      scope.origin === app.origin() &&
+      scope.actorApId === app.actor().ap_id &&
+      scope.authEpoch === app.authEpoch() &&
+      scope.transport === transport &&
+      scope.notificationsUrl === transport.resolveUrl("/api/notifications") &&
+      scope.markReadUrl === transport.resolveUrl("/api/notifications/read")
+    );
+  };
+  let displayedScope: ReturnType<typeof captureScope> | null = null;
+  const displayedScopeIsCurrent = () =>
+    scopeReady() && displayedScope !== null && scopeIsCurrent(displayedScope);
   const load = () => {
+    if (!mounted || app.logoutBusy()) return;
     const type = filter();
     const archived = viewArchived();
     const myGen = ++loadGen;
+    const scope = captureScope();
+    displayedScope = scope;
+    setScopeReady(false);
+    const isCurrent = () => myGen === loadGen && scopeIsCurrent(scope);
     setLoading(true);
+    setLoadingMore(false);
     setError(false);
     setCursor(null);
     setHasMore(false);
+    setPending({});
+    setArchiving({});
+    setArchivingAll(false);
     void (async () => {
       try {
         const page = await fetchNotifications({ limit: 30, type, archived });
-        if (myGen !== loadGen) return;
+        if (!isCurrent()) return;
+        setScopeReady(true);
         setItems(page.notifications);
         setCursor(page.nextCursor);
         setHasMore(page.hasMore);
@@ -164,8 +206,9 @@ export default function NotificationsPage() {
           .map((n) => n.id);
         if (unread.length > 0) {
           try {
+            if (!isCurrent()) return;
             await markNotificationsRead(unread);
-            if (myGen === loadGen) {
+            if (isCurrent()) {
               const marked = new Set(unread);
               setItems((prev) =>
                 prev.map((n) =>
@@ -179,9 +222,14 @@ export default function NotificationsPage() {
           }
         }
       } catch {
-        if (myGen === loadGen) setError(true);
+        if (isCurrent()) {
+          // The failed current-scope load is ready to show its retry state;
+          // rows remain hidden because load() cleared scopeReady first.
+          setScopeReady(true);
+          setError(true);
+        }
       } finally {
-        if (myGen === loadGen) {
+        if (isCurrent()) {
           loadedAt = Date.now();
           setLoading(false);
         }
@@ -190,13 +238,29 @@ export default function NotificationsPage() {
   };
 
   const loadMore = async () => {
+    if (!displayedScopeIsCurrent()) {
+      load();
+      return;
+    }
     const before = cursor();
-    if (loadingMore() || archiveMutationPending() || !hasMore() || !before) {
+    if (
+      loadingMore() ||
+      archiveMutationPending() ||
+      followRequestPending() ||
+      !hasMore() ||
+      !before
+    ) {
       return;
     }
     const myGen = loadGen;
     const type = filter();
     const archived = viewArchived();
+    const scope = displayedScope!;
+    const isCurrent = () =>
+      myGen === loadGen &&
+      type === filter() &&
+      archived === viewArchived() &&
+      scopeIsCurrent(scope);
     setLoadingMore(true);
     try {
       const page = await fetchNotifications({
@@ -205,11 +269,7 @@ export default function NotificationsPage() {
         before,
         archived,
       });
-      if (
-        myGen !== loadGen ||
-        type !== filter() ||
-        archived !== viewArchived()
-      ) {
+      if (!isCurrent()) {
         return;
       }
       const seen = new Set(items().map((n) => n.id));
@@ -225,8 +285,9 @@ export default function NotificationsPage() {
         .map((n) => n.id);
       if (unread.length > 0) {
         try {
+          if (!isCurrent()) return;
           await markNotificationsRead(unread);
-          if (myGen === loadGen) {
+          if (isCurrent()) {
             const marked = new Set(unread);
             setItems((prev) =>
               prev.map((n) =>
@@ -240,20 +301,29 @@ export default function NotificationsPage() {
         }
       }
     } catch {
-      app.toast("通知を読み込めませんでした", "error");
+      if (isCurrent()) app.toast("通知を読み込めませんでした", "error");
     } finally {
-      setLoadingMore(false);
+      if (isCurrent()) setLoadingMore(false);
     }
   };
 
   const selectFilter = (key: string) => {
-    if (archiveMutationPending() || key === filter()) return;
+    if (key === filter()) return;
+    if (
+      displayedScopeIsCurrent() &&
+      (archiveMutationPending() || followRequestPending())
+    )
+      return;
     setFilter(key);
     load();
   };
 
   const toggleArchived = () => {
-    if (archiveMutationPending()) return;
+    if (
+      displayedScopeIsCurrent() &&
+      (archiveMutationPending() || followRequestPending())
+    )
+      return;
     setViewArchived((value) => !value);
     load();
   };
@@ -262,16 +332,57 @@ export default function NotificationsPage() {
   // position for data seconds old — only reload once it has gone stale
   // (same 60s threshold as the timeline).
   const NOTIFICATIONS_STALE_MS = 60_000;
+  createEffect(() => {
+    const origin = app.origin();
+    const actorApId = app.actor().ap_id;
+    const epoch = app.authEpoch();
+    const logoutBusy = app.logoutBusy();
+    const transport = getYurucommuApiTransport();
+    if (!mounted) return;
+    if (logoutBusy) {
+      loadGen += 1;
+      displayedScope = null;
+      setScopeReady(false);
+      setLoading(true);
+      setLoadingMore(false);
+      setItems([]);
+      setCursor(null);
+      setHasMore(false);
+      setPending({});
+      setArchiving({});
+      setArchivingAll(false);
+      return;
+    }
+
+    const scope = displayedScope;
+    if (
+      !scope ||
+      scope.origin !== origin ||
+      scope.actorApId !== actorApId ||
+      scope.authEpoch !== epoch ||
+      scope.transport !== transport ||
+      scope.notificationsUrl !== transport.resolveUrl("/api/notifications") ||
+      scope.markReadUrl !== transport.resolveUrl("/api/notifications/read")
+    ) {
+      load();
+    }
+  });
   onMount(() => {
-    load();
     const reloadIfStale = () => {
       if (document.visibilityState !== "visible") return;
+      if (!displayedScopeIsCurrent()) {
+        load();
+        return;
+      }
+      if (archiveMutationPending() || followRequestPending()) return;
       if (Date.now() - loadedAt <= NOTIFICATIONS_STALE_MS) return;
       load();
     };
     document.addEventListener("visibilitychange", reloadIfStale);
     globalThis.addEventListener("focus", reloadIfStale);
     onCleanup(() => {
+      mounted = false;
+      loadGen += 1;
       document.removeEventListener("visibilitychange", reloadIfStale);
       globalThis.removeEventListener("focus", reloadIfStale);
     });
@@ -295,34 +406,49 @@ export default function NotificationsPage() {
     n: Notification,
     action: "accept" | "reject",
   ) => {
-    if (pending()[n.id]) return;
+    if (!displayedScopeIsCurrent() || pending()[n.id]) return;
+    const scope = displayedScope!;
+    const current = () => scopeIsCurrent(scope) && displayedScope === scope;
     setPending((p) => ({ ...p, [n.id]: true }));
     try {
       if (action === "accept") await acceptFollowRequest(n.actor.ap_id);
       else await rejectFollowRequest(n.actor.ap_id);
+      if (!current()) return;
       setItems((prev) => prev.filter((x) => x.id !== n.id));
       app.refreshBadges();
       app.toast(action === "accept" ? "承認しました" : "拒否しました");
+      // Retire a focus/list read that started before this mutation; otherwise
+      // its ACK could restore the follow-request row just removed above.
+      load();
     } catch {
-      app.toast("操作に失敗しました", "error");
+      if (current()) app.toast("操作に失敗しました", "error");
     } finally {
-      setPending((p) => ({ ...p, [n.id]: false }));
+      if (current()) setPending((p) => ({ ...p, [n.id]: false }));
     }
   };
 
   const handleArchiveToggle = async (notification: Notification) => {
-    if (archivingAll() || archiving()[notification.id]) return;
+    if (
+      !displayedScopeIsCurrent() ||
+      archivingAll() ||
+      archiving()[notification.id]
+    )
+      return;
+    const scope = displayedScope!;
+    const current = () => scopeIsCurrent(scope) && displayedScope === scope;
     const archived = viewArchived();
     setArchiving((prev) => ({ ...prev, [notification.id]: true }));
     setItems((prev) => prev.filter((item) => item.id !== notification.id));
     try {
       if (archived) await unarchiveNotifications([notification.id]);
       else await archiveNotifications([notification.id]);
+      if (!current()) return;
       app.refreshBadges();
       // Invalidate any focus refresh/load-more result that raced the write and
       // reload the view that is current when the mutation completes.
       load();
     } catch {
+      if (!current()) return;
       app.toast(
         archived
           ? "アーカイブを解除できませんでした"
@@ -331,33 +457,40 @@ export default function NotificationsPage() {
       );
       load();
     } finally {
-      setArchiving((prev) => {
-        const next = { ...prev };
-        delete next[notification.id];
-        return next;
-      });
+      if (current()) {
+        setArchiving((prev) => {
+          const next = { ...prev };
+          delete next[notification.id];
+          return next;
+        });
+      }
     }
   };
 
   const handleArchiveAll = async () => {
     if (
       archiveMutationPending() ||
+      !displayedScopeIsCurrent() ||
       viewArchived() ||
       filter() !== "all" ||
       items().length === 0
     ) {
       return;
     }
+    const scope = displayedScope!;
+    const current = () => scopeIsCurrent(scope) && displayedScope === scope;
     setArchivingAll(true);
     try {
       await archiveAllNotifications();
+      if (!current()) return;
       app.refreshBadges();
       load();
     } catch {
+      if (!current()) return;
       app.toast("通知をアーカイブできませんでした", "error");
       load();
     } finally {
-      setArchivingAll(false);
+      if (current()) setArchivingAll(false);
     }
   };
 
@@ -451,7 +584,7 @@ export default function NotificationsPage() {
       </div>
       <div class="p-page-body">
         <Show
-          when={!loading()}
+          when={scopeReady() && displayedScopeIsCurrent() && !loading()}
           fallback={
             <div class="p-detail-loading">
               <SpinnerIcon />
@@ -579,7 +712,7 @@ export default function NotificationsPage() {
                 );
               }}
             </For>
-            <Show when={hasMore()}>
+            <Show when={scopeReady() && displayedScopeIsCurrent() && hasMore()}>
               <div class="p-timeline-more">
                 <button
                   type="button"

@@ -15,6 +15,7 @@ import { A, Route, Router } from "@solidjs/router";
 import {
   fetchDMUnreadCount,
   fetchUnreadCount,
+  getYurucommuApiTransport,
   refreshBrowserNotificationPush,
 } from "@takosjp/yurucommu-api";
 import App from "./App.tsx";
@@ -45,6 +46,7 @@ import {
   readYurumeetCurrentActor,
 } from "./lib/auth-request.ts";
 import { installStaleAssetReload } from "./lib/chunk-reload.ts";
+import { createUnreadBadgeRefresh } from "./lib/badge-refresh.ts";
 import "./styles.css";
 
 const PostDetailPage = lazy(() => import("./pages/PostDetailPage.tsx"));
@@ -178,15 +180,85 @@ function AppRoot(props: { children?: JSX.Element }) {
   });
   onCleanup(() => settleConfirm(false));
 
-  const refreshBadges = () => {
-    if (auth().error || auth().loading || !actor()) return;
-    fetchDMUnreadCount()
-      .then((r) => setUnreadTalk(r.total ?? 0))
-      .catch(() => {});
-    fetchUnreadCount()
-      .then((n) => setUnreadNotifications(n ?? 0))
-      .catch(() => {});
-  };
+  const badgeRefresh = createUnreadBadgeRefresh({
+    readers: {
+      talk: async () => (await fetchDMUnreadCount()).total ?? 0,
+      notifications: async () => (await fetchUnreadCount()) ?? 0,
+    },
+    captureScope: () => {
+      const state = auth();
+      const currentActor = state.actor;
+      const origin = state.origin;
+      if (
+        state.error ||
+        state.loading ||
+        state.logoutBusy ||
+        !currentActor ||
+        !origin
+      )
+        return null;
+      const transport = getYurucommuApiTransport();
+      return {
+        origin,
+        actorApId: currentActor.ap_id,
+        authEpoch: authSession.epoch(),
+        transport,
+        talkUrl: transport.resolveUrl("/api/dm/unread/count"),
+        notificationsUrl: transport.resolveUrl(
+          "/api/notifications/unread/count",
+        ),
+      };
+    },
+    isScopeCurrent: (scope) => {
+      const state = auth();
+      const transport = getYurucommuApiTransport();
+      return (
+        !state.error &&
+        !state.loading &&
+        !state.logoutBusy &&
+        state.origin === scope.origin &&
+        state.actor?.ap_id === scope.actorApId &&
+        authSession.epoch() === scope.authEpoch &&
+        transport === scope.transport &&
+        transport.resolveUrl("/api/dm/unread/count") === scope.talkUrl &&
+        transport.resolveUrl("/api/notifications/unread/count") ===
+          scope.notificationsUrl
+      );
+    },
+    apply: (channel, count) => {
+      if (channel === "talk") setUnreadTalk(count);
+      else setUnreadNotifications(count);
+    },
+    clear: () => {
+      setUnreadTalk(0);
+      setUnreadNotifications(0);
+    },
+  });
+  const refreshBadges = () => badgeRefresh.refresh();
+
+  let lastBadgeScopeKey: string | null = null;
+  createEffect(() => {
+    const state = auth();
+    const apId = state.actor?.ap_id;
+    const origin = state.origin;
+    const epoch = authSession.epoch();
+    const busy = state.logoutBusy;
+    const scopeKey = JSON.stringify([
+      origin,
+      apId ?? null,
+      epoch,
+      busy,
+      !!state.error,
+    ]);
+    if (scopeKey !== lastBadgeScopeKey) {
+      lastBadgeScopeKey = scopeKey;
+      // Retire pending reads on every session generation transition,
+      // including same-principal logout/re-auth. Counts belong to that session.
+      badgeRefresh.retire();
+    }
+    if (!state.error && !state.loading && !busy && apId && origin)
+      badgeRefresh.refresh();
+  });
 
   onMount(() => {
     const timer = window.setInterval(() => {
@@ -209,7 +281,6 @@ function AppRoot(props: { children?: JSX.Element }) {
     const cleanup = new AbortController();
     onCleanup(() => cleanup.abort());
     const runtime = createGuardedBrowserPushRuntime(cleanup.signal, origin);
-    refreshBadges();
     void resolveYurumeBrowserPushConfig()
       .then((config) => {
         if (
