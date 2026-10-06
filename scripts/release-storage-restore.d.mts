@@ -26,6 +26,42 @@ export declare function cloneClosedStores(
   expectedInventory: ClosedStores,
 ): { paths: StorePaths; inventory: ClosedStores };
 
+export type SnapshotResult = { results: unknown[]; success?: boolean };
+export type SnapshotBatchResult = SnapshotResult & { success: true };
+export type SnapshotStatement = {
+  all(): Promise<SnapshotResult>;
+};
+export type SnapshotDb = {
+  prepare(sql: string): SnapshotStatement;
+  batch?(statements: SnapshotStatement[]): Promise<SnapshotBatchResult[]>;
+};
+
+export type SnapshotTableCoverage = {
+  applicationTableCount: number;
+  snapshottedTables: string[];
+  runtimeOwnedExcludedTables: string[];
+  sqliteSequencePresent: boolean;
+  excludedFromRowComparison: string[];
+  normalizedColumns: string[];
+  canonicalization: string;
+  foreignKeyViolationCount: 0;
+};
+
+export type ApplicationDataSnapshot = {
+  schemaSha256: string;
+  relationshipsSha256: string;
+  dataSha256: string;
+  counts: Record<string, number>;
+  tableCoverage: SnapshotTableCoverage;
+  actorUpdatedAt?: string;
+};
+
+export declare function dataSnapshot(
+  db: SnapshotDb,
+  includeSessions?: boolean,
+  normalizeLoginTimestamp?: boolean,
+): Promise<ApplicationDataSnapshot>;
+
 export type StorageRestoreReceipt = {
   kind: "yurumeet.native-storage-restore@v1";
   status: "PASSED";
@@ -38,6 +74,7 @@ export type StorageRestoreReceipt = {
   clonedStores: ClosedStores;
   schemaFingerprintSha256: string;
   dataFingerprintSha256: string;
+  tableCoverage: SnapshotTableCoverage & { rowCounts: Record<string, number> };
   authentication: "password" | "oidc";
   oidc?: {
     issuer: import("./release-storage-oidc.mjs").RestoreOidcEvidence;
