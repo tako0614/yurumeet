@@ -350,41 +350,174 @@ function actorTimestamp(raw) {
   return timestamp;
 }
 
-async function dataSnapshot(
+const RUNTIME_OWNED_ROW_EXCLUSIONS = new Set(["_cf_METADATA"]);
+
+function quotedIdentifier(name) {
+  requireEffect(
+    typeof name === "string" && !name.includes("\0"),
+    "snapshot-identifier",
+  );
+  return `"${name.replaceAll('"', '""')}"`;
+}
+
+function canonicalSqlValue(value) {
+  if (value === null) return ["null"];
+  if (typeof value === "string") return ["text", value];
+  if (typeof value === "number") {
+    requireEffect(Number.isFinite(value), "snapshot-nonfinite-number");
+    // D1 exposes SQLite INTEGER through JS numbers. Above 2^53 distinct
+    // stored integers can already have collapsed to one value on readback.
+    requireEffect(
+      !Number.isInteger(value) || Number.isSafeInteger(value),
+      "snapshot-unsafe-integer",
+    );
+    return ["number", Object.is(value, -0) ? "-0" : String(value)];
+  }
+  if (typeof value === "bigint") return ["integer", value.toString()];
+  if (typeof value === "boolean") return ["boolean", value];
+  if (value instanceof ArrayBuffer) {
+    return ["blob", Buffer.from(value).toString("base64")];
+  }
+  if (ArrayBuffer.isView(value)) {
+    return [
+      "blob",
+      Buffer.from(value.buffer, value.byteOffset, value.byteLength).toString(
+        "base64",
+      ),
+    ];
+  }
+  if (
+    Array.isArray(value) &&
+    value.every((byte) => Number.isInteger(byte) && byte >= 0 && byte <= 255)
+  ) {
+    return ["blob", Buffer.from(value).toString("base64")];
+  }
+  requireEffect(false, "snapshot-unsupported-sql-value");
+}
+
+function canonicalRows(rows, columns) {
+  const names = columns.map((column) => column.name).sort();
+  return rows
+    .map((row) => {
+      requireEffect(
+        row &&
+          typeof row === "object" &&
+          !Array.isArray(row) &&
+          JSON.stringify(Object.keys(row).sort()) === JSON.stringify(names),
+        "snapshot-row-columns",
+      );
+      return JSON.stringify(
+        names.map((name) => [name, canonicalSqlValue(row[name])]),
+      );
+    })
+    .sort();
+}
+
+function metadataJson(value) {
+  return JSON.stringify(value, (_key, item) =>
+    typeof item === "bigint" ? ["integer", item.toString()] : item,
+  );
+}
+
+async function queryRows(db, sql) {
+  const result = await db.prepare(sql).all();
+  requireEffect(Array.isArray(result?.results), "snapshot-query-result");
+  return result.results;
+}
+
+/** All application-table rows, including duplicates, plus SQLite sequence state. */
+export async function dataSnapshot(
   db,
   includeSessions = true,
   normalizeLoginTimestamp = false,
 ) {
-  const queries = {
-    actors: "SELECT * FROM actors ORDER BY ap_id",
-    sessions: "SELECT * FROM sessions ORDER BY id",
-    posts: "SELECT * FROM objects ORDER BY ap_id",
-    media: "SELECT * FROM media_uploads ORDER BY id",
-    activities: "SELECT * FROM activities ORDER BY ap_id",
-    schema:
-      "SELECT type, name, tbl_name, sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name",
-  };
-  const rows = {};
-  for (const [name, sql] of Object.entries(queries)) {
-    if (name === "sessions" && !includeSessions) continue;
-    rows[name] = (await db.prepare(sql).all()).results;
-  }
+  const schema = await queryRows(
+    db,
+    "SELECT type, name, tbl_name, sql FROM sqlite_master ORDER BY type, name",
+  );
+  const tableNames = schema
+    .filter((entry) => entry.type === "table")
+    .map((entry) => entry.name)
+    .sort();
+  requireEffect(
+    tableNames.every((name) => typeof name === "string") &&
+      new Set(tableNames).size === tableNames.length,
+    "snapshot-table-list",
+  );
+  const runtimeOwnedExcludedTables = tableNames.filter((name) =>
+    RUNTIME_OWNED_ROW_EXCLUSIONS.has(name),
+  );
+  const applicationTables = tableNames.filter(
+    (name) => !RUNTIME_OWNED_ROW_EXCLUSIONS.has(name),
+  );
+  const rowTables = applicationTables.filter(
+    (name) => includeSessions || name !== "sessions",
+  );
+  const rows = [];
+  const relationships = [];
   let actorUpdatedAt;
-  if (normalizeLoginTimestamp) {
-    requireEffect(rows.actors.length === 1, "oidc-exact-one-product-actor");
-    actorUpdatedAt = rows.actors[0].updated_at;
-    actorTimestamp(actorUpdatedAt);
-    // Core's existing-subject login updates this one field through Drizzle.
-    // Full clone equality above uses the unnormalized snapshot.
-    rows.actors[0] = { ...rows.actors[0], updated_at: "login-timestamp" };
+  for (const table of applicationTables) {
+    const identifier = quotedIdentifier(table);
+    const columns = await queryRows(db, `PRAGMA table_xinfo(${identifier})`);
+    const selectedColumns = columns.filter(
+      (column) => column.hidden !== 1 && column.hidden !== 1n,
+    );
+    requireEffect(selectedColumns.length > 0, "snapshot-table-without-columns");
+    const foreignKeys = await queryRows(
+      db,
+      `PRAGMA foreign_key_list(${identifier})`,
+    );
+    const violations = await queryRows(
+      db,
+      `PRAGMA foreign_key_check(${identifier})`,
+    );
+    requireEffect(violations.length === 0, "snapshot-foreign-key-violation");
+    relationships.push({ table, columns, foreignKeys });
+    if (!rowTables.includes(table)) continue;
+    const tableRows = await queryRows(
+      db,
+      `SELECT ${selectedColumns.map((column) => quotedIdentifier(column.name)).join(", ")} FROM ${identifier}`,
+    );
+    if (normalizeLoginTimestamp && table === "actors") {
+      requireEffect(tableRows.length === 1, "oidc-exact-one-product-actor");
+      actorUpdatedAt = tableRows[0].updated_at;
+      actorTimestamp(actorUpdatedAt);
+      // Only this known Core login write is normalized; every other value and
+      // every other application table remains in the fingerprint.
+      tableRows[0] = { ...tableRows[0], updated_at: "login-timestamp" };
+    }
+    const canonical = canonicalRows(tableRows, selectedColumns);
+    rows.push({
+      table,
+      count: canonical.length,
+      rowsSha256: sha256(Buffer.from(JSON.stringify(canonical))),
+    });
   }
-  const { schema, ...data } = rows;
+  requireEffect(
+    !normalizeLoginTimestamp || actorUpdatedAt !== undefined,
+    "oidc-actor-table-missing",
+  );
+  const counts = Object.fromEntries(
+    rows.map((entry) => [entry.table, entry.count]),
+  );
   return {
     schemaSha256: sha256(Buffer.from(JSON.stringify(schema))),
-    dataSha256: sha256(Buffer.from(JSON.stringify(data))),
-    counts: Object.fromEntries(
-      Object.entries(data).map(([name, table]) => [name, table.length]),
-    ),
+    relationshipsSha256: sha256(Buffer.from(metadataJson(relationships))),
+    dataSha256: sha256(Buffer.from(JSON.stringify(rows))),
+    counts,
+    tableCoverage: {
+      applicationTableCount: applicationTables.filter(
+        (name) => name !== "sqlite_sequence",
+      ).length,
+      snapshottedTables: rowTables,
+      runtimeOwnedExcludedTables,
+      sqliteSequencePresent: tableNames.includes("sqlite_sequence"),
+      excludedFromRowComparison: includeSessions ? [] : ["sessions"],
+      normalizedColumns: normalizeLoginTimestamp ? ["actors.updated_at"] : [],
+      canonicalization:
+        "all visible/generated columns; typed SQL values; sorted complete rows with duplicates retained",
+      foreignKeyViolationCount: 0,
+    },
     ...(normalizeLoginTimestamp ? { actorUpdatedAt } : {}),
   };
 }
@@ -607,8 +740,8 @@ async function createFixture(handles, issuer) {
   requireEffect(
     snapshot.counts.actors === 1 &&
       snapshot.counts.sessions === 1 &&
-      snapshot.counts.posts === 1 &&
-      snapshot.counts.media === 1 &&
+      snapshot.counts.objects === 1 &&
+      snapshot.counts.media_uploads === 1 &&
       snapshot.counts.activities === 1,
     "fixture-d1-row-counts",
   );
@@ -688,8 +821,8 @@ export async function qualifyStorageRestore({
     requireEffect(
       preFixture.counts.actors === 0 &&
         preFixture.counts.sessions === 0 &&
-        preFixture.counts.posts === 0 &&
-        preFixture.counts.media === 0,
+        preFixture.counts.objects === 0 &&
+        preFixture.counts.media_uploads === 0,
       "fresh-schema-empty",
     );
     const fixture = await createFixture(first, issuer);
@@ -927,6 +1060,10 @@ export async function qualifyStorageRestore({
       clonedStores: copied.inventory,
       schemaFingerprintSha256: fixture.snapshot.schemaSha256,
       dataFingerprintSha256: fixture.snapshot.dataSha256,
+      tableCoverage: {
+        ...fixture.snapshot.tableCoverage,
+        rowCounts: fixture.snapshot.counts,
+      },
       externalWorkerFetches: {
         policy: issuer
           ? "local-synthetic-oidc-endpoints-only"

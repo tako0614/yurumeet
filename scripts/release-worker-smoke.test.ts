@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Database } from "bun:sqlite";
 import { build, stop } from "esbuild";
 
 import { createEntrySource } from "./build-takos-worker.ts";
@@ -10,6 +11,7 @@ import { PRODUCT_WIRE_IDENTITY } from "../src/product-identity.ts";
 import {
   assertClosedStoreInventoriesEqual,
   cloneClosedStores,
+  dataSnapshot,
   inventoryClosedStores,
 } from "./release-storage-restore.mjs";
 
@@ -190,6 +192,218 @@ describe("closed snapshot inventory validation", () => {
   });
 });
 
+async function applicationDatabaseFixture() {
+  const bundle = await Bun.file(
+    join(repo, "deploy/takoform/migrations/schema-bundle.json"),
+  ).json();
+  const initial = bundle.entries.find(
+    (entry: { name: string }) => entry.name === "0001_init.sql",
+  );
+  expect(initial).toBeDefined();
+  const database = new Database(":memory:");
+  database.exec(initial.sql);
+  database.exec("PRAGMA foreign_keys = ON");
+  const adapter = {
+    prepare(sql: string) {
+      return {
+        async all() {
+          return { results: database.query(sql).all() };
+        },
+      };
+    },
+  };
+  return { database, adapter };
+}
+
+function sqliteAdapter(database: Database) {
+  return {
+    prepare(sql: string) {
+      return {
+        async all() {
+          return { results: database.query(sql).all() };
+        },
+      };
+    },
+  };
+}
+
+describe("complete application D1 snapshot", () => {
+  test("detects a real delivery_queue row missed by the former five-table oracle", async () => {
+    const { database, adapter } = await applicationDatabaseFixture();
+    try {
+      const legacyTables = [
+        "actors",
+        "sessions",
+        "objects",
+        "media_uploads",
+        "activities",
+      ];
+      const oldProjection = () =>
+        legacyTables.map((table) =>
+          database.query(`SELECT * FROM "${table}"`).all(),
+        );
+      const oldBefore = oldProjection();
+      const before = await dataSnapshot(adapter);
+      database.exec(
+        "INSERT INTO delivery_queue (id, activity_ap_id, inbox_url) VALUES ('job-1', 'activity-1', 'https://remote.invalid/inbox')",
+      );
+      const after = await dataSnapshot(adapter);
+      expect(oldProjection()).toEqual(oldBefore);
+      expect(after.schemaSha256).toBe(before.schemaSha256);
+      expect(after.relationshipsSha256).toBe(before.relationshipsSha256);
+      expect(after.dataSha256).not.toBe(before.dataSha256);
+      expect(before.counts.delivery_queue).toBe(0);
+      expect(after.counts.delivery_queue).toBe(1);
+      expect(after.tableCoverage.snapshottedTables).toContain("delivery_queue");
+    } finally {
+      database.close();
+    }
+  });
+
+  test("includes sqlite_sequence even when its application table rows are unchanged", async () => {
+    const { database, adapter } = await applicationDatabaseFixture();
+    try {
+      database.exec(
+        "CREATE TABLE restore_sequence_probe (id INTEGER PRIMARY KEY AUTOINCREMENT, value TEXT)",
+      );
+      database.exec(
+        "INSERT INTO restore_sequence_probe (value) VALUES ('kept')",
+      );
+      const before = await dataSnapshot(adapter);
+      database.exec(
+        "UPDATE sqlite_sequence SET seq = seq + 1 WHERE name = 'restore_sequence_probe'",
+      );
+      const after = await dataSnapshot(adapter);
+      expect(before.tableCoverage.sqliteSequencePresent).toBe(true);
+      expect(before.counts.sqlite_sequence).toBe(1);
+      expect(after.schemaSha256).toBe(before.schemaSha256);
+      expect(after.counts).toEqual(before.counts);
+      expect(after.dataSha256).not.toBe(before.dataSha256);
+    } finally {
+      database.close();
+    }
+  });
+
+  test("ignores row order while preserving duplicate multiplicity", async () => {
+    const { database, adapter } = await applicationDatabaseFixture();
+    try {
+      database.exec("CREATE TABLE restore_duplicate_probe (value TEXT)");
+      database.exec(
+        "INSERT INTO restore_duplicate_probe (value) VALUES ('a'), ('a'), ('b')",
+      );
+      const before = await dataSnapshot(adapter);
+      database.exec("DELETE FROM restore_duplicate_probe");
+      database.exec(
+        "INSERT INTO restore_duplicate_probe (value) VALUES ('b'), ('a'), ('a')",
+      );
+      const reordered = await dataSnapshot(adapter);
+      expect(reordered.dataSha256).toBe(before.dataSha256);
+      database.exec("INSERT INTO restore_duplicate_probe (value) VALUES ('a')");
+      const additional = await dataSnapshot(adapter);
+      expect(additional.dataSha256).not.toBe(before.dataSha256);
+      expect(additional.counts.restore_duplicate_probe).toBe(4);
+    } finally {
+      database.close();
+    }
+  });
+
+  test("refuses lossy 64-bit integer readback while preserving distinct bigint values", async () => {
+    const lossy = new Database(":memory:", { safeIntegers: false });
+    const exact = new Database(":memory:", { safeIntegers: true });
+    try {
+      for (const database of [lossy, exact]) {
+        database.exec("CREATE TABLE restore_integer_probe (value INTEGER)");
+        database.exec(
+          "INSERT INTO restore_integer_probe (value) VALUES (9007199254740992)",
+        );
+      }
+      await expect(dataSnapshot(sqliteAdapter(lossy))).rejects.toThrow(
+        "snapshot-unsafe-integer",
+      );
+      const before = await dataSnapshot(sqliteAdapter(exact));
+      exact.exec("UPDATE restore_integer_probe SET value = 9007199254740993");
+      const after = await dataSnapshot(sqliteAdapter(exact));
+      expect(after.schemaSha256).toBe(before.schemaSha256);
+      expect(after.dataSha256).not.toBe(before.dataSha256);
+    } finally {
+      lossy.close();
+      exact.close();
+    }
+  });
+
+  test("OIDC normalization hides only sessions and the fixture actor login timestamp", async () => {
+    const { database, adapter } = await applicationDatabaseFixture();
+    try {
+      database.exec(`INSERT INTO actors (
+        ap_id, preferred_username, inbox, outbox, followers_url,
+        following_url, public_key_pem, private_key_pem, updated_at
+      ) VALUES (
+        'actor', 'actor', 'inbox', 'outbox', 'followers',
+        'following', 'public', 'private', '2026-10-06 19:00:00.000'
+      )`);
+      database.exec(`INSERT INTO sessions
+        (id, member_id, access_token, expires_at)
+        VALUES ('first', 'actor', 'access-first', '2099-01-01')`);
+      const before = await dataSnapshot(adapter, false, true);
+      database.exec(
+        "UPDATE actors SET updated_at = '2026-10-06 19:00:01.000' WHERE ap_id = 'actor'",
+      );
+      database.exec("DELETE FROM sessions");
+      database.exec(`INSERT INTO sessions
+        (id, member_id, access_token, expires_at)
+        VALUES ('second', 'actor', 'access-second', '2099-01-01')`);
+      const afterLogin = await dataSnapshot(adapter, false, true);
+      expect(afterLogin.dataSha256).toBe(before.dataSha256);
+      expect(afterLogin.actorUpdatedAt).not.toBe(before.actorUpdatedAt);
+      expect(afterLogin.tableCoverage.excludedFromRowComparison).toEqual([
+        "sessions",
+      ]);
+      expect(afterLogin.tableCoverage.normalizedColumns).toEqual([
+        "actors.updated_at",
+      ]);
+      database.exec(
+        "UPDATE actors SET name = 'unexpected' WHERE ap_id = 'actor'",
+      );
+      const unrelatedChange = await dataSnapshot(adapter, false, true);
+      expect(unrelatedChange.dataSha256).not.toBe(before.dataSha256);
+    } finally {
+      database.close();
+    }
+  });
+
+  test("refuses an orphaned foreign key and an unreadable unknown application table", async () => {
+    const { database, adapter } = await applicationDatabaseFixture();
+    try {
+      database.exec("CREATE TABLE restore_fk_parent (id TEXT PRIMARY KEY)");
+      database.exec(
+        "CREATE TABLE restore_fk_child (id TEXT PRIMARY KEY, parent_id TEXT REFERENCES restore_fk_parent(id))",
+      );
+      database.exec("PRAGMA foreign_keys = OFF");
+      database.exec(
+        "INSERT INTO restore_fk_child (id, parent_id) VALUES ('child', 'missing')",
+      );
+      await expect(dataSnapshot(adapter)).rejects.toThrow(
+        "snapshot-foreign-key-violation",
+      );
+      database.exec("DELETE FROM restore_fk_child");
+      database.exec("CREATE TABLE unknown_app_table (value TEXT)");
+      const unreadable = {
+        prepare(sql: string) {
+          if (sql.includes('FROM "unknown_app_table"')) {
+            throw new Error("unknown application table query denied");
+          }
+          return adapter.prepare(sql);
+        },
+      };
+      await expect(dataSnapshot(unreadable)).rejects.toThrow(
+        "unknown application table query denied",
+      );
+    } finally {
+      database.close();
+    }
+  });
+});
+
 function httpHealthyArtifact() {
   return `
 export default {
@@ -306,6 +520,17 @@ describe("release Worker smoke", () => {
           .update(await Bun.file(artifactPath).bytes())
           .digest("hex")}`,
         migrationCount: 29,
+        tableCoverage: {
+          applicationTableCount: expect.any(Number),
+          snapshottedTables: expect.arrayContaining([
+            "actors",
+            "sessions",
+            "delivery_queue",
+          ]),
+          runtimeOwnedExcludedTables: ["_cf_METADATA"],
+          normalizedColumns: [],
+          foreignKeyViolationCount: 0,
+        },
         checks: [
           "fixture-auth-post-media",
           "kv-origin-pin",
@@ -327,6 +552,17 @@ describe("release Worker smoke", () => {
           .update(await Bun.file(artifactPath).bytes())
           .digest("hex")}`,
         migrationCount: 29,
+        tableCoverage: {
+          applicationTableCount: expect.any(Number),
+          snapshottedTables: expect.arrayContaining([
+            "actors",
+            "sessions",
+            "delivery_queue",
+          ]),
+          runtimeOwnedExcludedTables: ["_cf_METADATA"],
+          normalizedColumns: [],
+          foreignKeyViolationCount: 0,
+        },
         checks: [
           "fixture-auth-post-media",
           "kv-origin-pin",
