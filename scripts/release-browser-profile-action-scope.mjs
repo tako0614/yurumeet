@@ -202,6 +202,269 @@ async function waitProfile(page, persona) {
     .waitFor({ state: "visible", timeout: 10_000 });
 }
 
+function safeErrorName(error) {
+  const name = error?.name;
+  return [
+    "Error",
+    "TypeError",
+    "ReferenceError",
+    "SyntaxError",
+    "RangeError",
+    "TimeoutError",
+    "AbortError",
+    "NetworkError",
+  ].includes(name)
+    ? name
+    : "OtherError";
+}
+
+function boundedRetryAfter(value) {
+  if (typeof value !== "string" || value.length > 64) return null;
+  if (/^\d{1,3}$/.test(value)) {
+    const seconds = Number(value);
+    return seconds >= 0 && seconds <= 120 ? seconds : null;
+  }
+  const date = Date.parse(value);
+  if (!Number.isFinite(date)) return null;
+  const seconds = Math.ceil((date - Date.now()) / 1_000);
+  return seconds >= 0 && seconds <= 120 ? seconds : null;
+}
+
+function observeFirstProfileNavigation(page, origin, persona) {
+  const actorPath = new URL(
+    `${origin}/api/actors/${encodeURIComponent(persona.apId)}`,
+  ).pathname;
+  const paths = new Map([
+    ["/api/auth/me", "auth"],
+    [actorPath, "actor"],
+    [`${actorPath}/posts`, "posts"],
+  ]);
+  const requests = Object.fromEntries(
+    ["auth", "actor", "posts"].map((kind) => [
+      kind,
+      { started: 0, failed: 0, responses: [], omittedResponses: 0 },
+    ]),
+  );
+  const startedAt = new WeakMap();
+  const pageErrors = [];
+  let omittedPageErrors = 0;
+  const requestKind = (request) => {
+    if (request.method() !== "GET") return null;
+    try {
+      const url = new URL(request.url());
+      return url.origin === origin ? (paths.get(url.pathname) ?? null) : null;
+    } catch {
+      return null;
+    }
+  };
+  const onRequest = (request) => {
+    try {
+      const kind = requestKind(request);
+      if (!kind) return;
+      requests[kind].started++;
+      startedAt.set(request, performance.now());
+    } catch {
+      // A passive observer must not change the browser journey.
+    }
+  };
+  const onResponse = (response) => {
+    try {
+      const request = response.request();
+      const kind = requestKind(request);
+      if (!kind) return;
+      const observed = requests[kind];
+      if (observed.responses.length >= 6) {
+        observed.omittedResponses++;
+        return;
+      }
+      const start = startedAt.get(request);
+      const elapsedMs =
+        start === undefined ? null : Math.round(performance.now() - start);
+      const headers = response.headers();
+      observed.responses.push({
+        status: response.status(),
+        elapsedMs:
+          elapsedMs !== null && elapsedMs >= 0 && elapsedMs <= 120_000
+            ? elapsedMs
+            : null,
+        retryAfterSeconds: boundedRetryAfter(headers["retry-after"]),
+      });
+    } catch {
+      // A passive observer must not change the browser journey.
+    }
+  };
+  const onRequestFailed = (request) => {
+    try {
+      const kind = requestKind(request);
+      if (kind) requests[kind].failed++;
+    } catch {
+      // A passive observer must not change the browser journey.
+    }
+  };
+  const onPageError = (error) => {
+    try {
+      if (pageErrors.length >= 4) {
+        omittedPageErrors++;
+        return;
+      }
+      pageErrors.push({
+        name: safeErrorName(error),
+        messageSha256: sha256(String(error?.message ?? error)),
+      });
+    } catch {
+      // A passive observer must not change the browser journey.
+    }
+  };
+  page.on("request", onRequest);
+  page.on("response", onResponse);
+  page.on("requestfailed", onRequestFailed);
+  page.on("pageerror", onPageError);
+  return {
+    snapshot: () => ({ requests, pageErrors, omittedPageErrors }),
+    dispose: () => {
+      page.off("request", onRequest);
+      page.off("response", onResponse);
+      page.off("requestfailed", onRequestFailed);
+      page.off("pageerror", onPageError);
+    },
+  };
+}
+
+async function optionalDiagnosticRead(read) {
+  try {
+    return await bounded(
+      Promise.resolve().then(read),
+      "diagnostic read",
+      1_500,
+    );
+  } catch {
+    return null;
+  }
+}
+
+async function firstProfileNavigationDiagnostic({
+  page,
+  db,
+  origin,
+  actorApId,
+  persona,
+  sessionBefore,
+  observer,
+  phase,
+  error,
+}) {
+  const expectedPath = new URL(profilePath(origin, persona.apId)).pathname;
+  let currentPathHash = null;
+  let routeKind = "unknown";
+  try {
+    const current = new URL(page.url());
+    currentPathHash = sha256(current.pathname);
+    routeKind =
+      current.origin !== origin
+        ? "other-origin"
+        : current.pathname === expectedPath
+          ? "expected-a-profile"
+          : current.pathname.startsWith("/profile/")
+            ? "other-profile"
+            : current.pathname === "/"
+              ? "root"
+              : "other-path";
+  } catch {
+    // The browser may already have closed; omit its path.
+  }
+  const [ui, cache, sessionAfter] = await Promise.all([
+    optionalDiagnosticRead(() =>
+      page.evaluate((name) => {
+        const visible = (element) =>
+          Boolean(element && element.getClientRects().length > 0);
+        const textVisible = (selector, text) =>
+          Array.from(document.querySelectorAll(selector)).some(
+            (element) =>
+              visible(element) && element.textContent?.trim() === text,
+          );
+        return {
+          targetNameVisible: Array.from(
+            document.querySelectorAll(".p-profile-name"),
+          ).some(
+            (element) =>
+              visible(element) && element.textContent?.includes(name),
+          ),
+          anotherProfileNameVisible: Array.from(
+            document.querySelectorAll(".p-profile-name"),
+          ).some(visible),
+          profileLoadErrorVisible: textVisible(
+            ".p-timeline-state p",
+            "プロフィールを読み込めませんでした",
+          ),
+          connectionErrorVisible: textVisible(".p-connect h1", "接続エラー"),
+          loginVisible: Array.from(
+            document.querySelectorAll('input[type="password"]'),
+          ).some(visible),
+          bootVisible: Array.from(document.querySelectorAll(".yc-boot")).some(
+            visible,
+          ),
+        };
+      }, persona.name),
+    ),
+    optionalDiagnosticRead(async () => {
+      const started = performance.now();
+      const row = await first(
+        db,
+        "SELECT ap_id, name, preferred_username FROM actor_cache WHERE ap_id = ?",
+        persona.apId,
+      );
+      return {
+        exactRowCount: row ? 1 : 0,
+        apIdMatches: row ? row.ap_id === persona.apId : null,
+        nameMatches: row ? row.name === persona.name : null,
+        preferredUsernameMatches: row
+          ? row.preferred_username ===
+            new URL(persona.apId).pathname.split("/").at(-1)
+          : null,
+        apIdSha256: row?.ap_id ? sha256(row.ap_id) : null,
+        nameSha256: row?.name ? sha256(row.name) : null,
+        readElapsedMs: Math.round(performance.now() - started),
+      };
+    }),
+    optionalDiagnosticRead(async () => ({
+      cookie: (await page.context().cookies(origin)).find(
+        (candidate) => candidate.name === "session",
+      )?.value,
+      rows: await rootSessionRows(db, actorApId),
+    })),
+  ]);
+  return {
+    kind: "yurumeet.profile-action-first-a-navigation-diagnostic@v1",
+    phase,
+    failureName: safeErrorName(error),
+    failureMessageSha256: sha256(String(error?.message ?? error)),
+    targetApIdSha256: sha256(persona.apId),
+    principalApIdSha256: sha256(actorApId),
+    routeKind,
+    currentPathSha256: currentPathHash,
+    ui,
+    cache,
+    session: {
+      beforeAvailable: sessionBefore !== null,
+      afterAvailable: sessionAfter !== null,
+      cookiePresentBefore: sessionBefore ? Boolean(sessionBefore.cookie) : null,
+      cookiePresentAfter: sessionAfter ? Boolean(sessionAfter.cookie) : null,
+      sameCookie:
+        sessionBefore?.cookie && sessionAfter?.cookie
+          ? sessionBefore.cookie === sessionAfter.cookie
+          : null,
+      sameRootSessionRows:
+        sessionBefore && sessionAfter
+          ? JSON.stringify(sessionBefore.rows) ===
+            JSON.stringify(sessionAfter.rows)
+          : null,
+      rootSessionCountBefore: sessionBefore?.rows.length ?? null,
+      rootSessionCountAfter: sessionAfter?.rows.length ?? null,
+    },
+    ...observer.snapshot(),
+  };
+}
+
 async function spaNavigate(page, path) {
   const marker = crypto.randomUUID();
   await page.evaluate(
@@ -484,11 +747,57 @@ async function laneMuteRouteSwitch({
   const b = await cachePersona(db, `action_mute_b_${token}`);
   const path = `${origin}/api/actors/me/muted`;
   await installProbe(page, "POST", path);
-  await page.goto(profilePath(origin, a.apId), {
-    waitUntil: "domcontentloaded",
-    timeout: 20_000,
-  });
-  await waitProfile(page, a);
+  if (mode === "switch") {
+    const sessionBefore = await optionalDiagnosticRead(async () => ({
+      cookie: (await page.context().cookies(origin)).find(
+        (candidate) => candidate.name === "session",
+      )?.value,
+      rows: await rootSessionRows(db, actorApId),
+    }));
+    const observer = observeFirstProfileNavigation(page, origin, a);
+    let phase = "goto";
+    try {
+      await page.goto(profilePath(origin, a.apId), {
+        waitUntil: "domcontentloaded",
+        timeout: 20_000,
+      });
+      phase = "wait-profile";
+      await waitProfile(page, a);
+    } catch (error) {
+      try {
+        process.stderr.write(
+          `${JSON.stringify(
+            await firstProfileNavigationDiagnostic({
+              page,
+              db,
+              origin,
+              actorApId,
+              persona: a,
+              sessionBefore,
+              observer,
+              phase,
+              error,
+            }),
+          )}\n`,
+        );
+      } catch {
+        // Diagnostic failure must not replace the original browser failure.
+      }
+      throw error;
+    } finally {
+      try {
+        observer.dispose();
+      } catch {
+        // Teardown of diagnostic listeners must not change the smoke verdict.
+      }
+    }
+  } else {
+    await page.goto(profilePath(origin, a.apId), {
+      waitUntil: "domcontentloaded",
+      timeout: 20_000,
+    });
+    await waitProfile(page, a);
+  }
   const held = await holdCommittedResponse(page, "POST", path, a.apId, 200);
   let primary;
   try {
