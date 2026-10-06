@@ -16,6 +16,16 @@ tables. The native runtime's explicitly named private metadata table is excluded
 from row and foreign-key reads and reported separately. Application migration
 ledgers, when present, receive the same comparison as other application tables.
 
+When the adapter supports native D1 batches, the snapshot groups its read-only
+statements in chunks of at most 50. Schema discovery, table metadata and row
+reads remain separate phases. Each batch must return an ordered, complete set of
+successful results; failed or malformed batches refuse the snapshot without a
+serial retry. Adapters without batch support retain serial reads. The row,
+schema and relationship fingerprints are identical for both paths. This reduces
+native calls while preserving the existing child deadlines and comparison
+coverage. It does not make the separate phases atomic; the disposable fixture
+must be quiescent during comparison.
+
 Schema definitions, foreign-key relationships, per-table foreign-key integrity
 and sqlite_sequence state accompany the row fingerprint. The successful restore
 manifest reports table coverage and counts without exposing row contents, keys,

@@ -26,10 +26,14 @@ export declare function cloneClosedStores(
   expectedInventory: ClosedStores,
 ): { paths: StorePaths; inventory: ClosedStores };
 
+export type SnapshotResult = { results: unknown[]; success?: boolean };
+export type SnapshotBatchResult = SnapshotResult & { success: true };
+export type SnapshotStatement = {
+  all(): Promise<SnapshotResult>;
+};
 export type SnapshotDb = {
-  prepare(sql: string): {
-    all(): Promise<{ results: unknown[] }>;
-  };
+  prepare(sql: string): SnapshotStatement;
+  batch?(statements: SnapshotStatement[]): Promise<SnapshotBatchResult[]>;
 };
 
 export type SnapshotTableCoverage = {

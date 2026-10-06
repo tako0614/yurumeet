@@ -14,6 +14,10 @@ import {
   dataSnapshot,
   inventoryClosedStores,
 } from "./release-storage-restore.mjs";
+import type {
+  SnapshotBatchResult,
+  SnapshotStatement,
+} from "./release-storage-restore.mjs";
 
 const repo = new URL("../", import.meta.url).pathname;
 const temporaryDirectories: string[] = [];
@@ -192,7 +196,7 @@ describe("closed snapshot inventory validation", () => {
   });
 });
 
-async function applicationDatabaseFixture() {
+async function applicationDatabaseFixture(complete = false) {
   const bundle = await Bun.file(
     join(repo, "deploy/takoform/migrations/schema-bundle.json"),
   ).json();
@@ -203,6 +207,11 @@ async function applicationDatabaseFixture() {
   const database = new Database(":memory:");
   database.exec(initial.sql);
   database.exec("PRAGMA foreign_keys = ON");
+  if (complete) {
+    for (const entry of bundle.entries.slice(1)) {
+      database.transaction(() => database.exec(entry.sql)).immediate();
+    }
+  }
   const adapter = {
     prepare(sql: string) {
       return {
@@ -227,7 +236,123 @@ function sqliteAdapter(database: Database) {
   };
 }
 
+function countedBatchedSqliteAdapter(database: Database) {
+  const calls = { batches: 0, maximumStatements: 0, serial: 0 };
+  const sqlByStatement = new WeakMap<SnapshotStatement, string>();
+  return {
+    calls,
+    prepare(sql: string) {
+      const statement = {
+        async all() {
+          calls.serial++;
+          return { results: database.query(sql).all() };
+        },
+      };
+      sqlByStatement.set(statement, sql);
+      return statement;
+    },
+    async batch(statements: SnapshotStatement[]) {
+      calls.batches++;
+      calls.maximumStatements = Math.max(
+        calls.maximumStatements,
+        statements.length,
+      );
+      return statements.map((statement) => {
+        const sql = sqlByStatement.get(statement);
+        if (sql === undefined) throw new Error("unknown snapshot statement");
+        expect(sql).toMatch(/^(?:SELECT\b|PRAGMA\b)/u);
+        return { success: true as const, results: database.query(sql).all() };
+      });
+    },
+  };
+}
+
 describe("complete application D1 snapshot", () => {
+  test("batches the complete 29-migration schema with serial-equivalent fingerprints and bounded calls", async () => {
+    const { database, adapter } = await applicationDatabaseFixture(true);
+    try {
+      database.exec("CREATE TABLE restore_batch_probe (value BLOB)");
+      database.exec(
+        "INSERT INTO restore_batch_probe (value) VALUES (X'00FF'), (X'00FF')",
+      );
+      const serial = await dataSnapshot(adapter);
+      const counted = countedBatchedSqliteAdapter(database);
+      const batched = await dataSnapshot(counted);
+      expect(batched).toEqual(serial);
+      expect(batched.counts.restore_batch_probe).toBe(2);
+      expect(batched.tableCoverage.applicationTableCount).toBeGreaterThan(40);
+      expect(counted.calls.batches).toBeLessThanOrEqual(10);
+      expect(counted.calls.maximumStatements).toBeLessThanOrEqual(50);
+      expect(counted.calls.serial).toBe(0);
+    } finally {
+      database.close();
+    }
+  });
+
+  test("refuses truncated, unsuccessful, malformed and thrown batches without serial fallback", async () => {
+    const { database } = await applicationDatabaseFixture();
+    try {
+      const validSchemaRows = database
+        .query(
+          "SELECT type, name, tbl_name, sql FROM sqlite_master ORDER BY type, name",
+        )
+        .all();
+      const corruptBatches: Array<() => unknown> = [
+        () => [],
+        () => [{ success: false, results: [] }],
+        () => [{ success: true, results: null }],
+        () => [{ results: validSchemaRows }],
+        () => [{ success: null, results: validSchemaRows }],
+        () => [{ success: 0, results: validSchemaRows }],
+        () => [{ success: "false", results: validSchemaRows }],
+      ];
+      for (const corrupt of corruptBatches) {
+        const counted = countedBatchedSqliteAdapter(database);
+        const broken = {
+          prepare: counted.prepare,
+          async batch(
+            _statements: Array<{ all(): Promise<{ results: unknown[] }> }>,
+          ) {
+            counted.calls.batches++;
+            // Deliberately violate the native result contract to test runtime
+            // rejection independently of TypeScript's adapter declaration.
+            return corrupt() as SnapshotBatchResult[];
+          },
+        };
+        await expect(dataSnapshot(broken)).rejects.toThrow();
+        expect(counted.calls.serial).toBe(0);
+      }
+      const late = countedBatchedSqliteAdapter(database);
+      const latePartial = {
+        prepare: late.prepare,
+        async batch(
+          statements: Array<{ all(): Promise<{ results: unknown[] }> }>,
+        ) {
+          const results = await late.batch(statements);
+          return late.calls.batches === 2 ? results.slice(0, -1) : results;
+        },
+      };
+      await expect(dataSnapshot(latePartial)).rejects.toThrow(
+        "snapshot-batch-result-count",
+      );
+      expect(late.calls.batches).toBe(2);
+      expect(late.calls.serial).toBe(0);
+      const counted = countedBatchedSqliteAdapter(database);
+      const thrown = {
+        prepare: counted.prepare,
+        async batch(
+          _statements: Array<{ all(): Promise<{ results: unknown[] }> }>,
+        ) {
+          throw new Error("native batch failed");
+        },
+      };
+      await expect(dataSnapshot(thrown)).rejects.toThrow("native batch failed");
+      expect(counted.calls.serial).toBe(0);
+    } finally {
+      database.close();
+    }
+  });
+
   test("detects a real delivery_queue row missed by the former five-table oracle", async () => {
     const { database, adapter } = await applicationDatabaseFixture();
     try {

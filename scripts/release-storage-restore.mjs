@@ -419,10 +419,46 @@ function metadataJson(value) {
   );
 }
 
-async function queryRows(db, sql) {
-  const result = await db.prepare(sql).all();
-  requireEffect(Array.isArray(result?.results), "snapshot-query-result");
-  return result.results;
+const SNAPSHOT_BATCH_SIZE = 50;
+
+async function queryRowSets(db, statements) {
+  const rowSets = [];
+  const nativeBatch = typeof db.batch === "function";
+  for (let start = 0; start < statements.length; start += SNAPSHOT_BATCH_SIZE) {
+    const chunk = statements.slice(start, start + SNAPSHOT_BATCH_SIZE);
+    // All statements are constructed locally from SELECT or read-only PRAGMA
+    // and quoted schema identifiers. A failed native batch must propagate;
+    // retrying it serially could hide a partial or changed snapshot.
+    requireEffect(
+      chunk.every((sql) =>
+        /^(?:SELECT\b|PRAGMA (?:table_xinfo|foreign_key_list|foreign_key_check)\b)/u.test(
+          sql,
+        ),
+      ),
+      "snapshot-non-readonly-statement",
+    );
+    let results;
+    if (nativeBatch) {
+      results = await db.batch(chunk.map((sql) => db.prepare(sql)));
+    } else {
+      results = [];
+      for (const sql of chunk) results.push(await db.prepare(sql).all());
+    }
+    requireEffect(
+      Array.isArray(results) && results.length === chunk.length,
+      "snapshot-batch-result-count",
+    );
+    for (const result of results) {
+      requireEffect(
+        result &&
+          (nativeBatch ? result.success === true : result.success !== false) &&
+          Array.isArray(result.results),
+        "snapshot-query-result",
+      );
+      rowSets.push(result.results);
+    }
+  }
+  return rowSets;
 }
 
 /** All application-table rows, including duplicates, plus SQLite sequence state. */
@@ -431,10 +467,9 @@ export async function dataSnapshot(
   includeSessions = true,
   normalizeLoginTimestamp = false,
 ) {
-  const schema = await queryRows(
-    db,
+  const [schema] = await queryRowSets(db, [
     "SELECT type, name, tbl_name, sql FROM sqlite_master ORDER BY type, name",
-  );
+  ]);
   const tableNames = schema
     .filter((entry) => entry.type === "table")
     .map((entry) => entry.name)
@@ -456,28 +491,39 @@ export async function dataSnapshot(
   const rows = [];
   const relationships = [];
   let actorUpdatedAt;
-  for (const table of applicationTables) {
+  const metadataSql = applicationTables.flatMap((table) => {
     const identifier = quotedIdentifier(table);
-    const columns = await queryRows(db, `PRAGMA table_xinfo(${identifier})`);
+    return [
+      `PRAGMA table_xinfo(${identifier})`,
+      `PRAGMA foreign_key_list(${identifier})`,
+      `PRAGMA foreign_key_check(${identifier})`,
+    ];
+  });
+  const metadata = await queryRowSets(db, metadataSql);
+  const columnsByTable = new Map();
+  for (const [index, table] of applicationTables.entries()) {
+    const columns = metadata[index * 3];
     const selectedColumns = columns.filter(
       (column) => column.hidden !== 1 && column.hidden !== 1n,
     );
     requireEffect(selectedColumns.length > 0, "snapshot-table-without-columns");
-    const foreignKeys = await queryRows(
-      db,
-      `PRAGMA foreign_key_list(${identifier})`,
-    );
-    const violations = await queryRows(
-      db,
-      `PRAGMA foreign_key_check(${identifier})`,
-    );
+    const foreignKeys = metadata[index * 3 + 1];
+    const violations = metadata[index * 3 + 2];
     requireEffect(violations.length === 0, "snapshot-foreign-key-violation");
     relationships.push({ table, columns, foreignKeys });
-    if (!rowTables.includes(table)) continue;
-    const tableRows = await queryRows(
-      db,
-      `SELECT ${selectedColumns.map((column) => quotedIdentifier(column.name)).join(", ")} FROM ${identifier}`,
-    );
+    columnsByTable.set(table, selectedColumns);
+  }
+  const rowSql = rowTables.map(
+    (table) =>
+      `SELECT ${columnsByTable
+        .get(table)
+        .map((column) => quotedIdentifier(column.name))
+        .join(", ")} FROM ${quotedIdentifier(table)}`,
+  );
+  const tableRowSets = await queryRowSets(db, rowSql);
+  for (const [index, table] of rowTables.entries()) {
+    const selectedColumns = columnsByTable.get(table);
+    const tableRows = tableRowSets[index];
     if (normalizeLoginTimestamp && table === "actors") {
       requireEffect(tableRows.length === 1, "oidc-exact-one-product-actor");
       actorUpdatedAt = tableRows[0].updated_at;
