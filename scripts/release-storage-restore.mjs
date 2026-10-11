@@ -314,8 +314,8 @@ async function applySchema(db, repoRoot) {
     bundle.apiVersion === "takosumi.resource-migrations/v1" &&
       bundle.engine === "sqlite" &&
       Array.isArray(bundle.entries) &&
-      bundle.entries.length === 29,
-    "schema-bundle-29",
+      bundle.entries.length === 35,
+    "schema-bundle-35",
   );
   for (const entry of bundle.entries) {
     requireEffect(
@@ -1117,7 +1117,7 @@ export async function qualifyStorageRestore({
         observedBlockedFetches: 0,
       },
       scope:
-        "same current artifact and physical D1/KV/R2 IDs; fresh 29-migration fixture actor, cookie, public Note and PNG; closed-store byte clone and reopen; no public v0.1.2 upgrade, real OIDC/token use or live custody; no product ownership policy inferred from fixture identity count",
+        "same current artifact and physical D1/KV/R2 IDs; fresh 35-migration fixture actor, cookie, public Note and PNG; closed-store byte clone and reopen; no public v0.1.2 upgrade, real OIDC/token use or live custody; no product ownership policy inferred from fixture identity count",
     };
   } catch (error) {
     primaryFailure = true;

@@ -17,6 +17,11 @@ import {
   checkMediaDeletionSchema,
   readWorkerD1Target,
 } from "./check-media-deletion-schema.mjs";
+import {
+  CORE_UPGRADE_MIGRATIONS,
+  CORE_UPGRADE_SCHEMA_QUERY,
+  validateCoreUpgradeQueryResults,
+} from "./core-upgrade-schema.mjs";
 
 const repo = new URL("../", import.meta.url);
 const dbId = "00000000-0000-4000-8000-000000000001";
@@ -476,6 +481,53 @@ const fixtureConfig = JSON.stringify({
   },
 });
 
+// Use the product's checked-in SQL to model the metadata returned by the
+// second, read-only D1 preflight. The isolated deploy never reaches a real D1.
+async function checkedInCoreMetadataRows() {
+  const bundle = JSON.parse(
+    await readFile(
+      new URL(
+        "../deploy/takoform/migrations/schema-bundle.json",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+  ) as { entries: Array<{ name: string; sql: string }> };
+  const db = new Database(":memory:");
+  try {
+    if (
+      bundle.entries.length !== 35 ||
+      bundle.entries[0]?.name !== "0001_init.sql"
+    ) {
+      throw new Error(
+        "entrypoint fixture needs the checked-in 35-migration bundle",
+      );
+    }
+    db.exec(bundle.entries[0].sql);
+    db.exec("PRAGMA foreign_keys = ON");
+    for (const entry of bundle.entries.slice(1)) {
+      db.transaction(() => db.exec(entry.sql)).immediate();
+    }
+    db.exec(
+      "CREATE TABLE IF NOT EXISTS yurucommu_migrations (name TEXT PRIMARY KEY, applied_at TEXT)",
+    );
+    for (const name of CORE_UPGRADE_MIGRATIONS) {
+      if (!bundle.entries.some((entry) => entry.name === name)) {
+        throw new Error(`checked-in schema bundle omits ${name}`);
+      }
+      db.query(
+        "INSERT OR IGNORE INTO yurucommu_migrations (name) VALUES (?)",
+      ).run(name);
+    }
+    const rows = db.query(CORE_UPGRADE_SCHEMA_QUERY).all();
+    validateCoreUpgradeQueryResults([{ success: true, results: rows }]);
+    return rows;
+  } finally {
+    db.close();
+  }
+}
+const coreMetadataRows = await checkedInCoreMetadataRows();
+
 function deployResultFrom(output: string) {
   const markerAt = output.lastIndexOf('"kind": "takos.deploy-result@v1"');
   if (markerAt < 0) throw new Error("deploy result JSON was not printed");
@@ -514,6 +566,8 @@ async function createIsolatedDeployFixture(
     activeDbId?: string;
     malformedVersion?: boolean;
     queryMode?: "valid" | "denied" | "invalid-json" | "missing-schema";
+    coreQueryMode?:
+      "valid" | "denied" | "malformed" | "write-reported" | `missing:${string}`;
     versionPostMode?: "valid" | "denied" | "lost-ack" | "bad-readback";
     deploymentPostMode?: "valid" | "denied" | "lost-ack";
     smokeError?: boolean;
@@ -539,6 +593,7 @@ async function createIsolatedDeployFixture(
   for (const file of [
     "deploy.mjs",
     "check-media-deletion-schema.mjs",
+    "core-upgrade-schema.mjs",
     "release-artifact-manifest.mjs",
     "release-identity.mjs",
     "yurumeet-code-only-provider.mjs",
@@ -655,16 +710,28 @@ globalThis.fetch = async (input, init = {}) => {
   if (path.startsWith(d1Prefix) && path.endsWith("/query") && method === "POST") {
     const databaseId = path.slice(d1Prefix.length, -"/query".length);
     const queryBody = JSON.parse(init.body);
-    log("POST D1 query", { databaseId });
-    if (queryBody.sql !== process.env.SCHEMA_QUERY || /\\b(?:INSERT|UPDATE|DELETE|CREATE|DROP|ALTER)\\b/i.test(queryBody.sql)) {
+    const query = queryBody.sql === process.env.SCHEMA_QUERY ? "media"
+      : queryBody.sql === process.env.CORE_SCHEMA_QUERY ? "core" : "unknown";
+    log("POST D1 query", { databaseId, query });
+    if (query === "unknown" || /\b(?:INSERT|UPDATE|DELETE|CREATE|DROP|ALTER)\b/i.test(queryBody.sql)) {
       return response({ errors: [{ code: 9104 }] }, 400);
     }
-    if (process.env.MUTATE_CONFIG_ON_QUERY === "yes") writeFileSync(process.env.CONFIG_PATH, '{"name":"changed"}\n');
-    if (process.env.QUERY_MODE === "denied") return response({ errors: [{ code: 9100 }] }, 403);
-    if (process.env.QUERY_MODE === "invalid-json") return new Response("not-json", { status: 200 });
-    let rows = JSON.parse(process.env.SCHEMA_ROWS);
-    if (process.env.QUERY_MODE === "missing-schema") rows = rows.slice(1);
-    return response([{ success: true, meta: {}, results: rows }]);
+    if (query === "media") {
+      if (process.env.MUTATE_CONFIG_ON_QUERY === "yes") writeFileSync(process.env.CONFIG_PATH, '{"name":"changed"}\n');
+      if (process.env.QUERY_MODE === "denied") return response({ errors: [{ code: 9100 }] }, 403);
+      if (process.env.QUERY_MODE === "invalid-json") return new Response("not-json", { status: 200 });
+      let rows = JSON.parse(process.env.SCHEMA_ROWS);
+      if (process.env.QUERY_MODE === "missing-schema") rows = rows.slice(1);
+      return response([{ success: true, meta: {}, results: rows }]);
+    }
+    let rows = JSON.parse(process.env.CORE_SCHEMA_ROWS);
+    const mode = process.env.CORE_QUERY_MODE;
+    if (mode?.startsWith("missing:")) {
+      const missing = mode.slice("missing:".length);
+      rows = rows.filter((row) => row.kind !== "migration" || row.name !== missing);
+    }
+    if (mode === "malformed") rows[0] = { malformed: true };
+    return response([{ success: mode !== "denied", meta: mode === "write-reported" ? { rows_written: 1 } : {}, results: rows }]);
   }
   if (path === accountPath + "/versions" && url.search === "?bindings_inherit=strict" && method === "POST") {
     const form = init.body;
@@ -766,8 +833,11 @@ esac
     CHANGED_DEPLOYMENT: options.changedDeployment ? "yes" : "no",
     MALFORMED_VERSION: options.malformedVersion ? "yes" : "no",
     QUERY_MODE: options.queryMode ?? "valid",
+    CORE_QUERY_MODE: options.coreQueryMode ?? "valid",
     SCHEMA_ROWS: JSON.stringify([...columnRows, ...indexRows]),
     SCHEMA_QUERY: MEDIA_DELETION_SCHEMA_QUERY,
+    CORE_SCHEMA_ROWS: JSON.stringify(coreMetadataRows),
+    CORE_SCHEMA_QUERY: CORE_UPGRADE_SCHEMA_QUERY,
     VERSION_POST_MODE: options.versionPostMode ?? "valid",
     DEPLOYMENT_POST_MODE: options.deploymentPostMode ?? "valid",
     AUTH_MODE: options.authMode ?? "valid",
@@ -805,6 +875,13 @@ function commandLines(
   result: Awaited<ReturnType<typeof createIsolatedDeployFixture>>,
 ) {
   return result.commands.split("\n").filter(Boolean);
+}
+
+function expectBothSchemaQueries(api: ReturnType<typeof apiLines>) {
+  expect(api.filter((event) => event.action === "POST D1 query")).toEqual([
+    { action: "POST D1 query", databaseId: fixtureDbId, query: "media" },
+    { action: "POST D1 query", databaseId: fixtureDbId, query: "core" },
+  ]);
 }
 
 describe("actual Worker deploy entrypoint with isolated Cloudflare API/auth fixtures", () => {
@@ -900,10 +977,7 @@ describe("actual Worker deploy entrypoint with isolated Cloudflare API/auth fixt
       commands.filter((line) => line.startsWith("wrangler auth token --json")),
     ).toHaveLength(1);
     expect(api[0].action).toBe("GET deployments");
-    expect(api.find((event) => event.action === "POST D1 query")).toEqual({
-      action: "POST D1 query",
-      databaseId: fixtureDbId,
-    });
+    expectBothSchemaQueries(api);
     const uploads = api.filter((event) => event.action === "POST version");
     const promotions = api.filter(
       (event) => event.action === "POST deployment",
@@ -980,10 +1054,7 @@ describe("actual Worker deploy entrypoint with isolated Cloudflare API/auth fixt
       "YURUCOMMU_SESSION_HASH_SALT",
     ]);
     expect(uploads[0].inheritNames).not.toContain("AUTH_PASSWORD_HASH");
-    expect(api.find((event) => event.action === "POST D1 query")).toEqual({
-      action: "POST D1 query",
-      databaseId: fixtureDbId,
-    });
+    expectBothSchemaQueries(api);
     expect(api.filter((event) => event.action === "POST deployment")).toEqual([
       { action: "POST deployment", versionId: candidateId, percentage: 100 },
     ]);
@@ -1074,6 +1145,42 @@ describe("actual Worker deploy entrypoint with isolated Cloudflare API/auth fixt
           options.label,
         ).toBe(true);
       }
+    }
+  });
+
+  test("blocks Version and Deployment writes for missing 0031–0036 or invalid Core query metadata", async () => {
+    const modes = [
+      ...CORE_UPGRADE_MIGRATIONS.map((name) => `missing:${name}` as const),
+      "denied",
+      "malformed",
+      "write-reported",
+    ] as const;
+    for (const coreQueryMode of modes) {
+      const result = await createIsolatedDeployFixture({ coreQueryMode });
+      const api = apiLines(result);
+      expect(result.exitCode, coreQueryMode).not.toBe(0);
+      expectBothSchemaQueries(api);
+      expect(
+        api.filter((event) => event.action === "POST version"),
+        coreQueryMode,
+      ).toHaveLength(0);
+      expect(
+        api.filter((event) => event.action === "POST deployment"),
+        coreQueryMode,
+      ).toHaveLength(0);
+      expect(
+        api.some((event) => event.action.startsWith("unexpected-")),
+        coreQueryMode,
+      ).toBe(false);
+      expect(result.stderr, coreQueryMode).toContain(
+        "Core 4.1.13 D1 preflight rejected schema metadata",
+      );
+      expect(result.stderr, coreQueryMode).toContain(
+        "publication was not attempted",
+      );
+      expect(deployResultFrom(result.stderr).phase, coreQueryMode).toBe(
+        "PRE_UPLOAD_FAILURE",
+      );
     }
   });
 

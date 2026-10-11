@@ -1,10 +1,15 @@
 import { describe, expect, test } from "bun:test";
+import { Database } from "bun:sqlite";
 import { createHash } from "node:crypto";
 import {
   createYurumeetCodeOnlyProvider,
   YurumeetProviderFailure,
 } from "./yurumeet-code-only-provider.mjs";
 import { MEDIA_DELETION_SCHEMA_QUERY } from "./check-media-deletion-schema.mjs";
+import {
+  CORE_UPGRADE_MIGRATIONS,
+  CORE_UPGRADE_SCHEMA_QUERY,
+} from "./core-upgrade-schema.mjs";
 
 const accountId = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const dbId = "00000000-0000-4000-8000-000000000001";
@@ -140,6 +145,163 @@ const schemaRows = [
     position: 0,
   },
 ];
+const tables: Record<string, string[]> = {
+  account_deletions: [
+    "id",
+    "root_actor_ap_id",
+    "root_public_key_pem",
+    "worker_token",
+    "lease_expires_at",
+  ],
+  account_deletion_targets: [
+    "actor_ap_id",
+    "operation_id",
+    "public_key_pem",
+    "cascade_complete",
+  ],
+  account_deletion_object_targets: ["object_ap_id", "operation_id"],
+  media_upload_attempts: [
+    "id",
+    "r2_key",
+    "uploader_ap_id",
+    "public_key_pem",
+    "phase",
+  ],
+  actor_write_assertions: ["id", "witness", "operation_id"],
+  outbox_revocations: ["activity_ap_id"],
+  delivery_queue: [
+    "reconcile_attempt",
+    "dlq_pending",
+    "processing_token",
+    "next_attempt_at",
+    "status",
+  ],
+  media_upload_lifetimes: [
+    "r2_key",
+    "upload_id",
+    "uploader_ap_id",
+    "public_key_pem",
+    "state",
+    "created_at",
+    "expires_at",
+  ],
+  media_staged_references: ["r2_key", "source_kind", "source_id"],
+  media_staged_ambiguity: ["source_kind", "source_id"],
+  media_staged_source_inputs: ["source_kind", "source_id", "payload"],
+  media_staged_backfill: ["source_kind", "cursor", "complete"],
+  media_blob_deletion_claims: [
+    "r2_key",
+    "uploader_ap_id",
+    "upload_id",
+    "created_at",
+  ],
+  media_blob_deletion_jobs: ["r2_key", "uploader_ap_id"],
+  notification_pushers: [
+    "id",
+    "actor_ap_id",
+    "product",
+    "kind",
+    "app_id",
+    "pushkey",
+    "pushkey_hash",
+    "gateway_url",
+    "data_json",
+    "last_seen_at",
+  ],
+  notification_push_jobs: [
+    "id",
+    "actor_ap_id",
+    "activity_ap_id",
+    "product",
+    "status",
+    "processing_token",
+    "pending_pusher_ids_json",
+    "next_attempt_at",
+  ],
+  actors: ["id"],
+  objects: ["id"],
+  activities: ["id"],
+};
+
+const indexes: Record<string, [string, string]> = {
+  account_deletions_root_idx: ["account_deletions", "root_actor_ap_id"],
+  media_upload_lifetimes_due_idx: [
+    "media_upload_lifetimes",
+    "state,expires_at,r2_key",
+  ],
+  media_blob_deletion_jobs_uploader_idx: [
+    "media_blob_deletion_jobs",
+    "uploader_ap_id",
+  ],
+  notification_pushers_actor_product_idx: [
+    "notification_pushers",
+    "actor_ap_id,product",
+  ],
+  notification_push_jobs_actor_activity_idx: [
+    "notification_push_jobs",
+    "actor_ap_id,activity_ap_id",
+  ],
+};
+
+const triggers: Record<string, string> = {
+  media_upload_attempts_insert: "media_upload_attempts",
+  account_deletion_actors_insert: "actors",
+  outbox_revocations_after_object_delete: "objects",
+  outbox_revocations_after_activity_delete: "activities",
+  media_staged_lifetime_admission: "media_upload_lifetimes",
+  media_staged_claim_proof: "media_upload_lifetimes",
+  media_blob_claim_admission: "media_blob_deletion_claims",
+  media_blob_account_target_release: "account_deletion_targets",
+  account_deletion_notification_pushers_insert: "notification_pushers",
+  account_deletion_notification_pushers_update: "notification_pushers",
+  account_deletion_notification_push_jobs_insert: "notification_push_jobs",
+};
+
+function metadataRows(options: { actorForeignKey?: boolean } = {}) {
+  const db = new Database(":memory:");
+  try {
+    db.exec(
+      "CREATE TABLE yurucommu_migrations (name TEXT PRIMARY KEY, applied_at TEXT)",
+    );
+    for (const name of CORE_UPGRADE_MIGRATIONS) {
+      db.query("INSERT INTO yurucommu_migrations (name) VALUES (?)").run(name);
+    }
+    for (const [table, columns] of Object.entries(tables)) {
+      const foreignKey =
+        options.actorForeignKey && table === "notification_pushers"
+          ? ", FOREIGN KEY (actor_ap_id) REFERENCES actors(id) ON DELETE CASCADE"
+          : "";
+      db.exec(
+        `CREATE TABLE ${table} (${columns.map((column) => `${column} TEXT`).join(",")}${foreignKey})`,
+      );
+    }
+    for (const [index, [table, columns]] of Object.entries(indexes)) {
+      db.exec(`CREATE INDEX ${index} ON ${table}(${columns})`);
+    }
+    db.exec(
+      "CREATE INDEX delivery_queue_reconcile_due_idx ON delivery_queue(next_attempt_at) WHERE status = 'dead_letter' AND dlq_pending = 1",
+    );
+    db.exec("CREATE VIEW media_staged_normalized AS SELECT 1 AS value");
+    db.exec("CREATE VIEW media_blob_deletion_claimable AS SELECT 1 AS value");
+    for (const [trigger, table] of Object.entries(triggers)) {
+      const guard = trigger.startsWith("account_deletion_notification_push")
+        ? "SELECT CASE WHEN EXISTS(SELECT 1 FROM account_deletion_targets) AND EXISTS(SELECT 1 FROM actor_write_assertions) THEN RAISE(ABORT, 'account deletion reserved') END;"
+        : "SELECT 1;";
+      db.exec(
+        `CREATE TRIGGER ${trigger} BEFORE INSERT ON ${table} BEGIN ${guard} END`,
+      );
+    }
+    return db.query(CORE_UPGRADE_SCHEMA_QUERY).all() as Record<
+      string,
+      unknown
+    >[];
+  } finally {
+    db.close();
+  }
+}
+
+const upgradeRows = metadataRows();
+
 const version = (
   id: string,
   etag = "a".repeat(64),
@@ -180,6 +342,7 @@ function fixture(
       | "oversize"
       | "redirect";
     etagDrift?: boolean;
+    upgradeResult?: unknown;
   } = {},
 ) {
   const calls: { method: string; path: string; body?: unknown }[] = [];
@@ -285,9 +448,26 @@ function fixture(
       method === "POST" &&
       path === `/accounts/${accountId}/d1/database/${dbId}/query`
     ) {
-      return envelope([
-        { success: true, meta: { duration: 1 }, results: schemaRows },
-      ]);
+      const sql = JSON.parse(init?.body as string).sql;
+      if (sql === MEDIA_DELETION_SCHEMA_QUERY) {
+        return envelope([
+          { success: true, meta: { duration: 1 }, results: schemaRows },
+        ]);
+      }
+      if (sql === CORE_UPGRADE_SCHEMA_QUERY) {
+        return envelope(
+          options.upgradeResult === undefined
+            ? [
+                {
+                  success: true,
+                  meta: { rows_written: 0 },
+                  results: upgradeRows,
+                },
+              ]
+            : options.upgradeResult,
+        );
+      }
+      throw new Error("unexpected D1 metadata query");
     }
     if (
       method === "POST" &&
@@ -343,6 +523,53 @@ function fixture(
 }
 
 describe("Yurumeet code-only Cloudflare publisher", () => {
+  test("refuses missing, malformed, written, and FK-bearing Core upgrade metadata before upload", async () => {
+    const missingLedger = upgradeRows.filter(
+      (row) =>
+        row.kind !== "migration" || row.name !== CORE_UPGRADE_MIGRATIONS[0],
+    );
+    const missingColumn = upgradeRows.filter(
+      (row) =>
+        row.kind !== "column" ||
+        row.owner !== "delivery_queue" ||
+        row.name !== "dlq_pending",
+    );
+    const withForeignKey = [
+      ...upgradeRows,
+      {
+        kind: "foreign-key",
+        owner: "notification_pushers",
+        name: "actors",
+        detail: "actor_ap_id",
+      },
+    ];
+    for (const upgradeResult of [
+      [{ success: true, results: missingLedger }],
+      [{ success: true, results: missingColumn }],
+      [{ success: true, results: withForeignKey }],
+      [{ success: false, results: upgradeRows }],
+      [{ success: true, results: upgradeRows, meta: { changed_db: true } }],
+      [{ success: true, results: upgradeRows, meta: { rows_written: 1 } }],
+      [{ success: true, results: upgradeRows, meta: { changes: 1 } }],
+      [{ success: true, results: "malformed" }],
+    ]) {
+      const { provider, calls } = fixture({ upgradeResult });
+      const snapshot = await provider.readTrafficAndVersion({
+        requiredSecretNames,
+        expectedConfig: config,
+      });
+      await expect(
+        provider.queryReadonlySchema(
+          snapshot.activeDatabaseId,
+          CORE_UPGRADE_SCHEMA_QUERY,
+        ),
+      ).rejects.toThrow();
+      expect(calls.some((call) => call.path.includes("/versions?"))).toBe(
+        false,
+      );
+    }
+  });
+
   test("inherits every active binding from the exact serving UUID and verifies built bytes, settings, and active D1", async () => {
     const { provider, calls } = fixture();
     const snapshot = await provider.readTrafficAndVersion({
@@ -366,6 +593,23 @@ describe("Yurumeet code-only Cloudflare publisher", () => {
     expect(JSON.parse(d1?.body as string)).toEqual({
       sql: MEDIA_DELETION_SCHEMA_QUERY,
     });
+    await expect(
+      provider.queryReadonlySchema(otherDbId, CORE_UPGRADE_SCHEMA_QUERY),
+    ).rejects.toThrow(/captured active Version DB/);
+    const upgrade = await provider.queryReadonlySchema(
+      dbId,
+      CORE_UPGRADE_SCHEMA_QUERY,
+    );
+    expect(upgrade).toEqual({
+      kind: "yurumeet.core-upgrade-schema@v1",
+      migrations: CORE_UPGRADE_MIGRATIONS,
+      scope: "migration-0031-through-0036-prerequisites",
+    });
+    expect(
+      calls
+        .filter((call) => call.path.includes("/d1/database/"))
+        .map((call) => JSON.parse(call.body as string).sql),
+    ).toEqual([MEDIA_DELETION_SCHEMA_QUERY, CORE_UPGRADE_SCHEMA_QUERY]);
     const uploaded = await provider.uploadCodeOnly({
       bundleBytes: bundle,
       snapshot,
@@ -373,6 +617,9 @@ describe("Yurumeet code-only Cloudflare publisher", () => {
       message: "commit:0123456789 artifact:sha256",
     });
     expect(uploaded).toEqual({ versionId: candidate, sha256: sha });
+    await expect(
+      provider.queryReadonlySchema(dbId, CORE_UPGRADE_SCHEMA_QUERY),
+    ).rejects.toThrow(/before code upload/);
     expect(
       calls.filter(
         (call) => call.path === `${base}/content/v2?version=${candidate}`,
@@ -417,13 +664,16 @@ describe("Yurumeet code-only Cloudflare publisher", () => {
         (call) => call.path === `${base}/content/v2?version=${candidate}`,
       ),
     ).toHaveLength(3);
-    const writes = calls.filter((call) => call.method !== "GET");
-    expect(writes.map((call) => call.path)).toEqual([
+    // D1's read-only query API also uses POST; keep both metadata calls before
+    // the only two provider mutations.
+    const nonGetRequests = calls.filter((call) => call.method !== "GET");
+    expect(nonGetRequests.map((call) => call.path)).toEqual([
+      `/accounts/${accountId}/d1/database/${dbId}/query`,
       `/accounts/${accountId}/d1/database/${dbId}/query`,
       `${base}/versions?bindings_inherit=strict`,
       `${base}/deployments`,
     ]);
-    expect(JSON.parse(writes[2]?.body as string)).toEqual({
+    expect(JSON.parse(nonGetRequests[3]?.body as string)).toEqual({
       strategy: "percentage",
       versions: [{ version_id: candidate, percentage: 100 }],
       annotations: { "workers/message": "commit:0123456789" },
@@ -512,6 +762,12 @@ describe("Yurumeet code-only Cloudflare publisher", () => {
     });
     await expect(
       provider.queryReadonlySchema(dbId, "DELETE FROM users"),
+    ).rejects.toThrow(/fixed read-only/);
+    await expect(
+      provider.queryReadonlySchema(
+        dbId,
+        `${CORE_UPGRADE_SCHEMA_QUERY} SELECT 1`,
+      ),
     ).rejects.toThrow(/fixed read-only/);
     expect(calls.filter((call) => call.method === "POST")).toHaveLength(0);
     suppliedConfig.d1_databases[0].database_id = otherDbId;

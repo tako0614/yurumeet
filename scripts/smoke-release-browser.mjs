@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import { accessSync, constants, readFileSync, statSync } from "node:fs";
 import { createServer } from "node:net";
 import { basename, dirname, resolve } from "node:path";
+import { performance } from "node:perf_hooks";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
@@ -44,6 +45,23 @@ const hash = (value) => createHash("sha256").update(value).digest("hex");
 const check = (condition, reason) => {
   if (!condition) throw new Error(`release-browser ${reason}`);
 };
+
+async function phase(label, run, input) {
+  const started = performance.now();
+  process.stderr.write(`release-browser phase=${label} status=start\n`);
+  try {
+    const result = await run(input);
+    process.stderr.write(
+      `release-browser phase=${label} status=done elapsedMs=${Math.round(performance.now() - started)}\n`,
+    );
+    return result;
+  } catch (error) {
+    process.stderr.write(
+      `release-browser phase=${label} status=fail elapsedMs=${Math.round(performance.now() - started)}\n`,
+    );
+    throw error;
+  }
+}
 
 function chromePath() {
   const configured = process.env.BROWSER_SMOKE_CHROME;
@@ -210,8 +228,10 @@ async function smoke(artifact, digest) {
   const pageErrors = [];
   const serverErrors = [];
   try {
-    await worker.ready;
-    const { db, schemaSha256, migrationCount } = await migrate(worker);
+    await phase("worker-ready", () => worker.ready);
+    const { db, schemaSha256, migrationCount } = await phase("migrate", () =>
+      migrate(worker),
+    );
     browser = await chromium.launch({
       executablePath: chromePath(),
       headless: true,
@@ -413,7 +433,7 @@ async function smoke(artifact, digest) {
       "390px signed-in view has horizontal overflow",
     );
     checks.push("browser-mobile-layout-has-no-horizontal-overflow");
-    const talk = await qualifyBrowserTalk({
+    const talk = await phase("talk", qualifyBrowserTalk, {
       page,
       worker,
       db,
@@ -421,43 +441,37 @@ async function smoke(artifact, digest) {
       actorApId: ownerId,
       checks,
     });
-    const communityDeletePreview = await qualifyBrowserCommunityDeletePreview({
-      page,
-      db,
-      origin,
-      actorApId: ownerId,
-      checks,
-    });
+    const communityDeletePreview = await phase(
+      "community-delete-preview",
+      qualifyBrowserCommunityDeletePreview,
+      {
+        page,
+        db,
+        origin,
+        actorApId: ownerId,
+        checks,
+      },
+    );
     check(pageErrors.length === 0, "browser page raised a runtime error");
     check(
       serverErrors.length === 0,
       "artifact returned an unexpected HTTP 5xx response",
     );
     checks.push("browser-page-errors-and-http-5xx-absent");
-    const authMethodRecovery = await qualifyBrowserAuthMethodRecovery({
-      artifactPath: artifact,
-      artifactDigest: digest,
-      browser,
-      config,
-    });
+    const authMethodRecovery = await phase(
+      "auth-method-recovery",
+      qualifyBrowserAuthMethodRecovery,
+      {
+        artifactPath: artifact,
+        artifactDigest: digest,
+        browser,
+        config,
+      },
+    );
     checks.push(...authMethodRecovery.checks);
-    const draftStorage = await qualifyBrowserDraftStorage({
-      page,
-      db,
-      origin,
-      actorApId: ownerId,
-      checks,
-    });
-
-    check(
-      pageErrors.length === 0,
-      "draft storage browser raised a runtime error",
-    );
-    check(
-      serverErrors.length === 0,
-      "draft storage artifact returned HTTP 5xx",
-    );
-    const communityDeleteRecovery = await qualifyBrowserCommunityDeleteRecovery(
+    const draftStorage = await phase(
+      "draft-storage",
+      qualifyBrowserDraftStorage,
       {
         page,
         db,
@@ -467,24 +481,52 @@ async function smoke(artifact, digest) {
       },
     );
 
-    const communityDeleteBridge = await qualifyBrowserCommunityDeleteBridge({
-      page,
-      db,
-      origin,
-      actorApId: ownerId,
-      checks,
-    });
+    check(
+      pageErrors.length === 0,
+      "draft storage browser raised a runtime error",
+    );
+    check(
+      serverErrors.length === 0,
+      "draft storage artifact returned HTTP 5xx",
+    );
+    const communityDeleteRecovery = await phase(
+      "community-delete-recovery",
+      qualifyBrowserCommunityDeleteRecovery,
+      {
+        page,
+        db,
+        origin,
+        actorApId: ownerId,
+        checks,
+      },
+    );
+
+    const communityDeleteBridge = await phase(
+      "community-delete-bridge",
+      qualifyBrowserCommunityDeleteBridge,
+      {
+        page,
+        db,
+        origin,
+        actorApId: ownerId,
+        checks,
+      },
+    );
     check(
       serverErrors.length === 0,
       "community delete artifact returned HTTP 5xx before the auth control",
     );
-    const currentActorRecovery = await qualifyBrowserCurrentActorRecovery({
-      page,
-      db,
-      origin,
-      actorApId: ownerId,
-      checks,
-    });
+    const currentActorRecovery = await phase(
+      "current-actor-recovery",
+      qualifyBrowserCurrentActorRecovery,
+      {
+        page,
+        db,
+        origin,
+        actorApId: ownerId,
+        checks,
+      },
+    );
     // This exact 503 is fulfilled by the one-shot browser route, before Core.
     // Keep recording all responses and reject any additional server error.
     check(
@@ -496,12 +538,16 @@ async function smoke(artifact, digest) {
     );
     currentActorRecovery.syntheticServerErrors = serverErrors.slice();
 
-    const communityDeleteReload = await qualifyBrowserCommunityDeleteReload({
-      page,
-      db,
-      origin,
-      actorApId: ownerId,
-    });
+    const communityDeleteReload = await phase(
+      "community-delete-reload",
+      qualifyBrowserCommunityDeleteReload,
+      {
+        page,
+        db,
+        origin,
+        actorApId: ownerId,
+      },
+    );
     checks.push(...communityDeleteReload.checks);
     check(
       serverErrors.length === 1,
@@ -515,7 +561,7 @@ async function smoke(artifact, digest) {
         waitUntil: "domcontentloaded",
         timeout: 20_000,
       });
-      feedRefresh = await qualifyBrowserFeedRefresh({
+      feedRefresh = await phase("feed-refresh", qualifyBrowserFeedRefresh, {
         page: feedPage,
         db,
         origin,
@@ -524,7 +570,7 @@ async function smoke(artifact, digest) {
         expectedBaseline: false,
       });
     } finally {
-      await feedPage.close();
+      await phase("feed-page-close", () => feedPage.close());
     }
 
     // Each timeline fixture owns a separate page, preserving the prior
@@ -536,7 +582,7 @@ async function smoke(artifact, digest) {
         waitUntil: "domcontentloaded",
         timeout: 20_000,
       });
-      feedAck = await qualifyBrowserFeedAck({
+      feedAck = await phase("feed-ack", qualifyBrowserFeedAck, {
         page: feedAckPage,
         db,
         origin,
@@ -545,7 +591,7 @@ async function smoke(artifact, digest) {
         expectedBaseline: false,
       });
     } finally {
-      await feedAckPage.close();
+      await phase("feed-ack-page-close", () => feedAckPage.close());
     }
 
     const storyPage = await context.newPage();
@@ -582,7 +628,7 @@ async function smoke(artifact, digest) {
         waitUntil: "domcontentloaded",
         timeout: 20_000,
       });
-      storySubmit = await qualifyStorySubmit({
+      storySubmit = await phase("story-submit", qualifyStorySubmit, {
         page: storyPage,
         context,
         db,
@@ -603,7 +649,7 @@ async function smoke(artifact, digest) {
         blockedOutbound: storyBlockedOutbound,
       };
     } finally {
-      await storyPage.close();
+      await phase("story-page-close", () => storyPage.close());
     }
 
     // Keep the prior Story qualification and its ordered checks unchanged.
@@ -652,7 +698,7 @@ async function smoke(artifact, digest) {
         timeout: 20_000,
       });
       const bucket = await worker.getR2Bucket("MEDIA");
-      storyOutcome = await qualifyStoryOutcome({
+      storyOutcome = await phase("story-outcome", qualifyStoryOutcome, {
         page: outcomePage,
         context: outcomeContext,
         db,
@@ -661,15 +707,19 @@ async function smoke(artifact, digest) {
         actorApId: ownerId,
         checks,
       });
-      await outcomePage.close();
-      storyOutcomeConfirmed = await qualifyStoryOutcomeConfirmed({
-        context: outcomeContext,
-        db,
-        bucket,
-        origin,
-        actorApId: ownerId,
-        checks,
-      });
+      await phase("story-outcome-page-close", () => outcomePage.close());
+      storyOutcomeConfirmed = await phase(
+        "story-outcome-confirmed",
+        qualifyStoryOutcomeConfirmed,
+        {
+          context: outcomeContext,
+          db,
+          bucket,
+          origin,
+          actorApId: ownerId,
+          checks,
+        },
+      );
       check(
         !outcomePageErrors.length &&
           !outcomeServerErrors.length &&
@@ -682,12 +732,12 @@ async function smoke(artifact, digest) {
         blockedOutbound: outcomeBlockedOutbound,
       };
     } finally {
-      await outcomeContext.close();
+      await phase("story-outcome-context-close", () => outcomeContext.close());
     }
 
     // Keep every preceding check in order. Sign-out gets independent browser
     // contexts and respects the same native runtime's public auth rate window.
-    const logoutOutcome = await qualifyLogoutOutcome({
+    const logoutOutcome = await phase("logout-outcome", qualifyLogoutOutcome, {
       browser,
       worker,
       db,
@@ -696,7 +746,7 @@ async function smoke(artifact, digest) {
       password,
       sessionSalt: salt,
     });
-    const bookmarks = await qualifyBookmarks({
+    const bookmarks = await phase("bookmarks", qualifyBookmarks, {
       browser,
       worker,
       db,
@@ -706,15 +756,19 @@ async function smoke(artifact, digest) {
       sessionSalt: salt,
       mode: "candidate",
     });
-    const bookmarkAuthLoss = await qualifyBookmarkAuthLoss({
-      browser,
-      worker,
-      db,
-      origin,
-      checks,
-      password,
-      sessionSalt: salt,
-    });
+    const bookmarkAuthLoss = await phase(
+      "bookmark-auth-loss",
+      qualifyBookmarkAuthLoss,
+      {
+        browser,
+        worker,
+        db,
+        origin,
+        checks,
+        password,
+        sessionSalt: salt,
+      },
+    );
 
     // Keep all prior ordered checks as a prefix. This uses the existing owner
     // session, with a disposable page and communities on the same native Worker.
@@ -749,14 +803,18 @@ async function smoke(artifact, digest) {
         });
         return route.abort("blockedbyclient");
       });
-      historyReadOrder = await qualifyBrowserHistoryReadOrder({
-        page: historyPage,
-        db,
-        origin,
-        actorApId: ownerId,
-        checks,
-        mode: "candidate",
-      });
+      historyReadOrder = await phase(
+        "history-read-order",
+        qualifyBrowserHistoryReadOrder,
+        {
+          page: historyPage,
+          db,
+          origin,
+          actorApId: ownerId,
+          checks,
+          mode: "candidate",
+        },
+      );
       check(
         historyPageErrors.length === 0 &&
           historyServerErrors.length === 2 &&
@@ -785,7 +843,7 @@ async function smoke(artifact, digest) {
         blockedOutbound: historyBlockedOutbound,
       };
     } finally {
-      await historyPage.close();
+      await phase("history-page-close", () => historyPage.close());
     }
 
     // Append the pagination journey after every existing ordered check.
@@ -820,13 +878,17 @@ async function smoke(artifact, digest) {
         });
         return route.abort("blockedbyclient");
       });
-      historyPagination = await qualifyBrowserHistoryPagination({
-        page: paginationPage,
-        db,
-        origin,
-        actorApId: ownerId,
-        checks,
-      });
+      historyPagination = await phase(
+        "history-pagination",
+        qualifyBrowserHistoryPagination,
+        {
+          page: paginationPage,
+          db,
+          origin,
+          actorApId: ownerId,
+          checks,
+        },
+      );
       check(
         paginationPageErrors.length === 0 &&
           paginationServerErrors.length === 0 &&
@@ -839,7 +901,7 @@ async function smoke(artifact, digest) {
         blockedOutbound: paginationBlockedOutbound,
       };
     } finally {
-      await paginationPage.close();
+      await phase("pagination-page-close", () => paginationPage.close());
     }
 
     const scrollPage = await context.newPage();
@@ -849,20 +911,24 @@ async function smoke(artifact, digest) {
       scrollPage.on("pageerror", (error) =>
         scrollPageErrors.push(String(error)),
       );
-      historyScroll = await qualifyBrowserHistoryScroll({
-        page: scrollPage,
-        db,
-        origin,
-        actorApId: ownerId,
-        checks,
-      });
+      historyScroll = await phase(
+        "history-scroll",
+        qualifyBrowserHistoryScroll,
+        {
+          page: scrollPage,
+          db,
+          origin,
+          actorApId: ownerId,
+          checks,
+        },
+      );
       check(
         scrollPageErrors.length === 0,
         "history scroll raised a page error",
       );
       historyScroll.pageErrors = scrollPageErrors;
     } finally {
-      await scrollPage.close();
+      await phase("scroll-page-close", () => scrollPage.close());
     }
 
     // Append route-action races after every prior ordered browser check.
@@ -898,13 +964,17 @@ async function smoke(artifact, digest) {
         });
         return route.abort("blockedbyclient");
       });
-      routeActionScope = await qualifyBrowserRouteActionScope({
-        page: routeActionPage,
-        db,
-        origin,
-        actorApId: ownerId,
-        checks,
-      });
+      routeActionScope = await phase(
+        "route-action-scope",
+        qualifyBrowserRouteActionScope,
+        {
+          page: routeActionPage,
+          db,
+          origin,
+          actorApId: ownerId,
+          checks,
+        },
+      );
       check(
         routeActionPageErrors.length === 0 &&
           routeActionServerErrors.length === 0 &&
@@ -917,7 +987,7 @@ async function smoke(artifact, digest) {
         blockedOutbound: routeActionBlockedOutbound,
       };
     } finally {
-      await routeActionPage.close();
+      await phase("route-action-page-close", () => routeActionPage.close());
     }
 
     // Follow actions get a fresh page after all route-action checks, retaining
@@ -954,13 +1024,17 @@ async function smoke(artifact, digest) {
         });
         return route.abort("blockedbyclient");
       });
-      profileFollowScope = await qualifyBrowserProfileFollowScope({
-        page: profileFollowPage,
-        db,
-        origin,
-        actorApId: ownerId,
-        checks,
-      });
+      profileFollowScope = await phase(
+        "profile-follow-scope",
+        qualifyBrowserProfileFollowScope,
+        {
+          page: profileFollowPage,
+          db,
+          origin,
+          actorApId: ownerId,
+          checks,
+        },
+      );
       check(
         workerOutboundRequests === 0,
         "release browser smoke attempted an external Worker fetch",
@@ -981,7 +1055,7 @@ async function smoke(artifact, digest) {
         },
       };
     } finally {
-      await profileFollowPage.close();
+      await phase("profile-follow-page-close", () => profileFollowPage.close());
     }
 
     // Profile mutations run after follow checks on a fresh owner page. This
@@ -1018,14 +1092,18 @@ async function smoke(artifact, digest) {
         });
         return route.abort("blockedbyclient");
       });
-      profileActionScope = await qualifyBrowserProfileActionScope({
-        page: profileActionPage,
-        db,
-        origin,
-        actorApId: ownerId,
-        checks,
-        scenario: process.env.PROFILE_ACTION_SCOPE_SCENARIO ?? "all",
-      });
+      profileActionScope = await phase(
+        "profile-action-scope",
+        qualifyBrowserProfileActionScope,
+        {
+          page: profileActionPage,
+          db,
+          origin,
+          actorApId: ownerId,
+          checks,
+          scenario: process.env.PROFILE_ACTION_SCOPE_SCENARIO ?? "all",
+        },
+      );
       check(
         workerOutboundRequests === 0,
         "profile-action fixture attempted an external Worker fetch",
@@ -1046,7 +1124,7 @@ async function smoke(artifact, digest) {
         },
       };
     } finally {
-      await profileActionPage.close();
+      await phase("profile-action-page-close", () => profileActionPage.close());
     }
 
     check(
@@ -1092,13 +1170,13 @@ async function smoke(artifact, digest) {
     throw error;
   } finally {
     let cleanupFailed = false;
-    for (const close of [
-      () => context?.close(),
-      () => browser?.close(),
-      () => worker.dispose(),
+    for (const [label, close] of [
+      ["cleanup-context-close", () => context?.close()],
+      ["cleanup-browser-close", () => browser?.close()],
+      ["cleanup-worker-dispose", () => worker.dispose()],
     ]) {
       try {
-        await close();
+        await phase(label, close);
       } catch {
         cleanupFailed = true;
       }

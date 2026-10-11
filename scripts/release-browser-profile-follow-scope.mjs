@@ -126,6 +126,19 @@ async function installProbe(page, method, path) {
       observation?.mark("json", value);
       return value;
     };
+    const nativeText = Response.prototype.text;
+    Response.prototype.text = async function (...args) {
+      const observation = consumed.get(this);
+      const value = await nativeText.apply(this, args);
+      let parsed = null;
+      try {
+        parsed = JSON.parse(value);
+      } catch {
+        // A malformed error body cannot satisfy the duplicate refusal probe.
+      }
+      observation?.mark("text", parsed);
+      return value;
+    };
     const mark = (ordinal, status, kind, targetApId, bodySha256, body) =>
       window.setTimeout(
         () =>
@@ -212,16 +225,30 @@ async function waitProbe(
   expectedSha256,
 ) {
   const key = `${method} ${path}`;
+  const duplicateRefusal =
+    method === "POST" && expectedStatus === 400 && ordinal === 1;
   await page.waitForFunction(
-    ({ key, status, ordinal, targetApId, method }) =>
+    ({ key, status, ordinal, targetApId, method, sha256, duplicateRefusal }) =>
       window.__profileFollowProbes?.[key]?.settled.some(
         (item) =>
           item.ordinal === ordinal &&
           item.status === status &&
-          item.kind === (method === "POST" ? "json" : "fetch") &&
-          item.targetApId === targetApId,
+          item.targetApId === targetApId &&
+          item.bodySha256 === sha256 &&
+          (duplicateRefusal
+            ? item.kind === "text" &&
+              item.body?.error === "Already following or pending"
+            : item.kind === (method === "POST" ? "json" : "fetch")),
       ),
-    { key, status: expectedStatus, ordinal, targetApId, method },
+    {
+      key,
+      status: expectedStatus,
+      ordinal,
+      targetApId,
+      method,
+      sha256: expectedSha256,
+      duplicateRefusal,
+    },
     { timeout: 10_000 },
   );
   const state = await page.evaluate(
@@ -236,7 +263,12 @@ async function waitProbe(
     (item) =>
       item.ordinal === ordinal &&
       item.targetApId === targetApId &&
-      item.status === expectedStatus,
+      item.status === expectedStatus &&
+      item.bodySha256 === expectedSha256 &&
+      (duplicateRefusal
+        ? item.kind === "text" &&
+          item.body?.error === "Already following or pending"
+        : item.kind === (method === "POST" ? "json" : "fetch")),
   );
   requireFollow(
     settled?.bodySha256 === expectedSha256,

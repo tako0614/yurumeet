@@ -154,9 +154,14 @@ async function qualifyBackgroundEvents(worker) {
   const stories = [
     { name: "expired", endTime: "2000-01-01T00:00:00.000Z" },
     { name: "active", endTime: "2999-01-01T00:00:00.000Z" },
-  ];
+  ].map((story) => ({
+    ...story,
+    // Published-media deletion claims require the upload route's canonical
+    // 64-hex key shape, including for disposable fixtures.
+    key: `uploads/${sha256(`release-smoke-${story.name}`)}.webp`,
+  }));
   for (const story of stories) {
-    const key = `uploads/release-smoke-${story.name}.webp`;
+    const key = story.key;
     await media.put(key, `release-smoke-${story.name}`);
     await db.batch([
       db
@@ -199,7 +204,7 @@ async function qualifyBackgroundEvents(worker) {
       );
     }
     for (const story of stories) {
-      const key = `uploads/release-smoke-${story.name}.webp`;
+      const key = story.key;
       const storyId = `${APP_ORIGIN}/ap/objects/${story.name}`;
       const expectedPresent = story.name === "active";
       const object = await db

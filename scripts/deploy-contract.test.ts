@@ -76,18 +76,23 @@ describe("deploy contract", () => {
     );
   });
 
-  test("declares the read-only Core 4.1.11 migration 0030 preflight before Worker publication", () => {
+  test("declares read-only migration 0030–0036 metadata preflights before Worker publication", () => {
     const worker = surfaceOf("yurumeet-worker");
     expect(worker?.triggers).toEqual(["authority"]);
     expect(worker?.obligations.provenance).toContain(
-      "read-only D1 metadata query",
+      "read-only D1 metadata queries",
     );
     expect(worker?.obligations.provenance).toContain("migration 0030");
+    expect(worker?.obligations.provenance).toContain("migration 0031–0036");
+    expect(worker?.obligations.provenance).toContain(
+      "without applying migrations or writing schema/data",
+    );
+    expect(worker?.covers).toContain("scripts/core-upgrade-schema.mjs");
     expect(worker?.obligations["failure-handling"]).toMatch(
       /session-salt config blocks before .*gate/u,
     );
     expect(worker?.obligations["failure-handling"]).toContain(
-      "schema mismatch blocks before publication",
+      "migration 0030–0036 metadata prerequisites blocks before Version upload",
     );
     expect(worker?.obligations["independent-review"]).toContain(
       "strict secret inheritance",

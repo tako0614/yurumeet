@@ -234,9 +234,12 @@ bun run deploy -- yurumeet-site --environment=integration|production
 `yurumeet-worker` は公開前に、`YURUMEET_WRANGLER_CONFIG` の実現済み strict JSON
 config と実配信 Version の DB が一致することを確認し、その Version の実 DB ID の
 metadata を既存認証による read-only REST query で読み取ります。
-Core 4.1.11 の追加 migration `0030` が必要とする media deletion table の column・
-primary key・due index を検査し、不足・不整合・読取拒否・不正な応答なら公開を止めます。
-schema 全体や migration 台帳を検証するものではなく、schema 適用や権限追加は行いません。
+media deletion の migration `0030` に必要な column・primary key・due index と、
+Core 4.1.13 の `0031`–`0036` が必要とする台帳6件・表・column・index・trigger・view・
+修復後の push table の foreign key 不在を検査します。不足・不整合・読取拒否・不正な応答・
+書込みを報告する応答なら公開を止めます。これは固定した metadata prerequisites の検査で、
+schema 全体・既存データ・過去版からの更新を検証するものではありません。
+schema 適用や権限追加は行いません。
 `CLOUDFLARE_ENV` による環境選択は未対応として拒否し、検査後に config の内容が
 変わった場合も公開を止めます。
 root の direct Cloudflare module の Apply はこの検査の対象外で、別途レビュー済みの

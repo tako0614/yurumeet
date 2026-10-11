@@ -3,6 +3,10 @@ import {
   MEDIA_DELETION_SCHEMA_QUERY,
   validateMediaDeletionQueryResults,
 } from "./check-media-deletion-schema.mjs";
+import {
+  CORE_UPGRADE_SCHEMA_QUERY,
+  validateCoreUpgradeQueryResults,
+} from "./core-upgrade-schema.mjs";
 
 const API = "https://api.cloudflare.com/client/v4";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -1051,8 +1055,13 @@ export function createYurumeetCodeOnlyProvider({
   ) {
     if (uploadStarted)
       throw failure("schema query must complete before code upload");
-    if (sql !== MEDIA_DELETION_SCHEMA_QUERY)
-      throw failure("only the fixed read-only migration 0030 query is allowed");
+    if (
+      sql !== MEDIA_DELETION_SCHEMA_QUERY &&
+      sql !== CORE_UPGRADE_SCHEMA_QUERY
+    )
+      throw failure(
+        "only fixed read-only migration metadata queries are allowed",
+      );
     requireUuid(databaseId, "schema target D1 id");
     if (!recovery || capturedDatabaseId !== databaseId)
       throw failure("schema target must be the captured active Version DB");
@@ -1060,10 +1069,19 @@ export function createYurumeetCodeOnlyProvider({
       `/accounts/${accountId}/d1/database/${databaseId}/query`,
       {
         method: "POST",
-        body: JSON.stringify({ sql: MEDIA_DELETION_SCHEMA_QUERY }),
+        body: JSON.stringify({ sql }),
       },
     );
-    return validateMediaDeletionQueryResults(result);
+    if (sql === MEDIA_DELETION_SCHEMA_QUERY) {
+      return validateMediaDeletionQueryResults(result);
+    }
+    try {
+      return validateCoreUpgradeQueryResults(result);
+    } catch {
+      // Keep a useful, bounded preflight diagnosis without forwarding metadata
+      // rows or an arbitrary exception message into operator output.
+      throw failure("Core 4.1.13 D1 preflight rejected schema metadata");
+    }
   }
   async function uploadCodeOnly({
     bundleBytes,

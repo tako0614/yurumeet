@@ -4,9 +4,9 @@ import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-// 4.1.11 routes Workers DNS resolution through the Workers resolver. The
-// previously qualified 4.1.7 release takes the Node lookup path in Miniflare.
-export const MINIMUM_PRODUCT_RELEASE = "4.1.11";
+// 4.1.11 established Workers DNS; 4.1.13 preserves guarded INSERT SELECT
+// composition. Core/API 4.1.14 fixes authenticated recommendation raw reads.
+export const MINIMUM_PRODUCT_RELEASE = "4.1.14";
 
 const PACKAGE_NAMES = ["@takosjp/yurucommu-core", "@takosjp/yurucommu-api"];
 const REQUIRED_API_EXPORTS = [
