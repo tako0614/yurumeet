@@ -268,7 +268,7 @@ function countedBatchedSqliteAdapter(database: Database) {
 }
 
 describe("complete application D1 snapshot", () => {
-  test("batches the complete 29-migration schema with serial-equivalent fingerprints and bounded calls", async () => {
+  test("batches the complete 35-migration schema with serial-equivalent fingerprints and bounded calls", async () => {
     const { database, adapter } = await applicationDatabaseFixture(true);
     try {
       database.exec("CREATE TABLE restore_batch_probe (value BLOB)");
@@ -644,7 +644,7 @@ describe("release Worker smoke", () => {
         artifactSha256: `sha256:${createHash("sha256")
           .update(await Bun.file(artifactPath).bytes())
           .digest("hex")}`,
-        migrationCount: 29,
+        migrationCount: 35,
         tableCoverage: {
           applicationTableCount: expect.any(Number),
           snapshottedTables: expect.arrayContaining([
@@ -676,7 +676,7 @@ describe("release Worker smoke", () => {
         artifactSha256: `sha256:${createHash("sha256")
           .update(await Bun.file(artifactPath).bytes())
           .digest("hex")}`,
-        migrationCount: 29,
+        migrationCount: 35,
         tableCoverage: {
           applicationTableCount: expect.any(Number),
           snapshottedTables: expect.arrayContaining([

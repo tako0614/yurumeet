@@ -1095,7 +1095,7 @@ export async function qualifyBrowserTalk({
     requireTalk(
       readback.status === 200 &&
         readback.contentType === upload.content_type &&
-        /^private, max-age=\d+$/.test(readback.cacheControl ?? "") &&
+        readback.cacheControl === "private, no-store" &&
         equalBytes(
           new Uint8Array(readback.bytes),
           new Uint8Array(upload.bytes),

@@ -427,8 +427,8 @@ async function responseSeenAfter(observed, previousLength, predicate, label) {
 
 async function installReadProbe(page, exactPath) {
   // This runs before the navigation which can auto-select the contact and
-  // start its first GET. The original Response is returned unchanged; only
-  // its json() method records when the app has consumed that exact response.
+  // start its first GET. The original Response is returned unchanged; a
+  // completed text() or json() read records consumption of that exact response.
   await page.addInitScript((path) => {
     const nativeFetch = window.fetch.bind(window);
     const state = { path, initiated: 0, settled: [] };
@@ -455,15 +455,17 @@ async function installReadProbe(page, exactPath) {
       const ordinal = ++state.initiated;
       const response = await nativeFetch(...args);
       if (response.status === 503) {
-        // apiFetch rejects at assertOk before Response.json() is called.
+        // Error state is observed by status; assertOk reads its body via text().
         checkpoint(ordinal, response.status, false);
       } else {
-        const nativeJson = response.json.bind(response);
-        response.json = async (...jsonArgs) => {
-          const result = await nativeJson(...jsonArgs);
-          checkpoint(ordinal, response.status, true);
-          return result;
-        };
+        for (const method of ["text", "json"]) {
+          const originalRead = response[method].bind(response);
+          response[method] = async (...readArgs) => {
+            const result = await originalRead(...readArgs);
+            checkpoint(ordinal, response.status, true);
+            return result;
+          };
+        }
       }
       return response;
     };

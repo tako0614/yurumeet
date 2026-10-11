@@ -419,20 +419,22 @@ async function installConsumptionProbe(page, path) {
         url.pathname === new URL(exactPath).pathname &&
         url.searchParams.has("before")
       ) {
-        const nativeJson = response.json.bind(response);
-        response.json = async (...jsonArgs) => {
-          const value = await nativeJson(...jsonArgs);
-          setTimeout(
-            () =>
-              requestAnimationFrame(() =>
-                requestAnimationFrame(() => {
-                  window.__gaScrollOlderConsumed = true;
-                }),
-              ),
-            0,
-          );
-          return value;
-        };
+        for (const readMethod of ["text", "json"]) {
+          const originalRead = response[readMethod].bind(response);
+          response[readMethod] = async (...readArgs) => {
+            const value = await originalRead(...readArgs);
+            setTimeout(
+              () =>
+                requestAnimationFrame(() =>
+                  requestAnimationFrame(() => {
+                    window.__gaScrollOlderConsumed = true;
+                  }),
+                ),
+              0,
+            );
+            return value;
+          };
+        }
       }
       return response;
     };

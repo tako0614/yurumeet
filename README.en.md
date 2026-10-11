@@ -258,10 +258,13 @@ asks that same question of every commit.
 
 Before publishing, `yurumeet-worker` reads DB metadata selected by the realized
 strict JSON config in `YURUMEET_WRANGLER_CONFIG`, using the existing Wrangler
-credential. It checks the columns, primary key and due index required by Core
-4.1.11's additive migration `0030`. Missing or inconsistent metadata, denied
-reads and invalid responses stop publication. This checks that specific contract;
-it does not qualify the whole schema or migration ledger, apply migrations or
+credential. It checks migration `0030`'s columns, primary key and due index,
+plus Core 4.1.13's `0031`–`0036` prerequisites: six migration-ledger entries,
+required tables, columns, indexes, triggers and views, and the absence of
+foreign keys in repaired push tables. Missing or inconsistent metadata, denied
+reads, invalid responses and responses reporting writes stop publication.
+This bounded metadata check does not qualify the whole schema, existing data
+or an upgrade from a historical release. It does not apply migrations or
 grant permissions. The root direct-Cloudflare module's Apply is a separate path
 requiring reviewed pre-applied schema evidence. Environment selection via
 `CLOUDFLARE_ENV` is unsupported and rejected; a changed config after inspection

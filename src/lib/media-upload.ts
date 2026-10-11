@@ -30,10 +30,8 @@ export async function uploadProductMedia(
   // No await separates this check from the SDK resolving its destination.
   beforeUpload?.();
   const result = await uploadMedia(transportFile);
-  // Public API4.1.11 preserves this JSON field but predates its declaration.
   // Older servers advertise no deadline; never invent a TTL for them.
-  const expiresAt = (result as typeof result & { expires_at?: unknown })
-    .expires_at;
+  const expiresAt = result.expires_at;
   return {
     ...result,
     expires_at:

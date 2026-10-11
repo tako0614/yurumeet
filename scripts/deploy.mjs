@@ -16,11 +16,11 @@
 //
 // どの surface も publish するのは **code と静的 asset だけ** です。durable store
 // (D1 DB / KV / R2 MEDIA) は変更しません。Worker publish 前には D1 を SELECT だけで
-// 読み、Core 4.1.11 が必要とする migration 0030 の schema を確認します。schema 変更は
+// 読み、Core 4.1.13 が必要とする migration 0030–0036 の metadata を確認します。schema 変更は
 // `irreversible` な別の作業で、この entrypoint の副作用として起きてはいけません。
 // ⚠ yurucommu 系の live D1 は `_cf_migrations` 台帳が実態とずれています。
 // `wrangler d1 migrations apply` を絶対に走らせないこと。schema 変更は
-// operator が別途行う手順です。この script は台帳を参照せず、schema の read-only 確認だけをします。
+// operator が別途行う手順です。この script は台帳と schema metadata を read-only で確認します。
 
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
@@ -50,6 +50,10 @@ import {
 } from "./release-artifact-manifest.mjs";
 import { releaseIdentityFailures } from "./release-identity.mjs";
 import { MEDIA_DELETION_SCHEMA_QUERY } from "./check-media-deletion-schema.mjs";
+import {
+  CORE_UPGRADE_MIGRATIONS,
+  CORE_UPGRADE_SCHEMA_QUERY,
+} from "./core-upgrade-schema.mjs";
 import {
   createYurumeetCodeOnlyProvider,
   YurumeetProviderFailure,
@@ -108,6 +112,7 @@ const CONTRACT = {
         "scripts/worker-publish-empty.env.example",
         "scripts/yurumeet-code-only-provider.mjs",
         "scripts/check-media-deletion-schema.mjs",
+        "scripts/core-upgrade-schema.mjs",
       ],
       requiresScripts: ["check", "build:takos-worker", "smoke:postdeploy"],
       requiresTools: ["git", "bun", "node", "wrangler"],
@@ -121,13 +126,13 @@ const CONTRACT = {
       // re-read は CAS ではないため、同時 publisher を避ける operator 協調が必要です。
       triggers: ["authority"],
       obligations: {
-        provenance: `requires the realized YURUMEET_WRANGLER_CONFIG to declare YURUCOMMU_SESSION_HASH_SALT in root secrets.required and pin name=${W.worker} plus an account_id; rejects selected Wrangler environments and non-default Cloudflare endpoints; uses a verified zero-byte --env-file only for Wrangler auth token --json to read existing authentication, never to create permissions; captures the active Deployment and one exact 100% predecessor before ${OWNER_GATE}, refusing split traffic and config/binding drift; refuses dirty or changed source, builds ${W.bundle}, records commit and bundle sha256, and runs a read-only D1 metadata query against the actual predecessor DB requiring migration 0030; uploads one Version with strict secret inheritance and every binding explicitly pinned to that predecessor, then promotes through the fixed Deployment API without resource, Secret, settings or trigger writes.`,
+        provenance: `requires the realized YURUMEET_WRANGLER_CONFIG to declare YURUCOMMU_SESSION_HASH_SALT in root secrets.required and pin name=${W.worker} plus an account_id; rejects selected Wrangler environments and non-default Cloudflare endpoints; uses a verified zero-byte --env-file only for Wrangler auth token --json to read existing authentication, never to create permissions; captures the active Deployment and one exact 100% predecessor before ${OWNER_GATE}, refusing split traffic and config/binding drift; refuses dirty or changed source, builds ${W.bundle}, records commit and bundle sha256, and runs fixed read-only D1 metadata queries against the actual predecessor DB requiring migration 0030 structure plus migration 0031–0036 ledger/schema prerequisites, without applying migrations or writing schema/data; uploads one Version with strict secret inheritance and every binding explicitly pinned to that predecessor, then promotes through the fixed Deployment API without resource, Secret, settings or trigger writes.`,
         "post-conditions":
           "checks authoritative uploaded code and complete non-code closure before promotion; runs bun run smoke:postdeploy through the launch URL from TAKOSUMI_CAPSULE_OUTPUTS_FILE with YURUMEET_E2E_SESSION_COOKIE for OIDC-only installations or YURUMEET_E2E_PASSWORD; finally rechecks exact acknowledged Deployment/Version, code and non-code settings plus predecessor availability; local and CI fixtures do not qualify live permission or API behavior",
         reversal:
           "captures the active Deployment id and complete version/percentage traffic map; prints a credential-free manual POST Deployment API request restoring that map, never Wrangler versions deploy because that command may also patch settings; reconcile current traffic and review predecessor availability/secret custody before manual recovery; re-read is not an atomic compare-and-swap, so operator serialization is required",
         "failure-handling":
-          "invalid target/environment/endpoint/empty-env-file/session-salt config blocks before authentication or gate work; malformed active state or schema mismatch blocks before publication; prints bounded credential-masked provider code/messages, never raw authentication or binding bodies; PRE_UPLOAD_FAILURE before upload, monotonic indeterminate recovery after any attempted Version or Deployment write, with full prior traffic map and exact rollbackRequest; no automatic retry or rollback",
+          "invalid target/environment/endpoint/empty-env-file/session-salt config blocks before authentication or gate work; malformed active state or missing/invalid migration 0030–0036 metadata prerequisites blocks before Version upload; prints bounded credential-masked provider code/messages, never raw authentication or binding bodies; PRE_UPLOAD_FAILURE before upload, monotonic indeterminate recovery after any attempted Version or Deployment write, with full prior traffic map and exact rollbackRequest; no automatic retry or rollback",
         "independent-review":
           "review exact source/native/CI evidence and API contracts for strict secret inheritance with explicit predecessor version_id, actual DB authority, code/non-code readbacks, authentication-output suppression, fixed target, no auxiliary mutations and full recovery state; metadata proves the active Worker binding declaration, not the secret value or entropy; existing secrets remain credential-owner custody and must not rotate",
       },
@@ -930,6 +935,24 @@ try {
     MEDIA_DELETION_SCHEMA_QUERY,
   );
   process.stdout.write(`D1 schema preflight ${schema.table} ${schema.scope}\n`);
+  const upgrade = await provider.queryReadonlySchema(
+    snapshot.activeDatabaseId,
+    CORE_UPGRADE_SCHEMA_QUERY,
+  );
+  if (
+    upgrade?.kind !== "yurumeet.core-upgrade-schema@v1" ||
+    upgrade.scope !== "migration-0031-through-0036-prerequisites" ||
+    !Array.isArray(upgrade.migrations) ||
+    upgrade.migrations.length !== CORE_UPGRADE_MIGRATIONS.length ||
+    upgrade.migrations.some(
+      (name, index) => name !== CORE_UPGRADE_MIGRATIONS[index],
+    )
+  ) {
+    throw new Error(
+      "Worker provider returned invalid Core 4.1.13 D1 preflight proof",
+    );
+  }
+  process.stdout.write(`D1 schema preflight ${upgrade.scope}\n`);
   requireReviewedSource();
   requireStableDeployConfig("Worker Version upload");
   requireEmptyWranglerEnvFile("Worker Version upload");
