@@ -1,0 +1,406 @@
+{
+  "kind": "yurumeet.historical-v012-fixture@v1",
+  "provenance": {
+    "tag": "v0.1.2",
+    "commit": "9a5c990340635736832c2a9eb9daf06337f9bd51",
+    "workerSha256": "12dbf659613caa79c7e1696cb44a6078216bba92e61e812d3e84cd8d23370472",
+    "workerBytes": 1549538,
+    "releaseManifestSha256": "dd49b560dec05a2c3487f55f60cb7d40c466a4d95adfe2ea3eccfd96838ca231",
+    "coreVersion": "3.2.0",
+    "coreTarballSha256": "6dd3092124ee6120ae9450e94e9e97985a8653639e9c95204ee99e58e5fdd40a",
+    "coreTarballIntegrity": "sha512-Rzv31Tt+ZJG+jy31Sx7iGIo+GH778XfFXP4akt/c8U4Lo5zA+nr6iPNJ+dACjoX61ZxV7GWDot7rzrenWVJ3+w=="
+  },
+  "wranglerNativeBaseline": {
+    "version": "4.107.0",
+    "ledger": "d1_migrations",
+    "names": [
+      "0001_init.sql",
+      "0002_social_remote_actor_edges.sql",
+      "0003_activity_remote_object_edges.sql",
+      "0004_blocklist.sql",
+      "0005_story_community_scope.sql",
+      "0006_dm_community_read_status.sql",
+      "0007_moderation_reports.sql",
+      "0008_actor_fields_aka.sql",
+      "0009_object_tags.sql",
+      "0010_object_recipients_drop_actor_fk.sql",
+      "0011_drop_remote_actor_fks.sql",
+      "0012_objects_content_fts.sql",
+      "0013_efficiency_indexes.sql",
+      "0014_inbox_actor_created_idx.sql",
+      "0015_community_bans.sql",
+      "0016_namespace_takos_oidc_subject.sql",
+      "0017_mobile_push_registrations.sql",
+      "0018_actor_notes.sql",
+      "0019_notification_push_delivery.sql"
+    ],
+    "pushSchemaDefinitions": [
+      {
+        "type": "index",
+        "name": "notification_push_jobs_actor_activity_idx",
+        "tblName": "notification_push_jobs",
+        "sha256": "71932fc0c754bac49a60b64cd8fc3498ccaaf7dbf671a6da4780b1dbb302bad9"
+      },
+      {
+        "type": "index",
+        "name": "notification_push_jobs_actor_idx",
+        "tblName": "notification_push_jobs",
+        "sha256": "10629a90101ba451450ab85af5c53db047eb0abf4f38ecaa09b84ceeecde193d"
+      },
+      {
+        "type": "index",
+        "name": "notification_push_jobs_status_next_idx",
+        "tblName": "notification_push_jobs",
+        "sha256": "252fc30869aa300652041abe43204700edc18ab7beb20341e1f347a338a1f52f"
+      },
+      {
+        "type": "index",
+        "name": "notification_push_jobs_terminal_retention_idx",
+        "tblName": "notification_push_jobs",
+        "sha256": "7e0c4ee2868b4d9ed6e3435d556d3c5fa2047604858e11eab7cdca99253a32d0"
+      },
+      {
+        "type": "index",
+        "name": "notification_pushers_actor_product_app_pushkey_idx",
+        "tblName": "notification_pushers",
+        "sha256": "d694caed541d8a5fbdbfbee8d8215193530d475f9e2a7a1897452a7d5eeab7df"
+      },
+      {
+        "type": "index",
+        "name": "notification_pushers_actor_product_idx",
+        "tblName": "notification_pushers",
+        "sha256": "9952cbb289c22560a9a939ff6ff38c358d84db7232101969ae60c3d7a5fb4ee8"
+      },
+      {
+        "type": "index",
+        "name": "notification_pushers_device_idx",
+        "tblName": "notification_pushers",
+        "sha256": "8a7214fb6b90c55eed7dde9538e8aef383023750df2f8845a3ed8c082f81df58"
+      },
+      {
+        "type": "index",
+        "name": "notification_pushers_last_seen_idx",
+        "tblName": "notification_pushers",
+        "sha256": "2b9ad373ba2ad785e3230b32e9923a35744ea70e59ac215dddb8014e1369c1fd"
+      },
+      {
+        "type": "table",
+        "name": "notification_push_jobs",
+        "tblName": "notification_push_jobs",
+        "sha256": "66e90569acbcf61ad4a648d976deb7e7873fb9800ffa9ca46c006583fe8baed7"
+      },
+      {
+        "type": "table",
+        "name": "notification_pushers",
+        "tblName": "notification_pushers",
+        "sha256": "a320325f1b77362d1b082a9ae15306e828e1690f4e0a90dc8edca9ce6c09f056"
+      },
+      {
+        "type": "trigger",
+        "name": "notification_push_jobs_after_inbox_delete",
+        "tblName": "inbox",
+        "sha256": "64b0cc63fd3198362df11050cefe2ab0ce1b7e40b0ab02aada6c13e87e7e921f"
+      },
+      {
+        "type": "trigger",
+        "name": "notification_push_jobs_after_inbox_insert",
+        "tblName": "inbox",
+        "sha256": "83334b35ed5aff6c10af91b3d27db5cd63dd7a36f3cd88e5a619116746d1bc72"
+      }
+    ],
+    "pushForeignKey": {
+      "table": "actors",
+      "from": "actor_ap_id",
+      "to": "ap_id",
+      "on_update": "NO ACTION",
+      "on_delete": "CASCADE",
+      "match": "NONE"
+    }
+  },
+  "migrations": [
+    {
+      "name": "0001_init.sql",
+      "sha256": "5f79b32320d842914891f21b0589a3e4e88fe3286a252ce541f2535680641651",
+      "bytes": 20286
+    },
+    {
+      "name": "0002_social_remote_actor_edges.sql",
+      "sha256": "14dae6bc3277ff4d9bb075d1e345f07d7fc962b23f16af6cea1acdebb746662e",
+      "bytes": 2515
+    },
+    {
+      "name": "0003_activity_remote_object_edges.sql",
+      "sha256": "fca8d640cc0b16a61e9513abc251a52b351b42620db71edb2a3880dc0e743c14",
+      "bytes": 1852
+    },
+    {
+      "name": "0004_blocklist.sql",
+      "sha256": "587188e6928751cc78a7bb4d03b56269c941c8f7a890e4a149cd6fe0ec098eb6",
+      "bytes": 875
+    },
+    {
+      "name": "0005_story_community_scope.sql",
+      "sha256": "4790c0de5fac9b88dddeec792650da3f8314c9b261e24759fdf7bebe2a18be5c",
+      "bytes": 617
+    },
+    {
+      "name": "0006_dm_community_read_status.sql",
+      "sha256": "e274879865d14d409f04638c73564bab0d0695a0182d8042c22b99d5abc1e37b",
+      "bytes": 942
+    },
+    {
+      "name": "0007_moderation_reports.sql",
+      "sha256": "324bbeebd2553659bcdaefae2ac46ca972f9adbdea70cc0975284ccf965e652a",
+      "bytes": 680
+    },
+    {
+      "name": "0008_actor_fields_aka.sql",
+      "sha256": "5c096107751f466f907fa1420cfc88e7e4b0b53ac86ba0d08a9e767eb9ec6ab0",
+      "bytes": 859
+    },
+    {
+      "name": "0009_object_tags.sql",
+      "sha256": "8556a4dd862edf0f140b8a5b3c8be89f6bef060e6241b47d57b4eb00a25dd000",
+      "bytes": 727
+    },
+    {
+      "name": "0010_object_recipients_drop_actor_fk.sql",
+      "sha256": "b0973e9dcca0f1284c99828c73fe20272e79e9d71265dc4f6b1eeaad0f2a6414",
+      "bytes": 1702
+    },
+    {
+      "name": "0011_drop_remote_actor_fks.sql",
+      "sha256": "3a343fc9b018af934a32f1879041513cfb1088ed63fb5803daba4f93fbd73a0d",
+      "bytes": 9078
+    },
+    {
+      "name": "0012_objects_content_fts.sql",
+      "sha256": "c9c758b1a5b1e74d13d3e38a81feb6de8257cb161bc62e4b4b26f9e909eb9c74",
+      "bytes": 1787
+    },
+    {
+      "name": "0013_efficiency_indexes.sql",
+      "sha256": "8bfe9308edec8a8bb153701a9e202660e615d3120086843ae1f0bf8b78323abc",
+      "bytes": 688
+    },
+    {
+      "name": "0014_inbox_actor_created_idx.sql",
+      "sha256": "f6076eeecbc82325fa5717d91011a117985aaff573111f7044148860eb1fac9b",
+      "bytes": 934
+    },
+    {
+      "name": "0015_community_bans.sql",
+      "sha256": "5740a6783d9868faf804edbf5809421f99fe1af279fb505543b539429e9dd848",
+      "bytes": 825
+    },
+    {
+      "name": "0016_namespace_takos_oidc_subject.sql",
+      "sha256": "bc012eda991e7c50eb12a70172e4cc8905d70e91174faf41f6024f3ebefa4f50",
+      "bytes": 1025
+    },
+    {
+      "name": "0017_mobile_push_registrations.sql",
+      "sha256": "1b29da39effea07d60f1d0cead5d88e3695604ca56113a819f5f218c79c284a4",
+      "bytes": 928
+    },
+    {
+      "name": "0018_actor_notes.sql",
+      "sha256": "9d60b00428d461c5cdac37d4a72c00e1f30bd8e885938e16bb09544e7bcb4f86",
+      "bytes": 617
+    },
+    {
+      "name": "0019_notification_push_delivery.sql",
+      "sha256": "d25c15525b140a220769592f713901befe9f6f2589f35fe7fd9937476fbb6077",
+      "bytes": 3438
+    }
+  ],
+  "candidateCore": {
+    "version": "4.1.14",
+    "migrationCount": 35,
+    "0019Sha256": "97c3accaf2657cc65af2b1bd1bbb593b7d063c27ceeb7b100e031c654b403354",
+    "0036Sha256": "42d29c6367e7e8aaaf363d344284b6bd7c701dc6341bd47a98f36b634bc8025b",
+    "runnerSha256": "f5bb782ed83dccd0a4240ad6e813c651b39edf76d10587ed4ea0789572aa139d",
+    "migrations": [
+      {
+        "name": "0001_init.sql",
+        "sha256": "5f79b32320d842914891f21b0589a3e4e88fe3286a252ce541f2535680641651",
+        "bytes": 20286
+      },
+      {
+        "name": "0002_social_remote_actor_edges.sql",
+        "sha256": "14dae6bc3277ff4d9bb075d1e345f07d7fc962b23f16af6cea1acdebb746662e",
+        "bytes": 2515
+      },
+      {
+        "name": "0003_activity_remote_object_edges.sql",
+        "sha256": "fca8d640cc0b16a61e9513abc251a52b351b42620db71edb2a3880dc0e743c14",
+        "bytes": 1852
+      },
+      {
+        "name": "0004_blocklist.sql",
+        "sha256": "587188e6928751cc78a7bb4d03b56269c941c8f7a890e4a149cd6fe0ec098eb6",
+        "bytes": 875
+      },
+      {
+        "name": "0005_story_community_scope.sql",
+        "sha256": "4790c0de5fac9b88dddeec792650da3f8314c9b261e24759fdf7bebe2a18be5c",
+        "bytes": 617
+      },
+      {
+        "name": "0006_dm_community_read_status.sql",
+        "sha256": "e274879865d14d409f04638c73564bab0d0695a0182d8042c22b99d5abc1e37b",
+        "bytes": 942
+      },
+      {
+        "name": "0007_moderation_reports.sql",
+        "sha256": "324bbeebd2553659bcdaefae2ac46ca972f9adbdea70cc0975284ccf965e652a",
+        "bytes": 680
+      },
+      {
+        "name": "0008_actor_fields_aka.sql",
+        "sha256": "5c096107751f466f907fa1420cfc88e7e4b0b53ac86ba0d08a9e767eb9ec6ab0",
+        "bytes": 859
+      },
+      {
+        "name": "0009_object_tags.sql",
+        "sha256": "8556a4dd862edf0f140b8a5b3c8be89f6bef060e6241b47d57b4eb00a25dd000",
+        "bytes": 727
+      },
+      {
+        "name": "0010_object_recipients_drop_actor_fk.sql",
+        "sha256": "b0973e9dcca0f1284c99828c73fe20272e79e9d71265dc4f6b1eeaad0f2a6414",
+        "bytes": 1702
+      },
+      {
+        "name": "0011_drop_remote_actor_fks.sql",
+        "sha256": "3a343fc9b018af934a32f1879041513cfb1088ed63fb5803daba4f93fbd73a0d",
+        "bytes": 9078
+      },
+      {
+        "name": "0012_objects_content_fts.sql",
+        "sha256": "c9c758b1a5b1e74d13d3e38a81feb6de8257cb161bc62e4b4b26f9e909eb9c74",
+        "bytes": 1787
+      },
+      {
+        "name": "0013_efficiency_indexes.sql",
+        "sha256": "8bfe9308edec8a8bb153701a9e202660e615d3120086843ae1f0bf8b78323abc",
+        "bytes": 688
+      },
+      {
+        "name": "0014_inbox_actor_created_idx.sql",
+        "sha256": "f6076eeecbc82325fa5717d91011a117985aaff573111f7044148860eb1fac9b",
+        "bytes": 934
+      },
+      {
+        "name": "0015_community_bans.sql",
+        "sha256": "5740a6783d9868faf804edbf5809421f99fe1af279fb505543b539429e9dd848",
+        "bytes": 825
+      },
+      {
+        "name": "0016_namespace_takos_oidc_subject.sql",
+        "sha256": "bc012eda991e7c50eb12a70172e4cc8905d70e91174faf41f6024f3ebefa4f50",
+        "bytes": 1025
+      },
+      {
+        "name": "0017_mobile_push_registrations.sql",
+        "sha256": "1b29da39effea07d60f1d0cead5d88e3695604ca56113a819f5f218c79c284a4",
+        "bytes": 928
+      },
+      {
+        "name": "0018_actor_notes.sql",
+        "sha256": "9d60b00428d461c5cdac37d4a72c00e1f30bd8e885938e16bb09544e7bcb4f86",
+        "bytes": 617
+      },
+      {
+        "name": "0019_notification_push_delivery.sql",
+        "sha256": "97c3accaf2657cc65af2b1bd1bbb593b7d063c27ceeb7b100e031c654b403354",
+        "bytes": 3737
+      },
+      {
+        "name": "0020_call_sessions.sql",
+        "sha256": "8f09b9d0a83c06e428d084e27f7bc9aba47a17d0970d0fabb0a960920fbf7e76",
+        "bytes": 813
+      },
+      {
+        "name": "0022_inbound_dispatch_claims.sql",
+        "sha256": "08cbea8fbd4a4f87e4348dc883785fdaeedb91424ffd04704b34964cee903d6d",
+        "bytes": 707
+      },
+      {
+        "name": "0023_delivery_resolution_outbox.sql",
+        "sha256": "5a0500594b535e097ed13cd368fa49017e1afd46d059dcc5aad562930715a57c",
+        "bytes": 1550
+      },
+      {
+        "name": "0024_delivery_fanout_outbox.sql",
+        "sha256": "b706b5f68f32d11cdd97c800bd694ae7535f7c0d258a8d3171393eb016c71d7b",
+        "bytes": 1497
+      },
+      {
+        "name": "0025_delivery_endpoint_terminal_retention.sql",
+        "sha256": "85eefc48da28fab14830126e95f4b3a2a5650f8e4bac811f3d6e9252568fdd4b",
+        "bytes": 399
+      },
+      {
+        "name": "0026_remote_actor_fetch_failures.sql",
+        "sha256": "dec904c2d0fabfa5a1fca79ca73fcbe074ff321550f32d9068f98958932c5e89",
+        "bytes": 1306
+      },
+      {
+        "name": "0027_remote_actor_tombstones.sql",
+        "sha256": "69656d3291b0103014af2c603812f2760a47cc5b3a11a2a2274298254e544d8a",
+        "bytes": 637
+      },
+      {
+        "name": "0028_remote_actor_delivery_fence.sql",
+        "sha256": "a5542482320826212ede489fcab0db9043bdf1e2265fbb0870040261f64ba99e",
+        "bytes": 1264
+      },
+      {
+        "name": "0029_delivery_endpoint_recipients.sql",
+        "sha256": "0d10017dc54a0ed8cb5d287a115983c3e522ea4b4deabc6b4e8f7923cc77eb78",
+        "bytes": 2135
+      },
+      {
+        "name": "0030_media_blob_deletion_jobs.sql",
+        "sha256": "8750ebe686d6b6a6330a49873e9ec6358881fdf76b6a1a47444618bbd9464a9d",
+        "bytes": 635
+      },
+      {
+        "name": "0031_account_deletion_reservations.sql",
+        "sha256": "a066f4387ac09e902783d2c4ca988cb06efe43f50e0f3b2e35e5a62f4af69442",
+        "bytes": 62386
+      },
+      {
+        "name": "0032_outbox_revocations.sql",
+        "sha256": "84b4e762f1d45d77f89d0b012f662a96b7ff40562f358a4c43d07b7e621be6fd",
+        "bytes": 1245
+      },
+      {
+        "name": "0033_delivery_reconciliation.sql",
+        "sha256": "213d149ad8bced79628be7ce37cce5b7ee6953a78e60d1688f00a434b1f1d63e",
+        "bytes": 1041
+      },
+      {
+        "name": "0034_staged_media_retention.sql",
+        "sha256": "7acfe6567af5c4d569f3e523167a29f44370b9c0b207bc2365d4b49849c53d61",
+        "bytes": 17534
+      },
+      {
+        "name": "0035_published_media_deletion_claims.sql",
+        "sha256": "6a817184d23485cb9521cce3b089e9ad5fe56d634287dab7b9deb49e8de1ce02",
+        "bytes": 8007
+      },
+      {
+        "name": "0036_notification_push_actor_fk_repair.sql",
+        "sha256": "42d29c6367e7e8aaaf363d344284b6bd7c701dc6341bd47a98f36b634bc8025b",
+        "bytes": 18725
+      }
+    ]
+  },
+  "limits": {
+    "historicalSchemaBundleDigest": "unreproduced; per-file SHA-256 is the source-backed pin",
+    "liveOperatorLedger": "uninspected",
+    "productionMigrationAdapter": "out of scope"
+  }
+}
