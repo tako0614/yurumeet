@@ -13,6 +13,8 @@ const {
   validatePushDefinitions,
   verifyPinnedFixtureFile,
 } = await import(modulePath);
+const issuerModulePath: string = "./release-storage-oidc.mjs";
+const { createSyntheticRestoreIssuer } = await import(issuerModulePath);
 
 const pins = JSON.parse(
   readFileSync(
@@ -187,5 +189,40 @@ describe("complete historical row projection", () => {
         "historical update row-value-supported",
       );
     }
+  });
+});
+
+describe("synthetic historical OIDC issuer admission", () => {
+  test("retains the current restore owner-pin default and permits the old namespaced pin", async () => {
+    const origin = "https://historical-update.yurumeet.invalid";
+    const need = (condition: boolean, label: string) => {
+      if (!condition) throw new Error(label);
+    };
+    const current = await createSyntheticRestoreIssuer({ origin, need });
+    expect(current.bindings).toEqual({
+      OIDC_ISSUER_URL: "https://restore-issuer.yurumeet.invalid",
+      OIDC_CLIENT_ID: "native-restore-synthetic-public-client",
+      OIDC_OWNER_SUB: "restore_fixture",
+    });
+    const historical = await createSyntheticRestoreIssuer({
+      origin,
+      need,
+      subject: "historical_owner",
+      ownerPin: "takos:historical_owner",
+    });
+    expect(historical.bindings.OIDC_OWNER_SUB).toBe("takos:historical_owner");
+    const foreign = await historical.fetch(
+      new Request("https://real-issuer.example/oauth/jwks"),
+    );
+    const unsupported = await historical.fetch(
+      new Request("https://restore-issuer.yurumeet.invalid/oauth/authorize"),
+    );
+    expect(foreign.status).toBe(502);
+    expect(unsupported.status).toBe(502);
+    expect(historical.evidence()).toMatchObject({
+      blocked: 2,
+      token: 0,
+      userinfo: 0,
+    });
   });
 });

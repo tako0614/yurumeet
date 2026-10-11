@@ -19,6 +19,7 @@ import { FormData, Miniflare } from "miniflare";
 import { unstable_readConfig, unstable_splitSqlQuery } from "wrangler";
 
 import { createManagedNativeRuntime } from "./native-runtime-stdio.mjs";
+import { createSyntheticRestoreIssuer } from "./release-storage-oidc.mjs";
 import {
   assertClosedStoreInventoriesEqual,
   cloneClosedStores,
@@ -40,6 +41,9 @@ const PASSWORD = "yurumeet-historical-update-synthetic-password";
 const PASSWORD_SALT = Buffer.alloc(32, 0x72);
 const PASSWORD_HASH = `${PASSWORD_SALT.toString("hex")}:${pbkdf2Sync(PASSWORD, PASSWORD_SALT, 100000, 32, "sha256").toString("hex")}`;
 const NEW_SESSION_SALT = "yurumeet-historical-update-candidate-synthetic-salt";
+const OIDC_SESSION_SALT = "yurumeet-historical-oidc-stable-synthetic-salt";
+const OIDC_SUBJECT = "historical_owner";
+const OIDC_FOREIGN_SUBJECT = "historical_foreign";
 const ENCRYPTION_KEY = "00".repeat(32);
 const CONTENT = "Yurumeet published v0.1.2 historical update fixture";
 const PNG = Buffer.from(
@@ -336,7 +340,7 @@ function pathsFor(root) {
   return paths;
 }
 
-function makeRuntime(path, paths, ids, config, outbound, sessionSalt) {
+function makeRuntime(path, paths, ids, config, outbound, sessionSalt, auth) {
   const silence = new Writable({
     write(_chunk, _encoding, callback) {
       callback();
@@ -356,7 +360,7 @@ function makeRuntime(path, paths, ids, config, outbound, sessionSalt) {
             compatibilityFlags: config.compatibility_flags,
             bindings: {
               APP_URL: ORIGIN,
-              AUTH_PASSWORD_HASH: PASSWORD_HASH,
+              ...(auth ? auth.bindings : { AUTH_PASSWORD_HASH: PASSWORD_HASH }),
               ENCRYPTION_KEY,
               ...(sessionSalt === undefined
                 ? {}
@@ -371,7 +375,18 @@ function makeRuntime(path, paths, ids, config, outbound, sessionSalt) {
               DELIVERY_QUEUE: { queueName: "historical-update-delivery" },
               DELIVERY_DLQ: { queueName: "historical-update-dlq" },
             },
-            outboundService: async () => {
+            outboundService: async (request) => {
+              if (auth) {
+                const url = new URL(request.url);
+                const permitted =
+                  url.origin === auth.bindings.OIDC_ISSUER_URL &&
+                  ((request.method === "POST" &&
+                    url.pathname === "/oauth/token") ||
+                    (request.method === "GET" &&
+                      (url.pathname === "/oauth/jwks" ||
+                        url.pathname === "/oauth/userinfo")));
+                if (permitted) return auth.fetch(request);
+              }
               outbound.blocked++;
               return new Response(null, { status: 502 });
             },
@@ -432,6 +447,20 @@ function cookie(response) {
   return raw;
 }
 
+function oidcCookie(response) {
+  const values = response.headers
+    .getSetCookie()
+    .filter(
+      (value) =>
+        value.startsWith("session=") &&
+        value.split(";", 1)[0].length > "session=".length,
+    );
+  need(values.length === 1, "oidc-session-cookie-count");
+  const raw = decodeURIComponent(values[0].split(";", 1)[0].slice(8));
+  need(raw.length > 0 && raw.length <= 256, "oidc-session-cookie-shape");
+  return raw;
+}
+
 async function login(fetcher) {
   const response = await request(fetcher, "/api/auth/login", {
     method: "POST",
@@ -458,6 +487,87 @@ async function actor(fetcher, value) {
     "fixture-actor",
   );
   return me.actor.ap_id;
+}
+
+function oidcSessionKey(rawCookie) {
+  need(
+    typeof rawCookie === "string" && rawCookie.length > 0,
+    "oidc-cookie-shape",
+  );
+  return `sha256:${digest(Buffer.from(`${OIDC_SESSION_SALT}:${rawCookie}`))}`;
+}
+
+async function oidcSessionRow(db, rawCookie, expectedActorApId) {
+  const found = await rows(
+    db,
+    "SELECT * FROM sessions WHERE id = ?",
+    oidcSessionKey(rawCookie),
+  );
+  need(
+    found.length === 1 &&
+      found[0].id === found[0].access_token &&
+      found[0].member_id === expectedActorApId &&
+      found[0].provider === "takos" &&
+      Date.parse(found[0].expires_at) > Date.now() &&
+      Date.parse(found[0].provider_token_expires_at) >
+        Date.parse(found[0].created_at),
+    "oidc-session-row",
+  );
+  return found[0];
+}
+
+async function oidcActor(fetcher, rawCookie, expectedActorApId) {
+  const me = await json(
+    await request(fetcher, "/api/auth/me", {
+      headers: { cookie: `session=${rawCookie}` },
+    }),
+    200,
+    "oidc-me",
+  );
+  need(
+    me.actor?.role === "owner" &&
+      typeof me.actor.ap_id === "string" &&
+      (expectedActorApId === undefined ||
+        me.actor.ap_id === expectedActorApId) &&
+      me.provider === "takos" &&
+      me.has_takos_access === true,
+    "oidc-owner-provider",
+  );
+  return me.actor.ap_id;
+}
+
+async function oidcAuthRows(db) {
+  return {
+    actors: await rows(
+      db,
+      "SELECT ap_id, takos_user_id, role FROM actors ORDER BY ap_id",
+    ),
+    sessions: await rows(db, "SELECT * FROM sessions ORDER BY id"),
+  };
+}
+
+async function rejectOidcCallback(h, issuer, options, error, label) {
+  const before = await oidcAuthRows(h.db);
+  const counts = issuer.evidence();
+  const attempt = await issuer.attempt(h.fetcher, request, options);
+  need(
+    attempt.callback.status === 302 &&
+      attempt.callback.headers.get("location") === `/?error=${error}` &&
+      !attempt.callback.headers
+        .getSetCookie()
+        .some((value) => value.startsWith("session=")),
+    `${label}-callback-refused`,
+  );
+  await attempt.callback.body?.cancel();
+  const after = issuer.evidence();
+  need(
+    after.token === counts.token + 1 &&
+      after.userinfo === counts.userinfo + 1 &&
+      after.jwks === counts.jwks + 1 &&
+      JSON.stringify(await oidcAuthRows(h.db)) === JSON.stringify(before),
+    `${label}-verified-token-and-no-auth-write`,
+  );
+  return attempt;
 }
 
 async function content(handles, fixture, session) {
@@ -524,15 +634,51 @@ async function bindingSnapshot(h) {
   return { kv, r2 };
 }
 
-async function createOldFixture(h) {
+async function createOldFixture(h, issuer) {
   const ready = await json(
     await request(h.fetcher, "/readyz"),
     200,
     "old-readyz",
   );
   need(ready.status === "ok", "old-readyz-body");
-  const oldCookie = await login(h.fetcher);
-  const actorApId = await actor(h.fetcher, oldCookie);
+  let oldCookie;
+  let actorApId;
+  let oidcTokens;
+  if (issuer) {
+    const methods = await json(
+      await request(h.fetcher, "/api/auth/providers"),
+      200,
+      "old-oidc-providers",
+    );
+    need(
+      methods.password_enabled === false &&
+        methods.providers?.some((provider) => provider.id === "takos"),
+      "old-oidc-only-methods",
+    );
+    oidcTokens = await issuer.login(h.fetcher, request, oidcCookie);
+    oldCookie = oidcTokens.cookie;
+    actorApId = await oidcActor(h.fetcher, oldCookie);
+    const linked = await rows(
+      h.db,
+      "SELECT ap_id, takos_user_id, role FROM actors",
+    );
+    need(
+      linked.length === 1 &&
+        linked[0].ap_id === actorApId &&
+        linked[0].takos_user_id === `takos:${OIDC_SUBJECT}` &&
+        linked[0].role === "owner",
+      "old-oidc-linked-owner",
+    );
+    await issuer.assertEncrypted(
+      await oidcSessionRow(h.db, oldCookie, actorApId),
+      oidcTokens,
+      ENCRYPTION_KEY,
+      "historical-old-oidc",
+    );
+  } else {
+    oldCookie = await login(h.fetcher);
+    actorApId = await actor(h.fetcher, oldCookie);
+  }
   const form = new FormData();
   form.set("file", new File([PNG], "historical.png", { type: "image/png" }));
   const upload = await json(
@@ -581,6 +727,7 @@ async function createOldFixture(h) {
     mediaUrl: upload.url,
     r2Key: upload.r2_key,
     oldCookie,
+    ...(oidcTokens ? { oidcTokens } : {}),
   };
   await content(h, fixture, oldCookie);
   await seedOldPushState(h.db, actorApId, postApId);
@@ -893,8 +1040,17 @@ async function withRuntime(
   outbound,
   action,
   sessionSalt,
+  auth,
 ) {
-  const runtime = makeRuntime(path, paths, ids, config, outbound, sessionSalt);
+  const runtime = makeRuntime(
+    path,
+    paths,
+    ids,
+    config,
+    outbound,
+    sessionSalt,
+    auth,
+  );
   let failed = false;
   try {
     await runtime.worker.ready;
@@ -1023,31 +1179,42 @@ async function assertRepairedPushShape(db, original) {
   );
 }
 
-export async function qualifyHistoricalUpdate(input) {
+export async function qualifyHistoricalUpdate(input, profile = "password") {
+  need(profile === "password" || profile === "oidc", "auth-profile-supported");
   const verified = verifyHistoricalInputs(input);
   const root = mkdtempSync(join(tmpdir(), "yurumeet-historical-update-"));
-  const originalPaths = pathsFor(join(root, "old-original"));
-  const ids = {
-    d1: DB_ID,
-    kv: `historical-kv-${randomUUID()}`,
-    r2: `historical-r2-${randomUUID()}`,
-  };
-  const config = unstable_readConfig(
-    { config: resolve(REPO, "wrangler.jsonc") },
-    { hideWarnings: true },
-  );
-  need(
-    config.compatibility_date === "2026-07-16" &&
-      Array.isArray(config.compatibility_flags),
-    "current-worker-compatibility-config",
-  );
-  const oldConfig = {
-    compatibility_date: "2026-07-16",
-    compatibility_flags: ["nodejs_compat", "global_fetch_strictly_public"],
-  };
-  const outbound = { blocked: 0 };
-  const migrationPath = writeMigrationOnlyModule(root);
   try {
+    const originalPaths = pathsFor(join(root, "old-original"));
+    const ids = {
+      d1: DB_ID,
+      kv: `historical-kv-${randomUUID()}`,
+      r2: `historical-r2-${randomUUID()}`,
+    };
+    const config = unstable_readConfig(
+      { config: resolve(REPO, "wrangler.jsonc") },
+      { hideWarnings: true },
+    );
+    need(
+      config.compatibility_date === "2026-07-16" &&
+        Array.isArray(config.compatibility_flags),
+      "current-worker-compatibility-config",
+    );
+    const oldConfig = {
+      compatibility_date: "2026-07-16",
+      compatibility_flags: ["nodejs_compat", "global_fetch_strictly_public"],
+    };
+    const outbound = { blocked: 0 };
+    const migrationPath = writeMigrationOnlyModule(root);
+    const issuer =
+      profile === "oidc"
+        ? await createSyntheticRestoreIssuer({
+            origin: ORIGIN,
+            need,
+            subject: OIDC_SUBJECT,
+            ownerPin: `takos:${OIDC_SUBJECT}`,
+          })
+        : null;
+    const sessionSalt = issuer ? OIDC_SESSION_SALT : undefined;
     const runner = await loadPublicRunner(root);
     const wrangler = applyOldWranglerMigrations(
       join(root, "old-original"),
@@ -1071,6 +1238,57 @@ export async function qualifyHistoricalUpdate(input) {
         );
       },
     );
+    if (issuer) {
+      const emptyClosed = inventoryClosedStores(originalPaths);
+      const refused = cloneClosedStores(
+        originalPaths,
+        join(root, "old-oidc-refusals"),
+        emptyClosed,
+      );
+      await withRuntime(
+        input.oldWorkerPath,
+        refused.paths,
+        ids,
+        oldConfig,
+        outbound,
+        async (h) => {
+          const invalidNonce = await rejectOidcCallback(
+            h,
+            issuer,
+            { wrongIdTokenNonce: true },
+            "id_token_invalid",
+            "old-oidc-wrong-id-token-nonce",
+          );
+          const tokenExchanges = issuer.evidence().token;
+          const replay = await invalidNonce.replay();
+          need(
+            replay.status === 302 &&
+              replay.headers.get("location") === "/?error=invalid_state" &&
+              issuer.evidence().token === tokenExchanges,
+            "old-oidc-replayed-state-refused",
+          );
+          await replay.body?.cancel();
+          await rejectOidcCallback(
+            h,
+            issuer,
+            { tokenSubject: OIDC_FOREIGN_SUBJECT },
+            "actor_creation_failed",
+            "old-oidc-foreign-owner-pin",
+          );
+          const authRows = await oidcAuthRows(h.db);
+          need(
+            authRows.actors.length === 0 && authRows.sessions.length === 0,
+            "old-oidc-refusals-created-no-identity",
+          );
+        },
+        sessionSalt,
+        issuer,
+      );
+      assertClosedStoreInventoriesEqual(
+        emptyClosed,
+        inventoryClosedStores(originalPaths),
+      );
+    }
     const fixture = await withRuntime(
       input.oldWorkerPath,
       originalPaths,
@@ -1078,16 +1296,27 @@ export async function qualifyHistoricalUpdate(input) {
       oldConfig,
       outbound,
       async (h) => {
-        const result = await createOldFixture(h);
+        const result = await createOldFixture(h, issuer);
         await historicalLedger(h.db);
         await oldPushShape(h.db);
         return {
           ...result,
+          ...(issuer
+            ? {
+                oidcSession: await oidcSessionRow(
+                  h.db,
+                  result.oldCookie,
+                  result.actorApId,
+                ),
+              }
+            : {}),
           snapshot: await dataSnapshot(h.db),
           projection: await originalRowProjection(h.db),
           push: await pushRows(h.db),
         };
       },
+      sessionSalt,
+      issuer,
     );
     const oldClosed = inventoryClosedStores(originalPaths);
     need(
@@ -1118,8 +1347,25 @@ export async function qualifyHistoricalUpdate(input) {
             JSON.stringify(fixture.binding),
           "independent-old-backup-all-kv-r2-keys",
         );
+        if (issuer) {
+          need(
+            JSON.stringify(
+              await oidcSessionRow(h.db, fixture.oldCookie, fixture.actorApId),
+            ) === JSON.stringify(fixture.oidcSession),
+            "independent-old-backup-oidc-session",
+          );
+          await oidcActor(h.fetcher, fixture.oldCookie, fixture.actorApId);
+          await issuer.assertEncrypted(
+            fixture.oidcSession,
+            fixture.oidcTokens,
+            ENCRYPTION_KEY,
+            "historical-backup-oidc",
+          );
+        }
         await content(h, fixture, fixture.oldCookie);
       },
+      sessionSalt,
+      issuer,
     );
     const failureClone = cloneClosedStores(
       originalPaths,
@@ -1193,6 +1439,20 @@ export async function qualifyHistoricalUpdate(input) {
           ) === JSON.stringify(fixture.projection.rows),
           "all-old-table-rows-preserved",
         );
+        if (issuer) {
+          need(
+            JSON.stringify(
+              await oidcSessionRow(db, fixture.oldCookie, fixture.actorApId),
+            ) === JSON.stringify(fixture.oidcSession),
+            "native-migration-oidc-session-ciphertext-preserved",
+          );
+          await issuer.assertEncrypted(
+            fixture.oidcSession,
+            fixture.oidcTokens,
+            ENCRYPTION_KEY,
+            "historical-migrated-oidc",
+          );
+        }
         await assertRepairedPushShape(db, fixture.push);
         upgraded = await dataSnapshot(db);
       },
@@ -1222,24 +1482,105 @@ export async function qualifyHistoricalUpdate(input) {
         );
         need((await h.kv.get(KV_KEY)) === KV_VALUE, "candidate-kv-readback");
         need((await h.r2.get(fixture.r2Key)) !== null, "candidate-r2-readback");
-        const stale = await request(h.fetcher, "/api/auth/me", {
-          headers: { cookie: `session=${fixture.oldCookie}` },
-        });
-        await stale.body?.cancel();
-        need(stale.status === 401, "old-cookie-explicit-denial");
-        const fresh = await login(h.fetcher);
-        need(
-          fresh !== fixture.oldCookie &&
-            (await actor(h.fetcher, fresh)) === fixture.actorApId,
-          "candidate-password-relogin",
-        );
-        await content(h, fixture, fresh);
+        if (issuer) {
+          need(
+            JSON.stringify(
+              await oidcSessionRow(h.db, fixture.oldCookie, fixture.actorApId),
+            ) === JSON.stringify(fixture.oidcSession),
+            "candidate-pre-http-oidc-session-preserved",
+          );
+          const originalLinks = await rows(
+            h.db,
+            "SELECT ap_id, takos_user_id, role FROM actors ORDER BY ap_id",
+          );
+          need(
+            originalLinks.length === 1 &&
+              originalLinks[0].ap_id === fixture.actorApId &&
+              originalLinks[0].takos_user_id === `takos:${OIDC_SUBJECT}` &&
+              originalLinks[0].role === "owner",
+            "candidate-pre-http-oidc-linked-owner",
+          );
+          await oidcActor(h.fetcher, fixture.oldCookie, fixture.actorApId);
+          need(
+            JSON.stringify(
+              await oidcSessionRow(h.db, fixture.oldCookie, fixture.actorApId),
+            ) === JSON.stringify(fixture.oidcSession),
+            "candidate-old-cookie-read-no-write",
+          );
+          await rejectOidcCallback(
+            h,
+            issuer,
+            { tokenSubject: OIDC_FOREIGN_SUBJECT },
+            "actor_creation_failed",
+            "candidate-oidc-foreign-subject",
+          );
+          await oidcActor(h.fetcher, fixture.oldCookie, fixture.actorApId);
+          const fresh = await issuer.login(
+            h.fetcher,
+            request,
+            oidcCookie,
+            fixture.oldCookie,
+          );
+          need(
+            fresh.cookie !== fixture.oldCookie &&
+              (await oidcActor(h.fetcher, fresh.cookie, fixture.actorApId)) ===
+                fixture.actorApId &&
+              JSON.stringify(
+                await rows(
+                  h.db,
+                  "SELECT ap_id, takos_user_id, role FROM actors ORDER BY ap_id",
+                ),
+              ) === JSON.stringify(originalLinks),
+            "candidate-same-subject-oidc-relogin",
+          );
+          const oldRow = await rows(
+            h.db,
+            "SELECT id FROM sessions WHERE id = ?",
+            oidcSessionKey(fixture.oldCookie),
+          );
+          need(oldRow.length === 0, "candidate-old-oidc-session-rotated");
+          const oldCookie = await request(h.fetcher, "/api/auth/me", {
+            headers: { cookie: `session=${fixture.oldCookie}` },
+          });
+          need(oldCookie.status === 401, "candidate-rotated-cookie-denied");
+          await oldCookie.body?.cancel();
+          const newRow = await oidcSessionRow(
+            h.db,
+            fresh.cookie,
+            fixture.actorApId,
+          );
+          need(
+            (await rows(h.db, "SELECT id FROM sessions")).length === 1,
+            "candidate-one-rotated-oidc-session",
+          );
+          await issuer.assertEncrypted(
+            newRow,
+            fresh,
+            ENCRYPTION_KEY,
+            "historical-candidate-oidc",
+          );
+          await content(h, fixture, fresh.cookie);
+        } else {
+          const stale = await request(h.fetcher, "/api/auth/me", {
+            headers: { cookie: `session=${fixture.oldCookie}` },
+          });
+          await stale.body?.cancel();
+          need(stale.status === 401, "old-cookie-explicit-denial");
+          const fresh = await login(h.fetcher);
+          need(
+            fresh !== fixture.oldCookie &&
+              (await actor(h.fetcher, fresh)) === fixture.actorApId,
+            "candidate-password-relogin",
+          );
+          await content(h, fixture, fresh);
+        }
         need(
           JSON.stringify(await pushRows(h.db)) === JSON.stringify(fixture.push),
           "candidate-push-state-preserved",
         );
       },
-      NEW_SESSION_SALT,
+      issuer ? OIDC_SESSION_SALT : NEW_SESSION_SALT,
+      issuer,
     );
     assertClosedStoreInventoriesEqual(
       oldClosed,
@@ -1255,9 +1596,24 @@ export async function qualifyHistoricalUpdate(input) {
       PINS.provenance.workerBytes,
       "old-worker-after-run",
     );
-    need(outbound.blocked === 0, "outbound-worker-request-attempted");
+    need(
+      outbound.blocked === 0 && (!issuer || issuer.evidence().blocked === 0),
+      "outbound-worker-request-attempted",
+    );
+    if (issuer) {
+      const observed = issuer.evidence();
+      need(
+        observed.token === 5 &&
+          observed.userinfo === 5 &&
+          observed.jwks === 5 &&
+          observed.logins === 2,
+        "oidc-old-and-new-callbacks-observed",
+      );
+    }
     return {
-      kind: "yurumeet.native-historical-update@v1",
+      kind: issuer
+        ? "yurumeet.native-historical-oidc-update@v1"
+        : "yurumeet.native-historical-update@v1",
       status: "PASSED",
       predecessor: {
         tag: PINS.provenance.tag,
@@ -1279,7 +1635,9 @@ export async function qualifyHistoricalUpdate(input) {
       checks: [
         "verified-published-bytes",
         "native-wrangler-old19-ledger",
-        "old-worker-password-post-png",
+        issuer
+          ? "old-worker-oidc-only-owner-post-png"
+          : "old-worker-password-post-png",
         "old-push-retry-state",
         "independent-old-backup-reopen",
         "atomic-batch-failure-rollback",
@@ -1289,13 +1647,26 @@ export async function qualifyHistoricalUpdate(input) {
         "all-old-row-projection",
         "closed-store-clone",
         "all-kv-r2-keys-and-bytes",
-        "candidate-old-cookie-denial",
-        "candidate-password-relogin-and-content",
+        issuer
+          ? "candidate-old-oidc-cookie-retained-salt"
+          : "candidate-old-cookie-denial",
+        issuer
+          ? "candidate-same-subject-oidc-rotation-and-content"
+          : "candidate-password-relogin-and-content",
+        ...(issuer
+          ? [
+              "old-wrong-nonce-and-foreign-subject-refused",
+              "current-foreign-subject-refused",
+              "old-and-new-encrypted-session-rows",
+            ]
+          : []),
       ],
       boundaries: {
         oldSchemaBundleDigest: "unreproduced; exact 19 SQL hashes verified",
         oldWorkerOnNewSchema: "not exercised",
-        oidc: "not exercised; no old supported synthetic route established",
+        oidc: issuer
+          ? "synthetic issuer only; no real issuer, grants, or token refresh"
+          : "not exercised; no old supported synthetic route established",
         liveOperatorLedger: "not inspected",
         productionMigrationAdapter: "not provided",
       },
@@ -1303,4 +1674,8 @@ export async function qualifyHistoricalUpdate(input) {
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+}
+
+export function qualifyHistoricalOidcUpdate(input) {
+  return qualifyHistoricalUpdate(input, "oidc");
 }

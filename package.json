@@ -29,7 +29,8 @@
     "fmt": "bunx prettier --write package.json index.html vite.config.ts src site scripts README.md README.en.md && tofu fmt main.tf tests/auth-password.tftest.hcl",
     "fmt:check": "bunx prettier --check package.json index.html vite.config.ts src site scripts README.md README.en.md",
     "smoke:release-ssrf": "node scripts/smoke-release-ssrf.mjs",
-    "smoke:release-update": "node scripts/smoke-release-update.mjs"
+    "smoke:release-update": "node scripts/smoke-release-update.mjs",
+    "smoke:release-oidc-update": "node scripts/smoke-release-oidc-update.mjs"
   },
   "cloudflare": {
     "bindings": {

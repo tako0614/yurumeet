@@ -42,7 +42,12 @@ function safeNeed(need, condition, label) {
   need(condition, label);
 }
 
-export async function createSyntheticRestoreIssuer({ origin, need }) {
+export async function createSyntheticRestoreIssuer({
+  origin,
+  need,
+  subject = SUBJECT,
+  ownerPin = subject,
+}) {
   const appOrigin = new URL(origin).origin;
   const keyPair = await webcrypto.subtle.generateKey(
     { name: "ECDSA", namedCurve: "P-256" },
@@ -59,7 +64,7 @@ export async function createSyntheticRestoreIssuer({ origin, need }) {
   const accessTokens = new Map();
   const counts = { jwks: 0, token: 0, userinfo: 0, blocked: 0, logins: 0 };
 
-  async function idToken(nonce) {
+  async function idToken(nonce, tokenSubject) {
     const now = Math.floor(Date.now() / 1000);
     const header = b64url(
       JSON.stringify({ alg: "ES256", kid: "restore-fixture-key", typ: "JWT" }),
@@ -70,8 +75,8 @@ export async function createSyntheticRestoreIssuer({ origin, need }) {
         aud: CLIENT,
         exp: now + 300,
         iat: now,
-        sub: SUBJECT,
-        preferred_username: SUBJECT,
+        sub: tokenSubject,
+        preferred_username: tokenSubject,
         name: "Synthetic Restore Fixture",
         nonce,
       }),
@@ -114,14 +119,14 @@ export async function createSyntheticRestoreIssuer({ origin, need }) {
       counts.token++;
       const access = randomUUID();
       const refresh = randomUUID();
-      accessTokens.set(access, SUBJECT);
+      accessTokens.set(access, code.subject);
       code.tokens = { access, refresh };
       return json({
         access_token: access,
         refresh_token: refresh,
         token_type: "Bearer",
         expires_in: 300,
-        id_token: await idToken(code.nonce),
+        id_token: await idToken(code.tokenNonce, code.subject),
       });
     }
     if (request.method === "GET" && url.pathname === "/oauth/userinfo") {
@@ -137,7 +142,15 @@ export async function createSyntheticRestoreIssuer({ origin, need }) {
     return new Response(null, { status: 502 });
   }
 
-  async function login(mf, fetchPath, activeCookieParser, existingRawCookie) {
+  async function attempt(
+    mf,
+    fetchPath,
+    {
+      existingRawCookie,
+      tokenSubject = subject,
+      wrongIdTokenNonce = false,
+    } = {},
+  ) {
     const started = await fetchPath(mf, "/api/auth/login/takos", {
       method: "GET",
       redirect: "manual",
@@ -200,6 +213,10 @@ export async function createSyntheticRestoreIssuer({ origin, need }) {
     codes.set(code, {
       challenge: params.get("code_challenge"),
       nonce: params.get("nonce"),
+      tokenNonce: wrongIdTokenNonce
+        ? `${params.get("nonce")}-mismatch`
+        : params.get("nonce"),
+      subject: tokenSubject,
       consumed: false,
     });
     const callbackCookie = [
@@ -208,18 +225,28 @@ export async function createSyntheticRestoreIssuer({ origin, need }) {
         ? ["session=" + encodeURIComponent(existingRawCookie)]
         : []),
     ].join("; ");
-    const callback = await fetchPath(
-      mf,
+    const callbackPath =
       "/api/auth/callback/takos?code=" +
-        encodeURIComponent(code) +
-        "&state=" +
-        encodeURIComponent(params.get("state") ?? ""),
-      {
-        method: "GET",
-        redirect: "manual",
-        headers: { origin: appOrigin, cookie: callbackCookie },
-      },
-    );
+      encodeURIComponent(code) +
+      "&state=" +
+      encodeURIComponent(params.get("state") ?? "");
+    const callbackInit = {
+      method: "GET",
+      redirect: "manual",
+      headers: { origin: appOrigin, cookie: callbackCookie },
+    };
+    const callback = await fetchPath(mf, callbackPath, callbackInit);
+    return {
+      callback,
+      issued: codes.get(code)?.tokens,
+      replay: () => fetchPath(mf, callbackPath, callbackInit),
+    };
+  }
+
+  async function login(mf, fetchPath, activeCookieParser, existingRawCookie) {
+    const { callback, issued } = await attempt(mf, fetchPath, {
+      existingRawCookie,
+    });
     safeNeed(
       need,
       callback.status === 302 && callback.headers.get("location") === "/",
@@ -237,7 +264,6 @@ export async function createSyntheticRestoreIssuer({ origin, need }) {
         /;\s*samesite=strict/i.test(cookieSetHeader),
       "restore-oidc-session-cookie-protected",
     );
-    const issued = codes.get(code)?.tokens;
     safeNeed(
       need,
       Boolean(issued?.access && issued?.refresh),
@@ -342,9 +368,10 @@ export async function createSyntheticRestoreIssuer({ origin, need }) {
     bindings: {
       OIDC_ISSUER_URL: ISSUER,
       OIDC_CLIENT_ID: CLIENT,
-      OIDC_OWNER_SUB: SUBJECT,
+      OIDC_OWNER_SUB: ownerPin,
     },
     fetch,
+    attempt,
     login,
     evidence() {
       return { ...counts };
