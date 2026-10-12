@@ -20,6 +20,9 @@ import {
   assertPinnedRootDefaults,
   assertStateAddresses,
   assertWorkerScriptAbsent,
+  assertCompleteNativeFull35D1Inventory,
+  withNativeFull35PostCreate,
+  writeNativeFull35CreateReceipt,
   listFilteredDomains,
   loadIntegrationTarget,
   parseIntegrationArgs,
@@ -75,12 +78,84 @@ test("only the explicit integration phase syntax is accepted", () => {
       "--phase=probe-case-parser-comparison",
     ]),
   ).toBe("probe-case-parser-comparison");
+  expect(
+    parseIntegrationArgs([
+      "--environment=integration",
+      "--phase=native-full35",
+    ]),
+  ).toBe("native-full35");
   for (const args of [
     ["--environment=production", "--phase=resources"],
     ["--environment=integration", "--phase=destroy"],
+    ["--environment=integration", "--phase=native-full36"],
     ["--environment=integration", "--phase=resources", "--auto-approve"],
   ])
     expect(() => parseIntegrationArgs(args)).toThrow();
+});
+
+test("native full-35 inventory requires one complete unique bounded D1 page and a fresh fixed name", () => {
+  const rows = [
+    { uuid: "11111111-2222-4333-8444-555555555555", name: "other-db" },
+    { uuid: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee", name: "another-db" },
+  ];
+  expect(
+    assertCompleteNativeFull35D1Inventory({
+      success: true,
+      result: rows,
+      result_info: { page: 1, per_page: 10000, count: 2, total_count: 2 },
+    }),
+  ).toEqual(rows);
+  const rejected = [
+    {
+      success: true,
+      result: rows,
+      result_info: { page: 2, per_page: 10000, count: 2, total_count: 2 },
+    },
+    {
+      success: true,
+      result: rows,
+      result_info: { page: 1, per_page: 10000, count: 1, total_count: 2 },
+    },
+    {
+      success: true,
+      result: rows,
+      result_info: { page: 1, per_page: 10000, count: 2, total_count: 3 },
+    },
+    {
+      success: true,
+      result: rows,
+      result_info: { page: 1, per_page: 10000, count: 2, total_count: 10001 },
+    },
+    {
+      success: true,
+      result: [{ ...rows[0] }, { ...rows[0] }],
+      result_info: { page: 1, per_page: 10000, count: 2, total_count: 2 },
+    },
+    {
+      success: true,
+      result: [
+        { uuid: rows[0].uuid, name: "yurumeet-ga-20261012-0938-native-full35" },
+      ],
+      result_info: { page: 1, per_page: 10000, count: 1, total_count: 1 },
+    },
+  ];
+  for (const value of rejected) {
+    expect(() => assertCompleteNativeFull35D1Inventory(value)).toThrow();
+  }
+});
+
+test("native full-35 create receipt persistence failures are post-create indeterminate", async () => {
+  const receiptWriter = () => {
+    throw new Error("private receipt disk failure");
+  };
+  await expect(
+    withNativeFull35PostCreate(async () =>
+      writeNativeFull35CreateReceipt({ uuid: "new-d1" }, receiptWriter),
+    ),
+  ).rejects.toMatchObject({
+    message: "private receipt disk failure",
+    phase: "POST_NATIVE_FULL35_INDETERMINATE",
+  });
 });
 
 test("Cloudflare success envelopes accept null errors but fail closed on contradictions", () => {

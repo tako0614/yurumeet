@@ -5,6 +5,7 @@ export type FreshIntegrationSchemaOptions = {
   repo: string;
   diagnosticsDir: string;
   fetchImpl?: (...args: Parameters<typeof fetch>) => ReturnType<typeof fetch>;
+  mode?: "original" | "native-full35";
 };
 
 export type FreshIntegrationSchemaResult = {
@@ -14,6 +15,9 @@ export type FreshIntegrationSchemaResult = {
   migrationCount: 35;
   migrations: string[];
   mapSha256: string;
+  mode?: "native-full35";
+  projectedMigration?: "0034_staged_media_retention.sql";
+  evidence?: Array<{ path: string; sha256: string }>;
 };
 
 export declare function applyFreshIntegrationSchema(
@@ -30,7 +34,24 @@ export declare const integrationSchemaTestSupport: Readonly<{
     sql: string,
     migration: string,
     migrationSql: string,
+    mode?: "original" | "native-full35",
   ): string;
+  projectNativeFull35Script(
+    sql: string,
+    migration: string,
+    migrationSql: string,
+  ): string;
+  readNativeFull35Reference(
+    repo: string,
+    inputs: unknown,
+  ): {
+    schema: unknown[];
+    ledger: unknown[];
+    foreignKeyViolations: unknown[];
+    backfill: unknown[];
+  };
+  nativeFull35DatabaseName: "yurumeet-ga-20261012-0938-native-full35";
+  nativeFull35SchemaSql: string;
   buildMigrationBatch(sql: string, migration: string): Array<{ sql: string }>;
   splitSqlStatements(sql: string): string[];
   assertEnvelope(

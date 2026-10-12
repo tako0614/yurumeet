@@ -21,6 +21,8 @@ const accountId = "a".repeat(32);
 const databaseId = "11111111-2222-4333-8444-555555555555";
 const token = "synthetic-test-token";
 const expectedDatabaseName = "yurumeet-ga-20261012-0938-db";
+const nativeFull35DatabaseName =
+  integrationSchemaTestSupport.nativeFull35DatabaseName;
 const expectedWorkerName = "yurumeet-ga-20261012-0938";
 const names = integrationSchemaTestSupport.migrationNames;
 const privateDirs: string[] = [];
@@ -83,6 +85,8 @@ function fixture(
     emptyMigrationResults?: boolean;
     ledgerPrefixMismatchAt?: number;
     readResultCount?: number;
+    databaseName?: string;
+    schemaReadbackMismatch?: boolean;
   } = {},
 ) {
   const calls: Array<{ url: string; method: string; body?: any }> = [];
@@ -123,7 +127,7 @@ function fixture(
           uuid: options.wrongDatabase
             ? "99999999-2222-4333-8444-555555555555"
             : databaseId,
-          name: expectedDatabaseName,
+          name: options.databaseName ?? expectedDatabaseName,
           ...(options.wrongDatabase ? { diagnosticEcho: token } : {}),
         },
       });
@@ -134,8 +138,21 @@ function fixture(
     const sql = typeof body?.sql === "string" ? body.sql.trim() : undefined;
     const batch = Array.isArray(body?.batch) ? body.batch : undefined;
     if (sql && batch) throw new Error("fixture rejects mixed query transports");
-    if (sql && /^SELECT\b/i.test(sql)) {
+    if (sql && /^(?:SELECT\b|PRAGMA foreign_key_check$)/i.test(sql)) {
       let rows = db.query(sql).all();
+      if (
+        options.schemaReadbackMismatch &&
+        sql === integrationSchemaTestSupport.nativeFull35SchemaSql
+      )
+        rows = [
+          ...rows,
+          {
+            type: "trigger",
+            name: "unexpected",
+            tbl_name: "actors",
+            sql: "CREATE TRIGGER unexpected",
+          },
+        ];
       if (
         sql === "SELECT name FROM yurucommu_migrations ORDER BY id" &&
         options.ledgerPrefixMismatchAt === migrationScripts
@@ -375,6 +392,106 @@ test("runner script guard rejects injected SQL, altered pinned bytes, wrong name
     ).toThrow();
 });
 
+test("native full-35 mode projects only the pinned 0034 CASE terminator and keeps trigger semantics", () => {
+  const migration = "0034_staged_media_retention.sql";
+  const raw = readFileSync(
+    resolve(repo, "node_modules/@takosjp/yurucommu-core/migrations", migration),
+    "utf8",
+  );
+  const prefix =
+    "CREATE TABLE IF NOT EXISTS yurucommu_migrations (\n  id INTEGER PRIMARY KEY AUTOINCREMENT,\n  name TEXT UNIQUE NOT NULL,\n  applied_at TEXT NOT NULL\n);";
+  const mark =
+    "INSERT INTO yurucommu_migrations (name, applied_at) VALUES ('0034_staged_media_retention.sql', '2026-10-12T10:00:00.000Z');";
+  const script = `${prefix}\n${raw.trim()}\n${mark}\n`;
+  const projected = integrationSchemaTestSupport.assertMigrationScript(
+    script,
+    migration,
+    raw,
+    "native-full35",
+  );
+  expect(projected).toContain(
+    "  SELECT (CASE WHEN NEW.allow_ambiguous=0 AND EXISTS (",
+  );
+  expect(projected).not.toContain(
+    "  SELECT CASE WHEN NEW.allow_ambiguous=0 AND EXISTS (",
+  );
+  expect(
+    projected
+      .replace("  SELECT (CASE", "  SELECT CASE")
+      .replace(" END);", " END;"),
+  ).toBe(script);
+  expect(() =>
+    integrationSchemaTestSupport.assertMigrationScript(
+      script,
+      migration,
+      raw,
+      "unknown-mode" as "original",
+    ),
+  ).toThrow("unknown integration schema proof mode");
+  for (const name of names) {
+    const source = readFileSync(
+      resolve(repo, "node_modules/@takosjp/yurucommu-core/migrations", name),
+      "utf8",
+    );
+    const unmodified = `${prefix}\n${source.trim()}\nINSERT INTO yurucommu_migrations (name, applied_at) VALUES ('${name}', '2026-10-12T10:00:00.000Z');\n`;
+    const admitted = integrationSchemaTestSupport.assertMigrationScript(
+      unmodified,
+      name,
+      source,
+      "native-full35",
+    );
+    if (name === migration) {
+      expect(admitted).toContain("  SELECT (CASE WHEN NEW.allow_ambiguous=0");
+    } else {
+      expect(admitted).toBe(unmodified);
+    }
+  }
+
+  for (const select of [
+    "SELECT CASE WHEN NEW.value = 1 THEN RAISE(ABORT,'blocked') END;",
+    "SELECT (CASE WHEN NEW.value = 1 THEN RAISE(ABORT,'blocked') END);",
+  ]) {
+    const db = new Database(":memory:");
+    try {
+      db.exec(
+        "CREATE TABLE source(value INTEGER); CREATE TRIGGER guard AFTER INSERT ON source BEGIN " +
+          select +
+          " END;",
+      );
+      expect(() => db.exec("INSERT INTO source VALUES (1)")).toThrow("blocked");
+      db.exec("INSERT INTO source VALUES (0)");
+      expect(db.query("SELECT count(*) AS count FROM source").get()).toEqual({
+        count: 1,
+      });
+    } finally {
+      db.close();
+    }
+  }
+});
+
+test("offline full-35 reference fixes ordered ledger, foreign keys, full schema and media seeds", async () => {
+  const inputs = await integrationSchemaTestSupport.verifyCoreInputs(repo);
+  const reference = integrationSchemaTestSupport.readNativeFull35Reference(
+    repo,
+    inputs,
+  );
+  expect(reference.ledger).toEqual(
+    names.map((name, index) => ({ id: index + 1, name })),
+  );
+  expect(reference.foreignKeyViolations).toEqual([]);
+  expect(reference.backfill).toEqual([
+    { source_kind: "actor", cursor: null, complete: 0 },
+    { source_kind: "community", cursor: null, complete: 0 },
+    { source_kind: "object", cursor: null, complete: 0 },
+  ]);
+  expect(
+    reference.schema.some(
+      (row: any) =>
+        row.name === "media_staged_process_input" && row.type === "trigger",
+    ),
+  ).toBe(true);
+});
+
 test("REST splitter closes CASE expressions before parentheses without splitting compound triggers", () => {
   const statements = integrationSchemaTestSupport.splitSqlStatements(
     "CREATE TRIGGER probe AFTER INSERT ON source BEGIN\n  SELECT (CASE WHEN NEW.id = 1 THEN 1 ELSE 0 END);\n  SELECT 'END)', [END)], \"END)\", `END)`; -- END) in comment\nEND;\nINSERT INTO yurucommu_migrations (name, applied_at) VALUES ('probe', '2026-10-12T00:00:00.000Z');",
@@ -535,6 +652,66 @@ test("REST batch fixture applies all 35 immutable migrations and nested triggers
   expect(triggers.length).toBeGreaterThan(0);
   expect(triggers.some((row) => /CASE[\s\S]*CASE/.test(row.sql))).toBe(true);
   expect(f.db.query("PRAGMA foreign_key_check").all()).toEqual([]);
+});
+
+test("native full-35 mode binds its one exact fixture and privately retains successful REST evidence", async () => {
+  const f = fixture({ databaseName: nativeFull35DatabaseName });
+  const privateDir = diagnosticsDir();
+  let result:
+    Awaited<ReturnType<typeof applyFreshIntegrationSchema>> | undefined;
+  await muted(async () => {
+    result = await applyFreshIntegrationSchema({
+      ...args(f.fetchImpl, privateDir),
+      mode: "native-full35",
+    });
+  });
+  expect(result).toMatchObject({
+    status: "APPLIED",
+    mode: "native-full35",
+    projectedMigration: "0034_staged_media_retention.sql",
+  });
+  expect((result?.evidence ?? []).length).toBeGreaterThan(35);
+  for (const evidence of result?.evidence ?? []) {
+    expect(statSync(evidence.path).mode & 0o777).toBe(0o600);
+    const raw = readFileSync(evidence.path, "utf8").trimEnd();
+    expect(raw).not.toContain(token);
+  }
+  const applied0034 = f.calls.find(
+    (call) =>
+      call.body?.batch &&
+      writeStatements(call)
+        .at(-1)
+        ?.includes("VALUES ('0034_staged_media_retention.sql',"),
+  );
+  const trigger = writeStatements(applied0034!).find((statement) =>
+    statement.startsWith("CREATE TRIGGER media_staged_process_input"),
+  );
+  expect(trigger).toContain("SELECT ( CASE WHEN NEW.allow_ambiguous=0");
+  expect(f.ledger).toEqual([...names]);
+
+  const original = fixture();
+  await expect(
+    applyFreshIntegrationSchema({
+      ...args(original.fetchImpl, diagnosticsDir()),
+      mode: "native-full35",
+    }),
+  ).rejects.toThrow("D1 identity");
+  expect(original.calls.some(isWriteCall)).toBe(false);
+});
+
+test("native full-35 mode refuses any full schema mismatch after the one-way migration sequence", async () => {
+  const f = fixture({
+    databaseName: nativeFull35DatabaseName,
+    schemaReadbackMismatch: true,
+  });
+  await expect(
+    applyFreshIntegrationSchema({
+      ...args(f.fetchImpl),
+      mode: "native-full35",
+    }),
+  ).rejects.toThrow("full schema objects/triggers differ");
+  expect(f.migrationScripts).toBe(35);
+  expect(f.ledger).toEqual([...names]);
 });
 
 test("0034 REST batch preserves Wrangler statement order, compound CASE trigger and final ledger mark", async () => {

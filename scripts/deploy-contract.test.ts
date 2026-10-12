@@ -158,6 +158,12 @@ describe("deploy contract", () => {
       "probe-case-parser-comparison creates only the two remaining parenthesized/values fixtures",
     );
     expect(integration?.obligations["post-conditions"]).toContain(
+      "native-full35 creates only the one fixed standalone D1 fixture",
+    );
+    expect(integration?.obligations["post-conditions"]).toContain(
+      "only the exact 0034 CASE projection",
+    );
+    expect(integration?.obligations["post-conditions"]).toContain(
       "persists private 0600 raw before/after sqlite_master responses with SHA-256 values",
     );
     expect(integration?.obligations["pre-mutation-proof"]).toContain(
@@ -170,6 +176,9 @@ describe("deploy contract", () => {
       "empty SQLite schema",
     );
     expect(integration?.obligations["pre-mutation-proof"]).toContain(
+      "native-full35 uses only the exact new name yurumeet-ga-20261012-0938-native-full35",
+    );
+    expect(integration?.obligations["pre-mutation-proof"]).toContain(
       "no retry, reuse, or deletion",
     );
     expect(integration?.obligations.reversal).toContain(
@@ -179,6 +188,7 @@ describe("deploy contract", () => {
       "POST_APPLY_INDETERMINATE",
       "POST_SCHEMA_INDETERMINATE",
       "POST_PARSER_PROBE_INDETERMINATE",
+      "POST_NATIVE_FULL35_INDETERMINATE",
       "POST_DOMAIN_INDETERMINATE",
     ]) {
       expect(integration?.obligations["failure-handling"]).toContain(phase);

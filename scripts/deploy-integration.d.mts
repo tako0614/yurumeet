@@ -32,6 +32,16 @@ export function assertCreateOnlyPlan(
 ): void;
 export function assertDomainChangeset(changeset: unknown): void;
 export function assertWorkerScriptAbsent(value: unknown): void;
+export function assertCompleteNativeFull35D1Inventory(
+  value: unknown,
+): unknown[];
+export function withNativeFull35PostCreate<T>(
+  action: () => T | Promise<T>,
+): Promise<T>;
+export function writeNativeFull35CreateReceipt(
+  receipt: unknown,
+  writer?: (label: string, output: string) => string,
+): string;
 export function assertInventoryPage(
   body: unknown,
   page: number,
