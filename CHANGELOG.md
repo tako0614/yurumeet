@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+## 0.2.0 - 2026-10-12
+
+- Adopt the published Core/API 4.1.14 and its 35-migration schema bundle,
+  including authentication revocation, media deletion fencing and guarded SQL
+  fixes. Existing deployments must preserve their session hash salt and
+  encryption key and follow the owning schema/update procedure.
+- Validate the full-stack Worker through native D1, Queue and browser fixtures,
+  including federation signatures, actor binding, delivery retries, foreign
+  activity identifiers and private-network request refusals.
+- Rehearse populated v0.1.2-to-current password and synthetic OIDC update/restore
+  paths without changing a real installation. These fixtures do not establish
+  a real issuer, physical-device or production-runtime qualification.
+- Publish an immutable Worker from one clean source commit, verify the exact
+  candidate and downloaded bytes, and append the actual release lock after
+  publication. Managed installation remains closed pending Host conformance.
+
 - Raise the `@takosjp/yurucommu-core` / `-api` floor to 4.1.5 and make
   `bun run check:core-release` part of `bun run check`, so a release that lacks
   a required export fails a commit instead of a deployment.

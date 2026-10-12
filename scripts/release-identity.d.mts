@@ -12,6 +12,10 @@ export function releaseIdentityFailures(input: {
   takoformSource: string;
 }): string[];
 
+export function releaseCandidateIdentityFailures(
+  input: Parameters<typeof releaseIdentityFailures>[0],
+): string[];
+
 export function terraformStringDefault(
   source: string,
   variable: string,

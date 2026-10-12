@@ -226,10 +226,28 @@ bun run deploy -- yurumeet-site --environment=integration|production
 
 `yurumeet-worker-release` だけが、利用者が pin する identity を作ります。tag は
 `package.json` の version から 1 つだけ導き、既存の tag や Release があれば作成前に
-安全側に停止します。`package.json`・root module の tag 既定値・追記のみの
-`release.lock.json`・`.well-known/takosumi.json`・`deploy/takoform/` の source build
-が同じ release を指していないときも、publish を始める前に止めます。この整合は
-`bun run check` でも毎回検査します。
+安全側に停止します。公開前の source commit は新しい tag の lock entry を含めません。
+entry にその commit 自身と、その commit を記す manifest の digest を書くことは
+循環するためです。準備段階では root module の tag 既定値を新しい
+`package.json` version に進め、同じ tag の `worker.js` の GitHub URL と実測した
+Worker SHA-256 を既定値に設定します。新しい tag が `release.lock.json` にまだないこと、
+root module の URL・SHA が候補と一致すること、`.well-known/takosumi.json` と
+`deploy/takoform/` の source build が正しいことを検査します。owner gate が生成した
+Worker を候補 asset にコピーし、その SHA-256 と manifest を測定して runtime-native
+smoke を通します。`--dry-run` はここまでを検証し、公開しません。
+この source commit の tag は Release 作成まで 404 を返す準備中の URL です。
+公開 readback が済むまで root module の install を開始しません。
+
+公開文面には `CHANGELOG.md` の当該 version の節をそのまま使い、節がなければ公開前に停止します。
+`--execute` は clean な `main` が push 済みであること、候補 asset が変わっていないこと、
+tag と Release が依然として存在しないことを再確認し、repository の immutable-release
+設定を読み取ってから create-only で公開します。公開後は tag の commit、Release の
+immutable 状態、ちょうど 3 個の asset と download digest、ダウンロードした Worker の
+runtime-native smoke を照合します。**その readback の後**、実際に公開された commit と
+manifest digest の pin を `release.lock.json` に追記する別 commit を作ります。
+その時点で root `main.tf` の URL・SHA 既定値を空に戻し、公開済み lock pin を使う
+形にもできます。公開済み pin は書き換えません。通常の `bun run check` は
+未公開の候補なら厳密な tag・URL・SHA、公開済みなら lock pin との一致を検査します。
 
 `yurumeet-worker` は公開前に、`YURUMEET_WRANGLER_CONFIG` の実現済み strict JSON
 config と実配信 Version の DB が一致することを確認し、その Version の実 DB ID の

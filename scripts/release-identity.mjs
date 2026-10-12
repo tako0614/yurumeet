@@ -1,16 +1,25 @@
-// Do five hand-edited documents describe one release?
+// Do the installed release and a proposed release each have a truthful identity?
 //
 // A Yurumeet release is not one file. `package.json` carries the version the tag
 // comes from; `main.tf` says which release the direct-Cloudflare module installs;
-// `release.lock.json` pins the artifact and manifest digests; the repository
-// manifest says those pins are module defaults rather than questions asked of an
-// installer; and `deploy/takoform` must build from the selected source instead of
-// downloading a release. They are edited at different times, by hand, and
-// nothing before this made them agree.
+// `release.lock.json` pins only published artifact and manifest digests; the
+// repository manifest says module inputs are defaults rather than questions
+// asked of an installer; and `deploy/takoform` builds from selected source.
+// A new release cannot have a lock pin in its own source commit: that pin would
+// contain the commit and manifest digest of the commit that contains the pin.
+// Publication therefore validates an exact URL and measured digest candidate,
+// then appends the actual pin afterward.
 //
 // This is a pure function over already-read documents so `bun run check` can ask
 // the question of the current worktree, not only a publish can. The list it
 // returns is empty or it is the reason to refuse.
+
+import {
+  RELEASE_ASSET_NAME,
+  RELEASE_MANIFEST_NAME,
+  buildReleaseManifest,
+  releaseAssetUrl,
+} from "./release-artifact-manifest.mjs";
 
 export function releaseIdentityFailures({
   tag,
@@ -27,18 +36,31 @@ export function releaseIdentityFailures({
 }) {
   const failures = [];
 
-  const moduleDefaults = [
-    ["worker_release_tag", tag],
-    // The lock is the authority in release mode. A non-empty URL or digest
-    // default would install bytes the lock never pinned.
-    ["worker_bundle_url", ""],
-    ["worker_bundle_sha256", ""],
-  ];
-  for (const [variable, expected] of moduleDefaults) {
-    const actual = terraformStringDefault(moduleSource, variable);
-    if (actual !== expected) {
+  const moduleTag = terraformStringDefault(moduleSource, "worker_release_tag");
+  const moduleUrl = terraformStringDefault(moduleSource, "worker_bundle_url");
+  const moduleDigest = terraformStringDefault(
+    moduleSource,
+    "worker_bundle_sha256",
+  );
+  if (moduleTag !== tag) {
+    failures.push(
+      `main.tf worker_release_tag default is ${show(moduleTag)}, expected ${JSON.stringify(tag)}`,
+    );
+  }
+  if (moduleUrl === "" && moduleDigest === "") {
+    // Published lock mode: the pin supplies the artifact URL and digest.
+  } else {
+    if (moduleUrl !== assetUrl) {
       failures.push(
-        `main.tf ${variable} default is ${show(actual)}, expected ${JSON.stringify(expected)}`,
+        `main.tf worker_bundle_url default is ${show(moduleUrl)}, expected ${JSON.stringify(assetUrl)}`,
+      );
+    }
+    if (
+      moduleDigest !== bundleDigest &&
+      moduleDigest !== `sha256:${bundleDigest}`
+    ) {
+      failures.push(
+        `main.tf worker_bundle_sha256 default is ${show(moduleDigest)}, expected ${JSON.stringify(bundleDigest)}`,
       );
     }
   }
@@ -68,6 +90,12 @@ export function releaseIdentityFailures({
     );
   failures.push(...lockFailures);
 
+  failures.push(...releaseRepositoryFailures({ repository, takoformSource }));
+  return failures;
+}
+
+function releaseRepositoryFailures({ repository, takoformSource }) {
+  const failures = [];
   if (
     repository?.apiVersion !== "takosumi.com/v2.4" ||
     repository?.kind !== "Repository"
@@ -137,6 +165,100 @@ export function releaseIdentityFailures({
     );
   }
 
+  return failures;
+}
+
+/**
+ * Verify an unpublished candidate without inventing a future lock entry.
+ * The root module selects the candidate's exact tag, URL, and measured Worker
+ * digest while its lock entry is absent. This function is separate from the
+ * strict published-pin validator above; ordinary callers cannot accept a
+ * missing lock entry by accident.
+ */
+export function releaseCandidateIdentityFailures(candidate) {
+  const {
+    tag,
+    commit,
+    assetName,
+    assetUrl,
+    manifestUrl,
+    bundleDigest,
+    manifestDigest,
+    moduleSource,
+    lock,
+    repository,
+    takoformSource,
+  } = candidate;
+  const failures = [];
+  if (!/^v[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$/u.test(tag)) {
+    failures.push(`candidate tag ${show(tag)} is not a SemVer release tag`);
+  }
+  if (!/^[a-f0-9]{40}$/u.test(commit)) {
+    failures.push(`candidate commit ${show(commit)} is not a full Git SHA`);
+  }
+  if (!/^[a-f0-9]{64}$/u.test(bundleDigest)) {
+    failures.push(
+      `candidate Worker digest ${show(bundleDigest)} is not SHA-256`,
+    );
+  }
+  if (
+    assetName !== RELEASE_ASSET_NAME ||
+    assetUrl !== releaseAssetUrl(tag, RELEASE_ASSET_NAME)
+  ) {
+    failures.push("candidate Worker asset name or URL does not match its tag");
+  }
+  if (manifestUrl !== releaseAssetUrl(tag, RELEASE_MANIFEST_NAME)) {
+    failures.push("candidate manifest URL does not match its tag");
+  }
+  if (
+    /^[a-f0-9]{40}$/u.test(commit) &&
+    /^[a-f0-9]{64}$/u.test(bundleDigest) &&
+    manifestDigest !==
+      buildReleaseManifest({ commit, tag, bundleDigest }).digest
+  ) {
+    failures.push(
+      "candidate manifest digest does not match the exact manifest bytes",
+    );
+  }
+  if (Object.hasOwn(lock?.releases ?? {}, tag)) {
+    failures.push(
+      `release.lock.json releases.${tag} already exists; a candidate must be unpublished`,
+    );
+  }
+
+  if (
+    lock?.kind !== "takos.release-artifact-lock@v1" ||
+    lock?.app !== "yurumeet"
+  ) {
+    failures.push(
+      "release.lock.json is not a yurumeet takos.release-artifact-lock@v1",
+    );
+  }
+  const moduleTag = terraformStringDefault(moduleSource, "worker_release_tag");
+  const moduleUrl = terraformStringDefault(moduleSource, "worker_bundle_url");
+  const moduleDigest = terraformStringDefault(
+    moduleSource,
+    "worker_bundle_sha256",
+  );
+  if (moduleTag !== tag) {
+    failures.push(
+      `main.tf worker_release_tag default is ${show(moduleTag)}, expected ${JSON.stringify(tag)}`,
+    );
+  }
+  if (moduleUrl !== assetUrl) {
+    failures.push(
+      `main.tf worker_bundle_url default is ${show(moduleUrl)}, expected ${JSON.stringify(assetUrl)}`,
+    );
+  }
+  if (
+    moduleDigest !== bundleDigest &&
+    moduleDigest !== `sha256:${bundleDigest}`
+  ) {
+    failures.push(
+      `main.tf worker_bundle_sha256 default is ${show(moduleDigest)}, expected ${JSON.stringify(bundleDigest)}`,
+    );
+  }
+  failures.push(...releaseRepositoryFailures({ repository, takoformSource }));
   return failures;
 }
 

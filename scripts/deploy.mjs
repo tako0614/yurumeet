@@ -30,6 +30,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -44,11 +45,10 @@ import {
   RELEASE_MANIFEST_NAME,
   RELEASE_REPOSITORY,
   buildReleaseChecksum,
-  buildReleaseLockEntry,
   buildReleaseManifest,
   releaseAssetUrl,
 } from "./release-artifact-manifest.mjs";
-import { releaseIdentityFailures } from "./release-identity.mjs";
+import { releaseCandidateIdentityFailures } from "./release-identity.mjs";
 import { MEDIA_DELETION_SCHEMA_QUERY } from "./check-media-deletion-schema.mjs";
 import {
   CORE_UPGRADE_MIGRATIONS,
@@ -145,7 +145,9 @@ const CONTRACT = {
         "deploy/takoform/main.tf",
         "main.tf",
         "package.json",
+        "CHANGELOG.md",
         "release.lock.json",
+        "scripts/release-identity.mjs",
         "scripts/build-takos-worker.ts",
         "scripts/release-artifact-manifest.mjs",
         "scripts/smoke-release-worker.mjs",
@@ -157,15 +159,15 @@ const CONTRACT = {
       triggers: ["published-identity", "authority"],
       obligations: {
         provenance:
-          "refuses a dirty, detached, or unpushed worktree; requires main for publication; runs `bun run check`; builds and boots the embedded Worker from that exact commit; requires package.json, the direct-Cloudflare module's release-tag default, the append-only release.lock.json pin, the repository manifest's module_default release inputs, and the deploy/takoform sourceBuild assets to identify the same tag, commit, and artifact digest; and records the source commit plus SHA-256 in the release manifest",
+          "refuses a dirty, detached, or unpushed worktree; requires main for publication; requires the exact package version's CHANGELOG.md section as release notes; runs `bun run check`; copies and boots the embedded Worker from that exact commit; requires the new package.json tag to be absent from release.lock.json while the direct-Cloudflare module defaults name that exact tag, GitHub worker.js asset URL, and measured Worker SHA-256; verifies repository module_default inputs and deploy/takoform sourceBuild assets; records the source commit and SHA-256 in the release manifest; rechecks clean remote HEAD and candidate bytes immediately before create",
         "post-conditions":
-          "reads the create-only tag and GitHub Release back, requires the tag to resolve to the source commit and the Release to report isImmutable:true, downloads all three assets, requires their exact SHA-256 digests, and boots the downloaded Worker in workerd with runtime-native DB/KV/MEDIA/queue bindings",
+          "reads the create-only tag and GitHub Release back, requires the tag to resolve to the source commit and the Release to report isImmutable:true, requires exactly the three expected assets, downloads them, requires their exact SHA-256 digests, and boots the downloaded Worker in workerd with runtime-native DB/KV/MEDIA/queue bindings; only after this readback may a separate source commit append the actual release.lock.json pin and optionally switch the root module from exact explicit URL/digest defaults to lock mode",
         reversal:
           "the release identity is never replaced or deleted by this entrypoint; consumers remain able to pin the preceding release through release.lock.json, and a defect is repaired by publishing a higher version",
         "failure-handling":
-          "fails before mutation when the tag, the release, or an aligned lock pin is missing or already taken, printing the exact release.lock.json entry the publish requires; after release creation starts it reports an indeterminate publication and requires authoritative tag/release readback before any retry",
+          "fails before mutation when the candidate tag/release already exists, a candidate lock pin was prewritten, the root module candidate URL/digest differs from measured bytes, source moved, or copied assets changed; after release creation starts it reports an indeterminate publication and requires authoritative tag/release readback before any retry",
         "no-overwrite":
-          "derives one SemVer tag from package.json, refuses any existing local/remote tag or GitHub Release, reads repos/tako0614/yurumeet/immutable-releases immediately before create and requires enabled:true, requires post-readback isImmutable:true, and uses GitHub create-only release publication without update or delete paths",
+          "derives one SemVer tag from package.json, checks existing local/remote tag and GitHub Release both before and after qualification, reads repos/tako0614/yurumeet/immutable-releases immediately before create and requires enabled:true, requires post-readback isImmutable:true, and uses GitHub create-only release publication without update or delete paths",
         "independent-review":
           "before publishing, independently review exact source, native artifact, and CI evidence for the immutable Worker's required YURUCOMMU_SESSION_HASH_SALT runtime contract and the direct publisher's strict config declaration; this release proves no deployed secret value or active binding, which remains separate operator-owned custody and must be preserved exactly",
       },
@@ -222,16 +224,19 @@ const run = (c, a) =>
 const digest = (b) => createHash("sha256").update(b).digest("hex");
 
 /**
- * One release is identified by five documents that are edited by hand at
- * different times. `releaseIdentityFailures` asks whether they agree; this
- * reads them and, when they do not, prints the exact `release.lock.json` entry
- * the publish requires. The entry cannot be guessed by hand — its manifest
- * digest is the digest of bytes this script produces — so naming what is
- * missing is not enough to act on.
+ * An unpublished candidate is measured from this source commit. Its future
+ * lock pin cannot be in this same commit, so verify that it is absent while
+ * the root module resolves this exact tag, URL, and measured Worker digest.
+ * A separate follow-up commit records the pin after publication readback.
  */
-function requireReleaseIdentity({ tag, commit, bundleDigest, manifestDigest }) {
+function requireCandidateIdentity({
+  tag,
+  commit,
+  bundleDigest,
+  manifestDigest,
+}) {
   const read = (path) => readFileSync(resolve(repo, path), "utf8");
-  const failures = releaseIdentityFailures({
+  const failures = releaseCandidateIdentityFailures({
     tag,
     commit,
     assetName: R.asset,
@@ -245,16 +250,8 @@ function requireReleaseIdentity({ tag, commit, bundleDigest, manifestDigest }) {
     takoformSource: read("deploy/takoform/main.tf"),
   });
   if (failures.length === 0) return;
-
-  if (failures.some((failure) => failure.startsWith(`${R.lock} releases.`))) {
-    failures.push(
-      `add this ${R.lock} entry under releases.${tag} and re-run: ${JSON.stringify(
-        buildReleaseLockEntry({ commit, tag, bundleDigest, manifestDigest }),
-      )}`,
-    );
-  }
   die(
-    "package, direct-Cloudflare module, release lock, repository manifest, and built Worker do not identify one release",
+    "candidate identity, root module tag/URL/digest, repository manifest, and copied Worker do not agree",
     failures,
   );
 }
@@ -364,23 +361,7 @@ function requireRepositoryImmutableReleases() {
   process.stdout.write(`${endpoint} enabled:true\n`);
 }
 
-function publishWorkerRelease() {
-  if (
-    process.argv.includes("--execute") &&
-    process.argv.includes("--dry-run")
-  ) {
-    die("choose exactly one of --dry-run or --execute");
-  }
-  const execute = process.argv.includes("--execute");
-  const { branch, commit } = requireCleanPushedSource(execute);
-  const packageJson = JSON.parse(
-    readFileSync(resolve(repo, "package.json"), "utf8"),
-  );
-  const version = String(packageJson.version ?? "");
-  if (!/^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$/u.test(version)) {
-    die(`package.json version ${JSON.stringify(version)} is not SemVer`);
-  }
-  const tag = `v${version}`;
+function requireReleaseAbsent(tag) {
   if (git("tag", "--list", tag) !== "") die(`local tag ${tag} already exists`);
   const remoteTag = run("git", [
     "ls-remote",
@@ -398,6 +379,54 @@ function publishWorkerRelease() {
       die(`cannot prove GitHub Release ${tag} is absent: ${stderr.trim()}`);
     }
   }
+}
+
+function requireCandidateAssetsUnchanged(paths, expectedDigests) {
+  for (const [name, path] of Object.entries(paths)) {
+    const actual = digest(readFileSync(path));
+    if (actual !== expectedDigests[name]) {
+      die(
+        `candidate ${name} changed after native verification: sha256:${actual}`,
+      );
+    }
+  }
+}
+
+function requireReleaseNotes(version) {
+  const source = readFileSync(resolve(repo, "CHANGELOG.md"), "utf8");
+  const headings = [...source.matchAll(/^## ([^\s]+)[^\n]*$/gmu)];
+  const current = headings.find((heading) => heading[1] === version);
+  if (!current)
+    die(`CHANGELOG.md has no section for package version ${version}`);
+  const next = headings.find((heading) => heading.index > current.index);
+  const section = `${source.slice(current.index, next?.index ?? source.length).trimEnd()}\n`;
+  if (!section.slice(current[0].length).trim()) {
+    die(
+      `CHANGELOG.md section for package version ${version} has no release notes`,
+    );
+  }
+  return section;
+}
+
+function publishWorkerRelease() {
+  if (
+    process.argv.includes("--execute") &&
+    process.argv.includes("--dry-run")
+  ) {
+    die("choose exactly one of --dry-run or --execute");
+  }
+  const execute = process.argv.includes("--execute");
+  const { branch, commit } = requireCleanPushedSource(execute);
+  const packageJson = JSON.parse(
+    readFileSync(resolve(repo, "package.json"), "utf8"),
+  );
+  const version = String(packageJson.version ?? "");
+  if (!/^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$/u.test(version)) {
+    die(`package.json version ${JSON.stringify(version)} is not SemVer`);
+  }
+  const tag = `v${version}`;
+  const releaseNotes = requireReleaseNotes(version);
+  requireReleaseAbsent(tag);
 
   process.stdout.write(`source ${commit} (${branch})\n`);
   process.stdout.write(`\n==> ${OWNER_GATE}\n`);
@@ -413,15 +442,17 @@ function publishWorkerRelease() {
       bundleDigest,
     },
   );
-  requireReleaseIdentity({ tag, commit, bundleDigest, manifestDigest });
+  requireCandidateIdentity({ tag, commit, bundleDigest, manifestDigest });
 
   const releaseDir = mkdtempSync(resolve(tmpdir(), "yurumeet-release-"));
   const artifactPath = resolve(releaseDir, R.asset);
   const manifestPath = resolve(releaseDir, R.manifest);
   const checksumPath = resolve(releaseDir, R.checksum);
+  const notesPath = resolve(releaseDir, "release-notes.md");
   copyFileSync(bundlePath, artifactPath);
   writeFileSync(manifestPath, manifestBytes);
   writeFileSync(checksumPath, buildReleaseChecksum(bundleDigest));
+  writeFileSync(notesPath, releaseNotes);
   const expectedDigests = {
     [R.asset]: bundleDigest,
     [R.manifest]: manifestDigest,
@@ -429,6 +460,22 @@ function publishWorkerRelease() {
   };
 
   smokeReleaseArtifact(artifactPath, bundleDigest);
+  const candidatePaths = {
+    [R.asset]: artifactPath,
+    [R.manifest]: manifestPath,
+    [R.checksum]: checksumPath,
+  };
+  const refreshed = requireCleanPushedSource(execute);
+  if (refreshed.commit !== commit || refreshed.branch !== branch) {
+    die(
+      `source moved after candidate verification: ${branch} ${commit} -> ${refreshed.branch} ${refreshed.commit}`,
+    );
+  }
+  requireReleaseAbsent(tag);
+  requireCandidateAssetsUnchanged(candidatePaths, expectedDigests);
+  if (readFileSync(notesPath, "utf8") !== releaseNotes) {
+    die("candidate release notes changed after source verification");
+  }
   process.stdout.write(`candidate ${tag} ${R.bundle} sha256:${bundleDigest}\n`);
   if (!execute) {
     process.stdout.write(
@@ -439,7 +486,7 @@ function publishWorkerRelease() {
           target: `github-release:${R.repository}/${tag}`,
           commit,
           tag,
-          sourceIdentity: "PACKAGE_MODULE_LOCK_REPOSITORY_ARTIFACT_ALIGNED",
+          sourceIdentity: "UNPUBLISHED_CANDIDATE_EXACT_MODULE_ASSET_VALIDATED",
           assetDigests: expectedDigests,
           status: "DRY_RUN_VERIFIED",
         },
@@ -467,8 +514,8 @@ function publishWorkerRelease() {
       commit,
       "--title",
       `Yurumeet ${tag}`,
-      "--notes",
-      `Worker release built from ${commit}.`,
+      "--notes-file",
+      notesPath,
     ]);
     process.stdout.write(output);
   } catch (error) {
@@ -512,9 +559,19 @@ function publishWorkerRelease() {
       `published Release ${tag} has unexpected state (isImmutable=${String(release.isImmutable)})`,
     );
   }
+  if (!Array.isArray(release.assets)) {
+    die(`published Release ${tag} did not report an asset inventory`);
+  }
   const remoteAssets = new Map(
     release.assets.map((asset) => [asset.name, asset.digest]),
   );
+  const expectedNames = Object.keys(expectedDigests).sort();
+  const actualNames = release.assets.map((asset) => asset.name).sort();
+  if (JSON.stringify(actualNames) !== JSON.stringify(expectedNames)) {
+    die(
+      `published Release ${tag} asset inventory ${JSON.stringify(actualNames)} does not equal ${JSON.stringify(expectedNames)}`,
+    );
+  }
   for (const [name, expected] of Object.entries(expectedDigests)) {
     if (remoteAssets.get(name) !== `sha256:${expected}`) {
       die(
@@ -534,6 +591,12 @@ function publishWorkerRelease() {
     "--dir",
     downloadDir,
   ]);
+  const downloadedNames = readdirSync(downloadDir).sort();
+  if (JSON.stringify(downloadedNames) !== JSON.stringify(expectedNames)) {
+    die(
+      `downloaded Release ${tag} asset inventory ${JSON.stringify(downloadedNames)} does not equal ${JSON.stringify(expectedNames)}`,
+    );
+  }
   for (const [name, expected] of Object.entries(expectedDigests)) {
     const actual = digest(readFileSync(resolve(downloadDir, name)));
     if (actual !== expected) {
@@ -552,7 +615,7 @@ function publishWorkerRelease() {
         target: `github-release:${R.repository}/${tag}`,
         commit,
         tag,
-        sourceIdentity: "PACKAGE_MODULE_LOCK_REPOSITORY_ARTIFACT_ALIGNED",
+        sourceIdentity: "UNPUBLISHED_CANDIDATE_EXACT_MODULE_ASSET_VALIDATED",
         releaseUrl: release.url,
         assetDigests: expectedDigests,
         postConditions: "EXACT_RELEASE_READBACK_AND_RUNTIME_NATIVE_SMOKE",
