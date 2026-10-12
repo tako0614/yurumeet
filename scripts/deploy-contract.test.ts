@@ -40,6 +40,7 @@ describe("deploy contract", () => {
       "yurumeet-worker",
       "yurumeet-worker-release",
       "yurumeet-site",
+      "yurumeet-integration",
     ]);
   });
 
@@ -128,6 +129,35 @@ describe("deploy contract", () => {
 
   test("keeps the checked-in Wrangler config as the flexible local-dev template", () => {
     expect(wranglerConfig.secrets).toBeUndefined();
+  });
+
+  test("declares the isolated Yurumeet integration phases and safeguards", () => {
+    const integration = surfaceOf("yurumeet-integration");
+    expect(integration?.target).toContain("ga-meet-20261012.yurucommu.com");
+    expect(integration?.triggers).toEqual(["authority", "irreversible"]);
+    expect(integration?.covers).toContain("scripts/deploy-integration.mjs");
+    expect(integration?.covers).toContain(
+      "scripts/deploy-integration-schema.mjs",
+    );
+    expect(integration?.covers).toContain("wrangler.jsonc");
+    expect(integration?.obligations.provenance).toContain("v0.2.0");
+    expect(integration?.obligations["post-conditions"]).toContain("fresh D1");
+    expect(integration?.obligations["pre-mutation-proof"]).toContain(
+      "empty SQLite schema",
+    );
+    expect(integration?.obligations.reversal).toContain(
+      "automatic rollback path",
+    );
+    for (const phase of [
+      "POST_APPLY_INDETERMINATE",
+      "POST_SCHEMA_INDETERMINATE",
+      "POST_DOMAIN_INDETERMINATE",
+    ]) {
+      expect(integration?.obligations["failure-handling"]).toContain(phase);
+    }
+    expect(integration?.obligations["independent-review"]).toContain(
+      "custom-domain changeset/no-overwrite flags",
+    );
   });
 
   test("declares the supported Node host for native release qualification", () => {

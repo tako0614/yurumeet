@@ -8,19 +8,21 @@
 //   bun run deploy -- yurumeet-worker
 //   bun run deploy -- yurumeet-worker-release [--dry-run|--execute]
 //   bun run deploy -- yurumeet-site --environment=integration|production
+//   bun run deploy -- yurumeet-integration --environment=integration --phase=<phase>
 //
-// 3 つの surface は publish するものが違い、負う obligation も違います。
+// 既存の3つの surface は publish するものが違い、負う obligation も違います。
 // worker は session secret の継承設定を admission する authority-sensitive surface、
 // worker-release は consumer が pin する identity を mint する published-identity
 // surface、site は静的な landing site です。
 //
-// どの surface も publish するのは **code と静的 asset だけ** です。durable store
+// これら3つが publish するのは **code と静的 asset だけ** です。durable store
 // (D1 DB / KV / R2 MEDIA) は変更しません。Worker publish 前には D1 を SELECT だけで
-// 読み、Core 4.1.13 が必要とする migration 0030–0036 の metadata を確認します。schema 変更は
-// `irreversible` な別の作業で、この entrypoint の副作用として起きてはいけません。
+// 読み、Core 4.1.14 が必要とする migration 0030–0036 の metadata を確認します。
 // ⚠ yurucommu 系の live D1 は `_cf_migrations` 台帳が実態とずれています。
 // `wrangler d1 migrations apply` を絶対に走らせないこと。schema 変更は
 // operator が別途行う手順です。この script は台帳と schema metadata を read-only で確認します。
+// yurumeet-integration は別 surface であり、厳密に固定した新規 Cloudflare
+// resources、empty D1 fresh-schema、Worker activation と isolated custom domain だけを扱います。
 
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
@@ -189,6 +191,51 @@ const CONTRACT = {
           "reports PRE_UPLOAD_FAILURE before Wrangler is invoked or POST_UPLOAD_INDETERMINATE after upload begins; it never retries or rolls back automatically",
       },
     },
+    {
+      surface: "yurumeet-integration",
+      target:
+        "cloudflare:isolated Yurumeet GA integration resources and ga-meet-20261012.yurucommu.com",
+      covers: [
+        "scripts/deploy.mjs",
+        "scripts/deploy-integration.mjs",
+        "scripts/deploy-integration.d.mts",
+        "scripts/deploy-integration.test.ts",
+        "scripts/deploy-integration-schema.mjs",
+        "scripts/deploy-integration-schema.d.mts",
+        "scripts/deploy-integration-schema.test.ts",
+        "main.tf",
+        "outputs.tf",
+        "package.json",
+        "release.lock.json",
+        "wrangler.jsonc",
+        ".terraform.lock.hcl",
+        "docs/deploy-integration.md",
+      ],
+      requiresScripts: ["deploy"],
+      requiresTools: ["git", "bun", "tofu", "node"],
+      requiresEnv: [
+        "YURUMEET_INTEGRATION_TARGET",
+        "CLOUDFLARE_API_TOKEN",
+        "TF_VAR_encryption_key",
+        "TF_VAR_session_hash_salt",
+        "TF_VAR_auth_password_hash",
+      ],
+      triggers: ["authority", "irreversible"],
+      obligations: {
+        provenance:
+          "requires YURUMEET_INTEGRATION_TARGET and ephemeral CLOUDFLARE_API_TOKEN; binds one private target file to the exact clean reviewed source commit, existing Cloudflare account/zone, isolated origin and resource prefix, and immutable release.lock.json v0.2.0 Worker SHA-256; activation requires ephemeral TF_VAR_encryption_key, TF_VAR_session_hash_salt, and TF_VAR_auth_password_hash; runs each explicit integration phase independently and preserves private OpenTofu state/plan outside Git worktrees",
+        "post-conditions":
+          "preflight proves exact zone ownership and complete paginated no-takeover inventories; resources creates only the new D1/R2/KV/Queues/random identifier with Worker disabled; fresh-schema executes only the published Core 4.1.14 migration set on that fresh D1; activate creates only the Worker/queue consumers/cron with ephemeral test credentials; domain requires one exact changeset addition and reads back the exact hostname/service/zone before checking the public origin; APPLIED state and HTTP 2xx do not qualify Worker binding closure or product use, which require a separate exact provider GET/readback and scoped authenticated user smoke before any live-qualified or GA claim",
+        reversal:
+          "all resources are isolated integration fixtures; on failure, stop and inspect authoritative Cloudflare and private OpenTofu state, then use an independently reviewed forward cleanup after preserving evidence; no destroy or automatic rollback path is included",
+        "failure-handling":
+          "denied, malformed, incomplete, colliding, or uncertain preflight refuses progress; apply/state-readback failures are POST_APPLY_INDETERMINATE, fresh-schema executor errors are POST_SCHEMA_INDETERMINATE, and domain PUT/provider/public-readback failures are POST_DOMAIN_INDETERMINATE; each requires authoritative state/provider readback before another invocation; diagnostics remain in private 0600 files and credentials are never printed",
+        "pre-mutation-proof":
+          "before resource creation, requires exact zone ownership and complete paginated no-takeover inventories; before the first whole-script migration request, verifies the new D1 UUID/name, absent target Worker, empty SQLite schema, ledger absence, exact Core 4.1.14 runner and 35 SQL hashes, and identical whole-script REST {sql} duplicate-key rollback behavior; before domain attachment, requires a changeset with one exact addition and no updates, deletions, or conflicts, then sends both override flags false",
+        "independent-review":
+          "require a non-author review of exact source, immutable artifact pin, private state custody, fresh-database-only migration executor, exact create-only plans, test credential custody, resource inventories, and custom-domain changeset/no-overwrite flags before any live mutation; separately inspect exact provider binding closure and run scoped authenticated user smoke before any live-qualified or GA claim",
+      },
+    },
   ],
 };
 
@@ -198,11 +245,16 @@ if (process.argv.includes("--contract")) {
 }
 
 const requestedSurface = process.argv[2];
-if (![W.surface, R.surface, S.surface].includes(requestedSurface)) {
+if (
+  ![W.surface, R.surface, S.surface, "yurumeet-integration"].includes(
+    requestedSurface,
+  )
+) {
   process.stderr.write(
     `usage: bun run deploy -- ${W.surface}\n` +
       `       bun run deploy -- ${R.surface} [--dry-run|--execute]\n` +
-      `       bun run deploy -- ${S.surface} --environment=integration|production\n`,
+      `       bun run deploy -- ${S.surface} --environment=integration|production\n` +
+      "       bun run deploy -- yurumeet-integration --environment=integration --phase=<phase>\n",
   );
   process.exit(1);
 }
@@ -211,6 +263,20 @@ function die(message, detail = []) {
   process.stderr.write(`deploy blocked: ${message}\n`);
   for (const line of detail) process.stderr.write(`- ${line}\n`);
   process.exit(1);
+}
+if (requestedSurface === "yurumeet-integration") {
+  try {
+    const { deployIntegration } = await import("./deploy-integration.mjs");
+    const result = await deployIntegration(process.argv.slice(3));
+    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+  } catch (error) {
+    const phase = error.phase ?? "PRE_MUTATION_FAILURE";
+    process.stderr.write(
+      `integration deploy stopped (${phase}): ${error.message}\n`,
+    );
+    process.exit(1);
+  }
+  process.exit(0);
 }
 const git = (...a) =>
   execFileSync("git", a, { cwd: repo, encoding: "utf8" }).trim();
@@ -1012,7 +1078,7 @@ try {
     )
   ) {
     throw new Error(
-      "Worker provider returned invalid Core 4.1.13 D1 preflight proof",
+      "Worker provider returned invalid Core 4.1.14 D1 preflight proof",
     );
   }
   process.stdout.write(`D1 schema preflight ${upgrade.scope}\n`);
