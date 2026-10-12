@@ -102,7 +102,7 @@ const MIGRATION_NAMES = Object.freeze(Object.keys(MIGRATIONS).sort());
 const MIGRATION_MAP_SHA256 =
   "ac5d5c0da5ba84d94339f45fc5d1a61103ac65d36add75d9703c2201386b1b50";
 const EMPTY_SCHEMA_SQL =
-  "SELECT type, name FROM sqlite_master WHERE name NOT GLOB 'sqlite_*' AND name != '_cf_METADATA' ORDER BY type, name";
+  "SELECT type, name FROM sqlite_master WHERE name NOT GLOB 'sqlite_*' AND NOT (type = 'table' AND name IN ('_cf_METADATA', '_cf_KV')) ORDER BY type, name";
 
 function insist(ok, message) {
   if (!ok) throw new Error(message);

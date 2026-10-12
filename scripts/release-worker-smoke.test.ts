@@ -22,6 +22,9 @@ import type {
 const repo = new URL("../", import.meta.url).pathname;
 const temporaryDirectories: string[] = [];
 const smokeChildDeadlineMs = 30_000;
+// The normal smoke runs five native stages. Let its 120s supervisor finish
+// process-group termination and pipe draining before the outer Bun timeout.
+const qualifyingSmokeChildDeadlineMs = 120_000 + 5_000;
 const fixtureOrigin = "https://release-smoke.yurumeet.invalid";
 const smokeHtml =
   '<!doctype html><html><head><title>Yurumeet</title></head><body><div id="root"></div></body></html>';
@@ -67,7 +70,7 @@ async function generatedArtifact(directory: string, source = entrySource()) {
   return artifactPath;
 }
 
-async function smoke(artifactPath: string) {
+async function smoke(artifactPath: string, deadlineMs = smokeChildDeadlineMs) {
   const bytes = await Bun.file(artifactPath).bytes();
   const digest = createHash("sha256").update(bytes).digest("hex");
   const started = performance.now();
@@ -82,12 +85,13 @@ async function smoke(artifactPath: string) {
       cwd: repo,
       stdout: "pipe",
       stderr: "pipe",
-      timeout: smokeChildDeadlineMs,
+      timeout: deadlineMs,
     },
   );
   return requireSmokeProcessExit(
     result,
     Math.round(performance.now() - started),
+    deadlineMs,
   );
 }
 
@@ -571,7 +575,7 @@ describe("release Worker smoke", () => {
     const directory = await mkdtemp(join(tmpdir(), "yurumeet-smoke-test-"));
     temporaryDirectories.push(directory);
     const artifactPath = await generatedArtifact(directory);
-    const result = await smoke(artifactPath);
+    const result = await smoke(artifactPath, qualifyingSmokeChildDeadlineMs);
 
     if (result.exitCode !== 0) {
       throw new Error(`Native smoke failed: ${result.stderr.toString()}`);
@@ -715,7 +719,7 @@ describe("release Worker smoke", () => {
       },
       status: "PASSED",
     });
-  }, 35_000);
+  }, 130_000);
 
   for (const [name, injected, error] of [
     [
