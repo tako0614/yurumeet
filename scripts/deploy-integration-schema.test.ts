@@ -61,6 +61,7 @@ function fixture(
     workerError?: boolean;
     identityErrors?: boolean;
     existingTables?: string[];
+    initialSql?: string;
     probe?: "atomic" | "partial" | "success" | "wrong-error" | "transport";
     migrationFailureAt?: number;
     migrationTimeoutAt?: number;
@@ -74,6 +75,7 @@ function fixture(
   const db = new Database(":memory:");
   databases.push(db);
   db.exec("PRAGMA foreign_keys=ON");
+  if (options.initialSql) db.exec(options.initialSql);
   for (const name of options.existingTables ?? []) {
     db.exec(`CREATE TABLE "${name}" (id TEXT)`);
   }
@@ -312,6 +314,60 @@ test("empty-schema SQL treats wildcard-lookalike names as foreign schema", () =>
   } finally {
     db.close();
   }
+});
+
+test("empty-schema guard ignores only D1 reserved metadata and KV tables", async () => {
+  const reservedSql =
+    "CREATE TABLE _cf_KV (key TEXT PRIMARY KEY,value BLOB) WITHOUT ROWID; CREATE TABLE _cf_METADATA (id TEXT)";
+  const reserved = new Database(":memory:");
+  try {
+    reserved.exec(reservedSql);
+    expect(
+      reserved.query(integrationSchemaTestSupport.emptySchemaSql).all(),
+    ).toEqual([]);
+  } finally {
+    reserved.close();
+  }
+
+  const foreign = new Database(":memory:");
+  try {
+    foreign.exec(
+      `${reservedSql}; CREATE TABLE app (id TEXT); CREATE TABLE _cf_lookalike (id TEXT); CREATE VIEW app_view AS SELECT id FROM app; CREATE TRIGGER app_trigger AFTER INSERT ON app BEGIN SELECT 1; END;`,
+    );
+    const rows = foreign
+      .query(integrationSchemaTestSupport.emptySchemaSql)
+      .all() as Array<{ type: string; name: string }>;
+    expect(rows).toEqual([
+      { type: "table", name: "_cf_lookalike" },
+      { type: "table", name: "app" },
+      { type: "trigger", name: "app_trigger" },
+      { type: "view", name: "app_view" },
+    ]);
+  } finally {
+    foreign.close();
+  }
+
+  const accepted = fixture({ initialSql: reservedSql });
+  await muted(async () => {
+    await applyFreshIntegrationSchema(args(accepted.fetchImpl));
+  });
+  expect(accepted.migrationScripts).toBe(35);
+
+  const rejected = fixture({
+    initialSql: `${reservedSql}; CREATE TABLE _cf_lookalike (id TEXT); CREATE VIEW app_view AS SELECT 1;`,
+  });
+  await expect(
+    applyFreshIntegrationSchema(args(rejected.fetchImpl)),
+  ).rejects.toThrow("D1 is not empty");
+  expect(rejected.migrationScripts).toBe(0);
+  expect(
+    rejected.calls.some(
+      (call) =>
+        call.method === "POST" &&
+        typeof call.body?.sql === "string" &&
+        !/^SELECT\b/i.test(call.body.sql),
+    ),
+  ).toBe(false);
 });
 
 test("whole-script executor applies all 35 immutable migrations and nested triggers with each exact ledger prefix", async () => {
