@@ -18,6 +18,7 @@ const RAW_SCHEMA_SQL =
   "SELECT type, name, tbl_name, sql FROM sqlite_master ORDER BY type, name";
 const UUID_PATTERN =
   /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/iu;
+const INVENTORY_PER_PAGE = 10_000;
 
 const VARIANTS = Object.freeze([
   Object.freeze({ name: "bare", databaseName: `${PREFIX}-parser-bare` }),
@@ -216,7 +217,7 @@ async function successfulRequest(context, method, path, body, label) {
   return result;
 }
 
-function assertD1InventoryPage(result, page, expectedPerPage) {
+function assertD1InventoryPage(result, expectedPerPage = INVENTORY_PER_PAGE) {
   const info = result.value?.result_info;
   const rows = result.value?.result;
   insist(
@@ -225,14 +226,15 @@ function assertD1InventoryPage(result, page, expectedPerPage) {
   );
   insist(
     info &&
-      info.page === page &&
+      info.page === 1 &&
       info.per_page === expectedPerPage &&
       Number.isInteger(info.total_count) &&
       info.total_count >= 0 &&
+      info.total_count <= expectedPerPage &&
       Number.isInteger(info.count) &&
       info.count === rows.length &&
-      (rows.length > 0 || page * expectedPerPage >= info.total_count),
-    "D1 inventory pagination is incomplete or contradictory",
+      rows.length === info.total_count,
+    "D1 inventory is incomplete or contradictory",
   );
   insist(
     rows.every(
@@ -248,53 +250,37 @@ function assertD1InventoryPage(result, page, expectedPerPage) {
 }
 
 async function listDatabaseInventory(context) {
-  const databases = [];
-  const names = new Set();
-  const uuids = new Set();
-  let totalCount;
-  for (let page = 1; page <= 100; page += 1) {
-    const path = `/accounts/${context.accountId}/d1/database?page=${page}&per_page=100`;
-    const result = await successfulRequest(
-      context,
-      "GET",
-      path,
-      undefined,
-      "database-list",
+  const path = `/accounts/${context.accountId}/d1/database?page=1&per_page=${INVENTORY_PER_PAGE}`;
+  const result = await send(context, "GET", path);
+  const diagnostic = saveExchange(
+    context,
+    "database-list",
+    { method: "GET", path },
+    result,
+  );
+  try {
+    insist(
+      !result.transportError &&
+        !result.responseReadError &&
+        result.ok &&
+        isApiSuccess(result.value),
+      "D1 inventory request failed",
     );
-    let parsed;
-    try {
-      parsed = assertD1InventoryPage(result, page, 100);
-    } catch (error) {
-      const diagnostic = saveExchange(
-        context,
-        "database-list-page",
-        { method: "GET", path },
-        result,
-      );
-      throw new Error(`${error.message}; private diagnostics: ${diagnostic}`);
-    }
-    if (totalCount !== undefined)
-      insist(
-        parsed.info.total_count === totalCount,
-        "D1 inventory changed while paginating",
-      );
-    totalCount = parsed.info.total_count;
+    const parsed = assertD1InventoryPage(result);
+    const names = new Set();
+    const uuids = new Set();
     for (const database of parsed.rows) {
       insist(
         !names.has(database.name) && !uuids.has(database.uuid),
-        "D1 inventory repeated a database across pages",
+        "D1 inventory repeated a database identity",
       );
       names.add(database.name);
       uuids.add(database.uuid);
-      databases.push(database);
     }
-    insist(
-      databases.length <= totalCount,
-      "D1 inventory returned more rows than its stable total_count",
-    );
-    if (databases.length === totalCount) return databases;
+    return parsed.rows;
+  } catch (error) {
+    throw new Error(`${error.message}; private diagnostics: ${diagnostic}`);
   }
-  throw new Error("D1 inventory exceeded pagination bound");
 }
 
 function assertWorkersAbsent(value, expectedNames) {
@@ -436,14 +422,33 @@ function assertSchemaUnchanged(before, after) {
 
 async function readRawSchema(context, databaseId, label) {
   const path = `/accounts/${context.accountId}/d1/database/${databaseId}/query`;
-  const result = await successfulRequest(
+  const body = { sql: RAW_SCHEMA_SQL };
+  const result = await send(context, "POST", path, body);
+  const privateResponse = saveExchange(
     context,
-    "POST",
-    path,
-    { sql: RAW_SCHEMA_SQL },
     label,
+    { method: "POST", path, body },
+    result,
   );
-  return assertQueryEnvelope(result.value, label);
+  try {
+    insist(
+      !result.transportError &&
+        !result.responseReadError &&
+        result.ok &&
+        isApiSuccess(result.value),
+      `${label} request failed`,
+    );
+    const rawSha256 = sha256(result.raw);
+    return {
+      rows: assertQueryEnvelope(result.value, label),
+      privateResponse,
+      rawSha256,
+    };
+  } catch (error) {
+    throw new Error(
+      `${error.message}; private diagnostics: ${privateResponse}`,
+    );
+  }
 }
 
 function errorItems(value) {
@@ -505,12 +510,19 @@ function classifyWrite(result, variant) {
 }
 
 async function runVariant(context, databaseId, variant) {
-  const beforeRows = await readRawSchema(
+  const before = await readRawSchema(
     context,
     databaseId,
     `schema-before-${variant.name}`,
   );
-  const baseline = assertFreshSchema(beforeRows);
+  let baseline;
+  try {
+    baseline = assertFreshSchema(before.rows);
+  } catch (error) {
+    throw new Error(
+      `${error.message}; private diagnostics: ${before.privateResponse}`,
+    );
+  }
   const batch = buildParserProbeBatch(variant.name);
   const request = queryRequestBody(batch);
   const response = await send(
@@ -535,9 +547,9 @@ async function runVariant(context, databaseId, variant) {
     },
     response,
   );
-  let afterRows;
+  let after;
   try {
-    afterRows = await readRawSchema(
+    after = await readRawSchema(
       context,
       databaseId,
       `schema-after-${variant.name}`,
@@ -547,7 +559,13 @@ async function runVariant(context, databaseId, variant) {
     error.diagnosticPath = diagnosticPath;
     throw error;
   }
-  assertSchemaUnchanged(baseline, afterRows);
+  try {
+    assertSchemaUnchanged(baseline, after.rows);
+  } catch (error) {
+    throw new Error(
+      `${error.message}; schema before: ${before.privateResponse}; schema after: ${after.privateResponse}`,
+    );
+  }
   if (outcome === "TRANSPORT_UNCERTAIN") {
     throw new Error(
       `probe transport outcome is indeterminate after clean schema readback; stop without another case; private diagnostics: ${diagnosticPath}`,
@@ -564,6 +582,16 @@ async function runVariant(context, databaseId, variant) {
       bodyBytes: request.bodyBytes,
       statementManifest: sqlManifest(batch),
       privateResponse: diagnosticPath,
+      schemaReadbacks: {
+        before: {
+          privateResponse: before.privateResponse,
+          rawSha256: before.rawSha256,
+        },
+        after: {
+          privateResponse: after.privateResponse,
+          rawSha256: after.rawSha256,
+        },
+      },
     };
   }
   if (outcome !== "EXPECTED_LATE_CONSTRAINT_FAILURE") {
@@ -581,6 +609,16 @@ async function runVariant(context, databaseId, variant) {
     bodyBytes: request.bodyBytes,
     statementManifest: sqlManifest(batch),
     privateResponse: diagnosticPath,
+    schemaReadbacks: {
+      before: {
+        privateResponse: before.privateResponse,
+        rawSha256: before.rawSha256,
+      },
+      after: {
+        privateResponse: after.privateResponse,
+        rawSha256: after.rawSha256,
+      },
+    },
   };
 }
 
@@ -728,12 +766,13 @@ async function verifyAccountAndZone(context) {
   }
 }
 
-/** Run three one-write parser probes on newly created, standalone integration D1s. */
+/** Run one-write parser probes on newly created, standalone integration D1s. */
 export async function runCaseParserProbe({
   accountId,
   zoneId,
   token,
   diagnosticsDir,
+  mode = "all",
   fetchImpl = fetch,
 }) {
   insist(
@@ -744,6 +783,7 @@ export async function runCaseParserProbe({
     /^[a-f0-9]{32}$/u.test(zoneId ?? ""),
     "exact integration zone ID required",
   );
+  insist(mode === "all" || mode === "comparison", "invalid parser probe mode");
   insist(
     typeof token === "string" && token.length > 0,
     "ephemeral Cloudflare API token required",
@@ -757,24 +797,26 @@ export async function runCaseParserProbe({
     fetchImpl,
     mutationStarted: false,
   };
+  const variants =
+    mode === "comparison"
+      ? VARIANTS.filter(({ name }) => name !== "bare")
+      : VARIANTS;
+  const phase =
+    mode === "comparison"
+      ? "probe-case-parser-comparison"
+      : "probe-case-parser";
   try {
     await verifyAccountAndZone(context);
     const inventory = await listDatabaseInventory(context);
     const knownUUIDs = new Set(inventory.map(({ uuid }) => uuid));
-    for (const variant of VARIANTS) {
+    for (const variant of variants) {
       insist(
         !inventory.some((database) => database.name === variant.databaseName),
         `D1 ${variant.databaseName} already exists; takeover/reuse is forbidden`,
       );
     }
-    const scripts = await workerScripts(context);
-    assertWorkersAbsent(scripts, [
-      PREFIX,
-      ...VARIANTS.map((variant) => variant.databaseName),
-    ]);
-
     const results = [];
-    for (const variant of VARIANTS) {
+    for (const variant of variants) {
       if (results.length > 0) {
         const latestInventory = await listDatabaseInventory(context);
         insist(
@@ -785,6 +827,11 @@ export async function runCaseParserProbe({
         );
         for (const database of latestInventory) knownUUIDs.add(database.uuid);
       }
+      const scripts = await workerScripts(context);
+      assertWorkersAbsent(scripts, [
+        PREFIX,
+        ...variants.map((item) => item.databaseName),
+      ]);
       const databaseId = await createDisposableDatabase(
         context,
         variant,
@@ -794,7 +841,7 @@ export async function runCaseParserProbe({
       results.push(outcome);
     }
     return {
-      phase: "probe-case-parser",
+      phase,
       status: "DIAGNOSTIC_ONLY",
       databaseCount: results.length,
       variants: results,
@@ -819,6 +866,7 @@ export const parserProbeTestSupport = Object.freeze({
   sqlManifest,
   isApiSuccess,
   assertD1InventoryPage,
+  INVENTORY_PER_PAGE,
   assertDatabaseIdentity,
   assertFreshSchema,
   assertSchemaUnchanged,

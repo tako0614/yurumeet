@@ -24,6 +24,8 @@ const UUIDS = [
   "11111111-1111-4111-8111-111111111111",
   "22222222-2222-4222-8222-222222222222",
   "33333333-3333-4333-8333-333333333333",
+  "44444444-4444-4444-8444-444444444444",
+  "55555555-5555-4555-8555-555555555555",
 ];
 
 afterEach(() => {
@@ -99,8 +101,14 @@ function mockCloudflare({
   badCreateEnvelope = false,
   badCreateApiEnvelope = false,
   badInventoryPage = false,
+  inventoryPadding = 0,
+  inventoryCountOverride,
+  inventoryReportedCount,
+  workerName,
+  workerPresentOnCall,
   malformedBatchEnvelope = false,
   echoTokenInBatchResponse = false,
+  echoTokenInSchemaResponse = false,
 }: {
   existing?: { name: string; uuid: string }[];
   failBatch?: "none" | "transport";
@@ -115,8 +123,14 @@ function mockCloudflare({
   badCreateEnvelope?: boolean;
   badCreateApiEnvelope?: boolean;
   badInventoryPage?: boolean;
+  inventoryPadding?: number;
+  inventoryCountOverride?: number;
+  inventoryReportedCount?: number;
+  workerName?: string;
+  workerPresentOnCall?: number;
   malformedBatchEnvelope?: boolean;
   echoTokenInBatchResponse?: boolean;
+  echoTokenInSchemaResponse?: boolean;
 } = {}) {
   const databases = [...existing];
   const calls: {
@@ -126,6 +140,7 @@ function mockCloudflare({
   }[] = [];
   let batchWrites = 0;
   let schemaReads = 0;
+  let workerReads = 0;
   const fetchImpl: (
     ...args: Parameters<typeof fetch>
   ) => ReturnType<typeof fetch> = async (input, init) => {
@@ -149,10 +164,17 @@ function mockCloudflare({
           account: { id: zoneAccountId },
         },
       });
-    if (url.includes("/d1/database?") || url.includes("/d1/database?page=")) {
-      const perPage = 100;
-      const page = Number(new URL(url).searchParams.get("page"));
-      const rows = databases.slice((page - 1) * perPage, page * perPage);
+    if (url.includes("/d1/database?")) {
+      const query = new URL(url).searchParams;
+      const perPage = Number(query.get("per_page"));
+      const page = Number(query.get("page") ?? "1");
+      const rows = [
+        ...databases,
+        ...Array.from({ length: inventoryPadding }, (_, index) => ({
+          name: `unrelated-${index}`,
+          uuid: `${String(index + 6).padStart(8, "0")}-6666-4666-8666-666666666666`,
+        })),
+      ];
       return apiResponse({
         success: true,
         errors: null,
@@ -160,16 +182,25 @@ function mockCloudflare({
         result_info: {
           page: badInventoryPage ? page + 1 : page,
           per_page: perPage,
-          count: rows.length,
-          total_count: databases.length,
+          count: inventoryReportedCount ?? rows.length,
+          total_count: inventoryCountOverride ?? rows.length,
         },
       });
     }
-    if (url.endsWith("/workers/scripts"))
-      return apiResponse({ success: true, errors: null, result: [] });
+    if (url.endsWith("/workers/scripts")) {
+      workerReads += 1;
+      return apiResponse({
+        success: true,
+        errors: null,
+        result:
+          workerName && workerReads === workerPresentOnCall
+            ? [{ id: workerName }]
+            : [],
+      });
+    }
     if (method === "POST" && url.endsWith("/d1/database")) {
       const name = String(body?.name);
-      const index = databases.length - existing.length;
+      const index = databases.length;
       const uuid = duplicateCreateUuid ? UUIDS[0] : UUIDS[index];
       if (badCreateEnvelope)
         return apiResponse({ success: true, errors: null, result: { name } });
@@ -213,11 +244,27 @@ function mockCloudflare({
                   sql: "CREATE TABLE probe_residue(x)",
                 },
               ]
-            : [];
+            : [
+                {
+                  type: "table",
+                  name: "_cf_KV",
+                  tbl_name: "_cf_KV",
+                  sql: "CREATE TABLE _cf_KV (key TEXT PRIMARY KEY,value BLOB) WITHOUT ROWID",
+                },
+              ];
+        const echo = echoTokenInSchemaResponse
+          ? {
+              debugEcho: String(
+                (init?.headers as Record<string, string> | undefined)
+                  ?.Authorization ?? "",
+              ).slice("Bearer ".length),
+            }
+          : {};
         return apiResponse({
           success: true,
           errors: null,
           result: [{ success: true, results }],
+          ...echo,
         });
       }
       batchWrites += 1;
@@ -322,6 +369,134 @@ test("one exact create and one write per disposable D1; parser result stays diag
     expect(stat.mode & 0o777).toBe(0o600);
     expect(readFileSync(privateResponse, "utf8")).not.toContain(TOKEN);
   }
+});
+
+test("raw before/after schema responses are privately persisted, hashed, redacted, and equal", async () => {
+  const mock = mockCloudflare({ echoTokenInSchemaResponse: true });
+  const privateDir = diagnosticsDir();
+  const token = "schema-token-private";
+  const result = await runCaseParserProbe({
+    accountId: ACCOUNT,
+    zoneId: ZONE,
+    token,
+    diagnosticsDir: privateDir,
+    fetchImpl: mock.fetchImpl,
+  });
+  for (const variant of result.variants) {
+    const parsed = {} as Record<"before" | "after", unknown>;
+    for (const stage of ["before", "after"] as const) {
+      const evidence = variant.schemaReadbacks[stage];
+      const stat = lstatSync(evidence.privateResponse);
+      expect(stat.mode & 0o777).toBe(0o600);
+      const log = JSON.parse(readFileSync(evidence.privateResponse, "utf8"));
+      const raw = log.response.raw as string;
+      expect(raw).not.toContain(token);
+      expect(log.response.rawSha256).toBe(evidence.rawSha256);
+      const response = JSON.parse(raw);
+      expect(response.debugEcho).toBe("[REDACTED]");
+      parsed[stage] = response.result[0].results;
+    }
+    expect(parsed.after).toEqual(parsed.before);
+  }
+});
+
+test("comparison mode creates only the two remaining variants and never reuses bare", async () => {
+  const bare = {
+    name: "yurumeet-ga-20261012-0938-parser-bare",
+    uuid: UUIDS[0]!,
+  };
+  const mock = mockCloudflare({ existing: [bare] });
+  const result = await runCaseParserProbe({
+    accountId: ACCOUNT,
+    zoneId: ZONE,
+    token: TOKEN,
+    mode: "comparison",
+    diagnosticsDir: diagnosticsDir(),
+    fetchImpl: mock.fetchImpl,
+  });
+  expect(result).toMatchObject({
+    phase: "probe-case-parser-comparison",
+    status: "DIAGNOSTIC_ONLY",
+    databaseCount: 2,
+  });
+  expect(result.variants.map(({ variant }) => variant)).toEqual([
+    "parenthesized",
+    "values",
+  ]);
+  expect(mock.databases.map(({ name }) => name)).toEqual([
+    bare.name,
+    "yurumeet-ga-20261012-0938-parser-parenthesized",
+    "yurumeet-ga-20261012-0938-parser-values",
+  ]);
+  expect(
+    mock.calls
+      .filter(
+        ({ method, url }) => method === "POST" && url.endsWith("/d1/database"),
+      )
+      .map(({ body }) => body?.name),
+  ).toEqual([
+    "yurumeet-ga-20261012-0938-parser-parenthesized",
+    "yurumeet-ga-20261012-0938-parser-values",
+  ]);
+  expect(
+    mock.calls.filter(
+      ({ method, url }) => method === "GET" && url.endsWith("/workers/scripts"),
+    ),
+  ).toHaveLength(2);
+  expect(mock.batchWrites).toBe(2);
+});
+
+test("comparison refuses an exact remaining-name collision before Worker read or create", async () => {
+  const mock = mockCloudflare({
+    existing: [
+      {
+        name: "yurumeet-ga-20261012-0938-parser-values",
+        uuid: UUIDS[0]!,
+      },
+    ],
+  });
+  await expect(
+    runCaseParserProbe({
+      accountId: ACCOUNT,
+      zoneId: ZONE,
+      token: TOKEN,
+      mode: "comparison",
+      diagnosticsDir: diagnosticsDir(),
+      fetchImpl: mock.fetchImpl,
+    }),
+  ).rejects.toThrow(/takeover\/reuse is forbidden/u);
+  expect(mock.calls.some(({ url }) => url.endsWith("/workers/scripts"))).toBe(
+    false,
+  );
+  expect(mock.calls.some(({ method }) => method === "POST")).toBe(false);
+});
+
+test("comparison rechecks Worker absence before each create and stops on later collision", async () => {
+  const mock = mockCloudflare({
+    workerName: "yurumeet-ga-20261012-0938",
+    workerPresentOnCall: 2,
+  });
+  await expect(
+    runCaseParserProbe({
+      accountId: ACCOUNT,
+      zoneId: ZONE,
+      token: TOKEN,
+      mode: "comparison",
+      diagnosticsDir: diagnosticsDir(),
+      fetchImpl: mock.fetchImpl,
+    }),
+  ).rejects.toThrow(/require standalone D1 resources/u);
+  expect(
+    mock.calls.filter(
+      ({ method, url }) => method === "POST" && url.endsWith("/d1/database"),
+    ),
+  ).toHaveLength(1);
+  expect(mock.batchWrites).toBe(1);
+  expect(
+    mock.calls.filter(
+      ({ method, url }) => method === "GET" && url.endsWith("/workers/scripts"),
+    ),
+  ).toHaveLength(2);
 });
 
 test("write outcomes require exact HTTP 400, code 7500, and exact expected message", () => {
@@ -480,7 +655,7 @@ test("exact account and zone identity failures stop before database inventory or
   }
 });
 
-test("incomplete inventory pagination refuses before Worker inventory or mutation", async () => {
+test("inventory must be one complete page at the requested 10000-row bound", async () => {
   const mock = mockCloudflare({ badInventoryPage: true });
   await expect(
     runCaseParserProbe({
@@ -490,11 +665,77 @@ test("incomplete inventory pagination refuses before Worker inventory or mutatio
       diagnosticsDir: diagnosticsDir(),
       fetchImpl: mock.fetchImpl,
     }),
-  ).rejects.toThrow(/pagination is incomplete or contradictory/u);
+  ).rejects.toThrow(/D1 inventory is incomplete or contradictory/u);
   expect(mock.calls.some(({ url }) => url.endsWith("/workers/scripts"))).toBe(
     false,
   );
   expect(mock.calls.some(({ method }) => method === "POST")).toBe(false);
+});
+
+test("complete inventory larger than the old page size passes and is logged before use", async () => {
+  const privateDir = diagnosticsDir();
+  const mock = mockCloudflare({ inventoryPadding: 101 });
+  const result = await runCaseParserProbe({
+    accountId: ACCOUNT,
+    zoneId: ZONE,
+    token: TOKEN,
+    diagnosticsDir: privateDir,
+    fetchImpl: mock.fetchImpl,
+  });
+  expect(result.databaseCount).toBe(3);
+  const inventoryLogs = readdirSync(privateDir)
+    .filter((name) => name.includes("database-list"))
+    .map((name) => {
+      const path = join(privateDir, name);
+      return { path, log: JSON.parse(readFileSync(path, "utf8")) };
+    });
+  const firstInventory = inventoryLogs.find(
+    ({ log }) => JSON.parse(log.response.raw).result_info.total_count === 101,
+  );
+  expect(firstInventory).toBeDefined();
+  expect(lstatSync(firstInventory!.path).mode & 0o777).toBe(0o600);
+  const firstResponse = JSON.parse(firstInventory!.log.response.raw);
+  expect(firstResponse.result_info).toMatchObject({
+    page: 1,
+    per_page: 10_000,
+    count: 101,
+    total_count: 101,
+  });
+  expect(firstInventory!.log.request.path).toContain("?page=1&per_page=10000");
+});
+
+test("overflow and count mismatch inventory metadata refuse with private raw evidence", async () => {
+  for (const options of [
+    { inventoryCountOverride: 10_001 },
+    { inventoryReportedCount: 1 },
+  ]) {
+    const privateDir = diagnosticsDir();
+    const mock = mockCloudflare(options);
+    await expect(
+      runCaseParserProbe({
+        accountId: ACCOUNT,
+        zoneId: ZONE,
+        token: TOKEN,
+        diagnosticsDir: privateDir,
+        fetchImpl: mock.fetchImpl,
+      }),
+    ).rejects.toThrow(/D1 inventory is incomplete or contradictory/u);
+    expect(mock.calls.some(({ url }) => url.endsWith("/workers/scripts"))).toBe(
+      false,
+    );
+    expect(mock.calls.some(({ method }) => method === "POST")).toBe(false);
+    const logs = readdirSync(privateDir)
+      .filter((name) => name.includes("database-list"))
+      .map((name) => JSON.parse(readFileSync(join(privateDir, name), "utf8")));
+    expect(logs).toHaveLength(1);
+    const response = JSON.parse(logs[0]!.response.raw);
+    expect(response.result_info.total_count).toBe(
+      options.inventoryCountOverride ?? 0,
+    );
+    expect(response.result_info.count).toBe(
+      options.inventoryReportedCount ?? 0,
+    );
+  }
 });
 
 test("malformed create identity is logged privately and never queried or retried", async () => {
@@ -518,8 +759,11 @@ test("malformed create identity is logged privately and never queried or retried
   const diagnostics = readdirSync(privateDir).filter((name) =>
     name.endsWith(".json"),
   );
-  expect(diagnostics).toHaveLength(1);
-  const path = join(privateDir, diagnostics[0]!);
+  expect(diagnostics).toHaveLength(2);
+  const path = join(
+    privateDir,
+    diagnostics.find((name) => name.includes("create-identity-bare"))!,
+  );
   expect(lstatSync(path).mode & 0o777).toBe(0o600);
   expect(readFileSync(path, "utf8")).not.toContain(TOKEN);
 });
@@ -527,6 +771,7 @@ test("malformed create identity is logged privately and never queried or retried
 test("created UUID already present in pre-create inventory is refused with create receipt", async () => {
   const mock = mockCloudflare({
     existing: [{ name: "unrelated-existing-database", uuid: UUIDS[0] }],
+    duplicateCreateUuid: true,
   });
   const privateDir = diagnosticsDir();
   await expect(

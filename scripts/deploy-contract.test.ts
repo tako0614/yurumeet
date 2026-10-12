@@ -154,6 +154,18 @@ describe("deploy contract", () => {
     expect(integration?.obligations["post-conditions"]).toContain(
       "probe-case-parser is diagnostic-only",
     );
+    expect(integration?.obligations["post-conditions"]).toContain(
+      "probe-case-parser-comparison creates only the two remaining parenthesized/values fixtures",
+    );
+    expect(integration?.obligations["post-conditions"]).toContain(
+      "persists private 0600 raw before/after sqlite_master responses with SHA-256 values",
+    );
+    expect(integration?.obligations["pre-mutation-proof"]).toContain(
+      "complete unfiltered D1 inventory with page=1&per_page=10000",
+    );
+    expect(integration?.obligations["pre-mutation-proof"]).toContain(
+      "requests the complete unfiltered D1 inventory with page=1&per_page=10000",
+    );
     expect(integration?.obligations["pre-mutation-proof"]).toContain(
       "empty SQLite schema",
     );
@@ -175,7 +187,7 @@ describe("deploy contract", () => {
       "custom-domain changeset/no-overwrite flags",
     );
     expect(integration?.obligations["independent-review"]).toContain(
-      "three parser-probe D1 names",
+      "comparison-only parenthesized/values names",
     );
   });
 

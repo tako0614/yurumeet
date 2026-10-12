@@ -25,6 +25,7 @@ const PHASES = new Set([
   "resources",
   "fresh-schema",
   "probe-case-parser",
+  "probe-case-parser-comparison",
   "activate",
   "domain",
 ]);
@@ -900,6 +901,17 @@ export async function deployIntegration(args) {
       zoneId: t.zoneId,
       token: process.env.CLOUDFLARE_API_TOKEN,
       diagnosticsDir,
+    });
+  }
+  if (phase === "probe-case-parser-comparison") {
+    const { runCaseParserProbe } =
+      await import("./deploy-integration-parser-probe.mjs");
+    return runCaseParserProbe({
+      accountId: t.accountId,
+      zoneId: t.zoneId,
+      token: process.env.CLOUDFLARE_API_TOKEN,
+      diagnosticsDir,
+      mode: "comparison",
     });
   }
   if (phase === "activate") {
