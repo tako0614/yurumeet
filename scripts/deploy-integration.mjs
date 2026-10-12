@@ -744,11 +744,16 @@ export function assertDomainChangeset(changeset) {
       changeset.added[0]?.hostname === host,
     "custom-domain changeset does not add only the exact hostname",
   );
-  for (const key of ["updated", "deleted", "conflicting"])
+  for (const key of ["updated", "removed", "conflicting"]) {
     insist(
-      Array.isArray(changeset[key]) && changeset[key].length === 0,
+      Array.isArray(changeset[key]),
+      `custom-domain changeset lacks ${key} array; no overwrite/removal allowed`,
+    );
+    insist(
+      changeset[key].length === 0,
       `custom-domain changeset has ${key} entries; no overwrite/removal allowed`,
     );
+  }
 }
 export function assertDomainInventory(value, field, expected) {
   return assertDomainInventoryPage(value, 1, field, expected);
