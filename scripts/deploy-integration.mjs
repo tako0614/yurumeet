@@ -25,6 +25,7 @@ const PHASES = new Set([
   "preflight",
   "resources",
   "fresh-schema",
+  "recover-prefix32",
   "probe-case-parser",
   "probe-case-parser-comparison",
   "native-full35",
@@ -1094,6 +1095,18 @@ export async function deployIntegration(args) {
       error.phase = "POST_SCHEMA_INDETERMINATE";
       throw error;
     }
+  }
+  if (phase === "recover-prefix32") {
+    const db = databaseFromState(t, RESOURCE_ADDRESSES);
+    const { recoverPrefix32IntegrationSchema } =
+      await import("./deploy-integration-schema.mjs");
+    return recoverPrefix32IntegrationSchema({
+      accountId: t.accountId,
+      databaseId: db,
+      token: process.env.CLOUDFLARE_API_TOKEN,
+      repo: REPO,
+      diagnosticsDir,
+    });
   }
   if (phase === "probe-case-parser") {
     const { runCaseParserProbe } =

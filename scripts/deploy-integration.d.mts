@@ -10,7 +10,18 @@ export interface IntegrationTarget {
   expectedUrl: string;
 }
 
-export function parseIntegrationArgs(args: string[]): string;
+export type IntegrationPhase =
+  | "preflight"
+  | "resources"
+  | "fresh-schema"
+  | "recover-prefix32"
+  | "probe-case-parser"
+  | "probe-case-parser-comparison"
+  | "native-full35"
+  | "activate"
+  | "domain";
+
+export function parseIntegrationArgs(args: string[]): IntegrationPhase;
 export function isApiSuccess(value: unknown): boolean;
 export function loadIntegrationTarget(path?: string): IntegrationTarget;
 export function assertPinnedRootDefaults(

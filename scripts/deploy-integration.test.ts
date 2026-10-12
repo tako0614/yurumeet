@@ -69,6 +69,12 @@ test("only the explicit integration phase syntax is accepted", () => {
   expect(
     parseIntegrationArgs([
       "--environment=integration",
+      "--phase=recover-prefix32",
+    ]),
+  ).toBe("recover-prefix32");
+  expect(
+    parseIntegrationArgs([
+      "--environment=integration",
       "--phase=probe-case-parser",
     ]),
   ).toBe("probe-case-parser");

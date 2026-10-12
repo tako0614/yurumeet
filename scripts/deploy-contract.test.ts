@@ -152,6 +152,15 @@ describe("deploy contract", () => {
     expect(integration?.obligations.provenance).toContain("v0.2.0");
     expect(integration?.obligations["post-conditions"]).toContain("fresh D1");
     expect(integration?.obligations["post-conditions"]).toContain(
+      "fresh-schema executes the pinned Core 4.1.14 migration set on that fresh D1 with the same exact 0034 CASE projection",
+    );
+    expect(integration?.obligations["post-conditions"]).toContain(
+      "recover-prefix32 accepts only the exact existing integration D1",
+    );
+    expect(integration?.obligations["post-conditions"]).toContain(
+      "writes only the final three pinned migration batches in order",
+    );
+    expect(integration?.obligations["post-conditions"]).toContain(
       "probe-case-parser is diagnostic-only",
     );
     expect(integration?.obligations["post-conditions"]).toContain(
@@ -161,7 +170,7 @@ describe("deploy contract", () => {
       "native-full35 creates only the one fixed standalone D1 fixture",
     );
     expect(integration?.obligations["post-conditions"]).toContain(
-      "only the exact 0034 CASE projection",
+      "the same exact 0034 CASE projection",
     );
     expect(integration?.obligations["post-conditions"]).toContain(
       "persists private 0600 raw before/after sqlite_master responses with SHA-256 values",
@@ -176,6 +185,9 @@ describe("deploy contract", () => {
       "empty SQLite schema",
     );
     expect(integration?.obligations["pre-mutation-proof"]).toContain(
+      "before recover-prefix32 writes, reads only the exact D1 UUID/name from private OpenTofu state",
+    );
+    expect(integration?.obligations["pre-mutation-proof"]).toContain(
       "native-full35 uses only the exact new name yurumeet-ga-20261012-0938-native-full35",
     );
     expect(integration?.obligations["pre-mutation-proof"]).toContain(
@@ -187,6 +199,7 @@ describe("deploy contract", () => {
     for (const phase of [
       "POST_APPLY_INDETERMINATE",
       "POST_SCHEMA_INDETERMINATE",
+      "PREFIX32_PREFLIGHT_REFUSED",
       "POST_PARSER_PROBE_INDETERMINATE",
       "POST_NATIVE_FULL35_INDETERMINATE",
       "POST_DOMAIN_INDETERMINATE",
@@ -195,6 +208,9 @@ describe("deploy contract", () => {
     }
     expect(integration?.obligations["independent-review"]).toContain(
       "custom-domain changeset/no-overwrite flags",
+    );
+    expect(integration?.obligations["independent-review"]).toContain(
+      "same exact 0034 CASE projection on normal fresh and recovery paths",
     );
     expect(integration?.obligations["independent-review"]).toContain(
       "comparison-only parenthesized/values names",
