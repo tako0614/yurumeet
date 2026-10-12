@@ -59,9 +59,10 @@ export function buildReleaseChecksum(bundleDigest) {
 }
 
 /**
- * The `release.lock.json` entry a release must already carry before it is
- * published. The lock is append-only and is written by hand from a `--dry-run`,
- * so this is what the dry run prints and what the publish requires back.
+ * The `release.lock.json` entry recorded after authoritative publication
+ * readback. A new release's source commit cannot contain its own commit and
+ * manifest digest, so the unpublished candidate must have no lock entry.
+ * The lock is append-only once those published bytes have been verified.
  */
 export function buildReleaseLockEntry({
   commit,

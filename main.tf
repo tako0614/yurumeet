@@ -237,9 +237,9 @@ variable "worker_bundle_path" {
 }
 
 variable "worker_release_tag" {
-  description = "GitHub release tag selected from the append-only release.lock.json. The fetched takosumi-artifact.json must match the pinned manifest digest. Set empty to use worker_bundle_path."
+  description = "GitHub release tag for the Worker. With no explicit bundle URL, select a published release from release.lock.json and verify its manifest. With an explicit URL, it must name worker.js under this exact tag. Set empty for a custom bundle URL or local worker_bundle_path."
   type        = string
-  default     = "v0.1.2"
+  default     = "v0.2.0"
 
   validation {
     condition     = trimspace(var.worker_release_tag) == "" || can(regex("^v[0-9]+\\.[0-9]+\\.[0-9]+([-+][0-9A-Za-z.-]+)?$", trimspace(var.worker_release_tag)))
@@ -248,20 +248,25 @@ variable "worker_release_tag" {
 }
 
 variable "worker_bundle_url" {
-  description = "Optional HTTPS URL for a prebuilt Worker module JS artifact. When set, OpenTofu downloads this artifact and verifies worker_bundle_sha256 before upload."
+  description = "Optional HTTPS URL for a prebuilt Worker module JS artifact. With worker_release_tag set, this must be that exact tag's worker.js asset. OpenTofu verifies worker_bundle_sha256 before upload."
   type        = string
-  default     = ""
+  default     = "https://github.com/tako0614/yurumeet/releases/download/v0.2.0/worker.js"
 
   validation {
     condition     = trimspace(var.worker_bundle_url) == "" || can(regex("^https://[^[:space:]]+$", trimspace(var.worker_bundle_url)))
     error_message = "worker_bundle_url must be empty or an https URL."
+  }
+
+  validation {
+    condition     = trimspace(var.worker_release_tag) == "" || trimspace(var.worker_bundle_url) == "" || trimspace(var.worker_bundle_url) == "https://github.com/tako0614/yurumeet/releases/download/${trimspace(var.worker_release_tag)}/worker.js"
+    error_message = "When worker_release_tag and worker_bundle_url are both set, worker_bundle_url must be the exact worker.js asset URL under that selected GitHub release tag."
   }
 }
 
 variable "worker_bundle_sha256" {
   description = "Expected SHA-256 assertion for an explicit worker_bundle_url or local worker_bundle_path. Accepts lowercase hex or sha256:<hex>. In worker_release_tag mode release.lock.json is authoritative; a supplied value must equal its pin."
   type        = string
-  default     = ""
+  default     = "3b952ec6c0ee048bfd303344f8053c21c01ae8bdca780db57c908c6e171d1bd0"
 
   validation {
     condition     = trimspace(var.worker_bundle_sha256) == "" || can(regex("^(sha256:)?[a-f0-9]{64}$", trimspace(var.worker_bundle_sha256)))
