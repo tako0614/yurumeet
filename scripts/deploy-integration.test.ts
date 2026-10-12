@@ -63,6 +63,12 @@ test("only the explicit integration phase syntax is accepted", () => {
   expect(
     parseIntegrationArgs(["--environment=integration", "--phase=resources"]),
   ).toBe("resources");
+  expect(
+    parseIntegrationArgs([
+      "--environment=integration",
+      "--phase=probe-case-parser",
+    ]),
+  ).toBe("probe-case-parser");
   for (const args of [
     ["--environment=production", "--phase=resources"],
     ["--environment=integration", "--phase=destroy"],
