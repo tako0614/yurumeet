@@ -453,6 +453,10 @@ resource "cloudflare_d1_database" "database" {
   count      = local.cloudflare_resources_enabled ? 1 : 0
   account_id = var.cloudflare_account_id
   name       = local.d1_database_name
+
+  read_replication = {
+    mode = "disabled"
+  }
 }
 
 resource "cloudflare_r2_bucket" "media" {
