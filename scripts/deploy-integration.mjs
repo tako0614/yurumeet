@@ -24,6 +24,7 @@ const PHASES = new Set([
   "preflight",
   "resources",
   "fresh-schema",
+  "probe-case-parser",
   "activate",
   "domain",
 ]);
@@ -890,6 +891,16 @@ export async function deployIntegration(args) {
       error.phase = "POST_SCHEMA_INDETERMINATE";
       throw error;
     }
+  }
+  if (phase === "probe-case-parser") {
+    const { runCaseParserProbe } =
+      await import("./deploy-integration-parser-probe.mjs");
+    return runCaseParserProbe({
+      accountId: t.accountId,
+      zoneId: t.zoneId,
+      token: process.env.CLOUDFLARE_API_TOKEN,
+      diagnosticsDir,
+    });
   }
   if (phase === "activate") {
     await schemaReady(t);

@@ -137,13 +137,28 @@ describe("deploy contract", () => {
     expect(integration?.triggers).toEqual(["authority", "irreversible"]);
     expect(integration?.covers).toContain("scripts/deploy-integration.mjs");
     expect(integration?.covers).toContain(
+      "scripts/deploy-integration-parser-probe.mjs",
+    );
+    expect(integration?.covers).toContain(
+      "scripts/deploy-integration-parser-probe.d.mts",
+    );
+    expect(integration?.covers).toContain(
+      "scripts/deploy-integration-parser-probe.test.ts",
+    );
+    expect(integration?.covers).toContain(
       "scripts/deploy-integration-schema.mjs",
     );
     expect(integration?.covers).toContain("wrangler.jsonc");
     expect(integration?.obligations.provenance).toContain("v0.2.0");
     expect(integration?.obligations["post-conditions"]).toContain("fresh D1");
+    expect(integration?.obligations["post-conditions"]).toContain(
+      "probe-case-parser is diagnostic-only",
+    );
     expect(integration?.obligations["pre-mutation-proof"]).toContain(
       "empty SQLite schema",
+    );
+    expect(integration?.obligations["pre-mutation-proof"]).toContain(
+      "no retry, reuse, or deletion",
     );
     expect(integration?.obligations.reversal).toContain(
       "automatic rollback path",
@@ -151,12 +166,16 @@ describe("deploy contract", () => {
     for (const phase of [
       "POST_APPLY_INDETERMINATE",
       "POST_SCHEMA_INDETERMINATE",
+      "POST_PARSER_PROBE_INDETERMINATE",
       "POST_DOMAIN_INDETERMINATE",
     ]) {
       expect(integration?.obligations["failure-handling"]).toContain(phase);
     }
     expect(integration?.obligations["independent-review"]).toContain(
       "custom-domain changeset/no-overwrite flags",
+    );
+    expect(integration?.obligations["independent-review"]).toContain(
+      "three parser-probe D1 names",
     );
   });
 
