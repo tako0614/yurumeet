@@ -301,12 +301,19 @@ test("OpenTofu plan accepts only exact creates and unchanged predecessors", () =
   ).toThrow();
 });
 
-test("custom domain changeset never accepts replacement or DNS conflict", () => {
+test("custom domain changeset requires the real added/updated/removed/conflicting shape", () => {
   const added = [{ hostname: "ga-meet-20261012.yurucommu.com" }];
-  const clean = { added, updated: [], deleted: [], conflicting: [] };
+  const clean = { added, updated: [], removed: [], conflicting: [] };
   expect(() => assertDomainChangeset(clean)).not.toThrow();
-  for (const key of ["updated", "deleted", "conflicting"] as const) {
-    expect(() => assertDomainChangeset({ ...clean, [key]: added })).toThrow();
+  for (const key of ["updated", "removed", "conflicting"] as const) {
+    expect(() => assertDomainChangeset({ ...clean, [key]: added })).toThrow(
+      `custom-domain changeset has ${key} entries`,
+    );
+    const malformed = { ...clean } as Record<string, unknown>;
+    delete malformed[key];
+    expect(() => assertDomainChangeset(malformed)).toThrow(
+      `custom-domain changeset lacks ${key} array`,
+    );
   }
   expect(() =>
     assertDomainChangeset({ ...clean, added: [{ hostname: "yurucommu.com" }] }),
