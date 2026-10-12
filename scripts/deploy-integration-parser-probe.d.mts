@@ -16,10 +16,14 @@ export interface ParserProbeVariantResult {
   bodyBytes: number;
   statementManifest: ParserProbeStatementDigest[];
   privateResponse: string;
+  schemaReadbacks: {
+    before: { privateResponse: string; rawSha256: string };
+    after: { privateResponse: string; rawSha256: string };
+  };
 }
 
 export interface ParserProbeResult {
-  phase: "probe-case-parser";
+  phase: "probe-case-parser" | "probe-case-parser-comparison";
   status: "DIAGNOSTIC_ONLY";
   databaseCount: number;
   variants: ParserProbeVariantResult[];
@@ -33,6 +37,7 @@ export interface RunCaseParserProbeOptions {
   zoneId: string;
   token: string;
   diagnosticsDir: string;
+  mode?: "all" | "comparison";
   fetchImpl?: (...args: Parameters<typeof fetch>) => ReturnType<typeof fetch>;
 }
 
@@ -57,9 +62,9 @@ export const parserProbeTestSupport: {
   isApiSuccess(value: unknown): boolean;
   assertD1InventoryPage(
     result: { ok: boolean; value: unknown },
-    page: number,
-    expectedPerPage: number,
+    expectedPerPage?: number,
   ): { rows: Record<string, unknown>[]; info: Record<string, number> };
+  INVENTORY_PER_PAGE: number;
   assertDatabaseIdentity(body: unknown, name: string, uuid: string): void;
   assertFreshSchema(rows: unknown[]): unknown[];
   assertSchemaUnchanged(before: unknown[], after: unknown[]): unknown[];

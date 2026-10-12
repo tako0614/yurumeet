@@ -152,10 +152,43 @@ describe("deploy contract", () => {
     expect(integration?.obligations.provenance).toContain("v0.2.0");
     expect(integration?.obligations["post-conditions"]).toContain("fresh D1");
     expect(integration?.obligations["post-conditions"]).toContain(
+      "fresh-schema executes the pinned Core 4.1.14 migration set on that fresh D1 with the same exact 0034 CASE projection",
+    );
+    expect(integration?.obligations["post-conditions"]).toContain(
+      "recover-prefix32 accepts only the exact existing integration D1",
+    );
+    expect(integration?.obligations["post-conditions"]).toContain(
+      "writes only the final three pinned migration batches in order",
+    );
+    expect(integration?.obligations["post-conditions"]).toContain(
       "probe-case-parser is diagnostic-only",
+    );
+    expect(integration?.obligations["post-conditions"]).toContain(
+      "probe-case-parser-comparison creates only the two remaining parenthesized/values fixtures",
+    );
+    expect(integration?.obligations["post-conditions"]).toContain(
+      "native-full35 creates only the one fixed standalone D1 fixture",
+    );
+    expect(integration?.obligations["post-conditions"]).toContain(
+      "the same exact 0034 CASE projection",
+    );
+    expect(integration?.obligations["post-conditions"]).toContain(
+      "persists private 0600 raw before/after sqlite_master responses with SHA-256 values",
+    );
+    expect(integration?.obligations["pre-mutation-proof"]).toContain(
+      "complete unfiltered D1 inventory with page=1&per_page=10000",
+    );
+    expect(integration?.obligations["pre-mutation-proof"]).toContain(
+      "requests the complete unfiltered D1 inventory with page=1&per_page=10000",
     );
     expect(integration?.obligations["pre-mutation-proof"]).toContain(
       "empty SQLite schema",
+    );
+    expect(integration?.obligations["pre-mutation-proof"]).toContain(
+      "before recover-prefix32 writes, reads only the exact D1 UUID/name from private OpenTofu state",
+    );
+    expect(integration?.obligations["pre-mutation-proof"]).toContain(
+      "native-full35 uses only the exact new name yurumeet-ga-20261012-0938-native-full35",
     );
     expect(integration?.obligations["pre-mutation-proof"]).toContain(
       "no retry, reuse, or deletion",
@@ -166,7 +199,9 @@ describe("deploy contract", () => {
     for (const phase of [
       "POST_APPLY_INDETERMINATE",
       "POST_SCHEMA_INDETERMINATE",
+      "PREFIX32_PREFLIGHT_REFUSED",
       "POST_PARSER_PROBE_INDETERMINATE",
+      "POST_NATIVE_FULL35_INDETERMINATE",
       "POST_DOMAIN_INDETERMINATE",
     ]) {
       expect(integration?.obligations["failure-handling"]).toContain(phase);
@@ -175,7 +210,10 @@ describe("deploy contract", () => {
       "custom-domain changeset/no-overwrite flags",
     );
     expect(integration?.obligations["independent-review"]).toContain(
-      "three parser-probe D1 names",
+      "same exact 0034 CASE projection on normal fresh and recovery paths",
+    );
+    expect(integration?.obligations["independent-review"]).toContain(
+      "comparison-only parenthesized/values names",
     );
   });
 

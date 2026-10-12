@@ -19,12 +19,16 @@ import { fileURLToPath } from "node:url";
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const ORIGIN = "https://ga-meet-20261012.yurucommu.com";
 const PREFIX = "yurumeet-ga-20261012-0938";
+const NATIVE_FULL35_DATABASE = `${PREFIX}-native-full35`;
 const TAG = "v0.2.0";
 const PHASES = new Set([
   "preflight",
   "resources",
   "fresh-schema",
+  "recover-prefix32",
   "probe-case-parser",
+  "probe-case-parser-comparison",
+  "native-full35",
   "activate",
   "domain",
 ]);
@@ -139,7 +143,7 @@ export function parseIntegrationArgs(args) {
   insist(
     args.length === 2 &&
       args[0] === "--environment=integration" &&
-      /^--phase=[a-z-]+$/u.test(args[1]),
+      /^--phase=[a-z0-9-]+$/u.test(args[1]),
     "requires exactly --environment=integration --phase=<phase>",
   );
   const phase = args[1].slice(8);
@@ -372,6 +376,46 @@ export function assertWorkerScriptAbsent(value) {
     !scripts.some((script) => script.id === PREFIX),
     "Worker already exists; import/takeover is forbidden",
   );
+}
+export function assertCompleteNativeFull35D1Inventory(value) {
+  const rows = value?.result;
+  const info = value?.result_info;
+  insist(
+    isApiSuccess(value) &&
+      Array.isArray(rows) &&
+      info?.page === 1 &&
+      info?.per_page === 10000 &&
+      Number.isInteger(info.count) &&
+      info.count === rows.length &&
+      Number.isInteger(info.total_count) &&
+      info.total_count === rows.length &&
+      info.total_count <= 10000,
+    "native full-35 D1 inventory is not one complete unfiltered page",
+  );
+  const ids = new Set();
+  const names = new Set();
+  for (const row of rows) {
+    insist(
+      typeof row?.uuid === "string" &&
+        /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/iu.test(
+          row.uuid,
+        ) &&
+        typeof row?.name === "string" &&
+        row.name.length > 0,
+      "native full-35 D1 inventory contains a malformed identity",
+    );
+    insist(
+      !ids.has(row.uuid) && !names.has(row.name),
+      "native full-35 D1 inventory repeats an identity",
+    );
+    ids.add(row.uuid);
+    names.add(row.name);
+  }
+  insist(
+    !names.has(NATIVE_FULL35_DATABASE),
+    "native full-35 fixture name already exists; create-only phase refused",
+  );
+  return rows;
 }
 async function exactDomainAbsent(t) {
   const queries = [
@@ -860,6 +904,166 @@ async function attachDomain(t) {
     throw error;
   }
 }
+
+function nativeFull35Failure(error) {
+  if (error && typeof error === "object") {
+    try {
+      error.phase = "POST_NATIVE_FULL35_INDETERMINATE";
+      return error;
+    } catch {
+      // Preserve the classification even for immutable error objects.
+    }
+  }
+  const classified = new Error(String(error));
+  classified.phase = "POST_NATIVE_FULL35_INDETERMINATE";
+  return classified;
+}
+
+export async function withNativeFull35PostCreate(action) {
+  try {
+    return await action();
+  } catch (error) {
+    throw nativeFull35Failure(error);
+  }
+}
+
+export function writeNativeFull35CreateReceipt(
+  receipt,
+  writer = privateDiagnostic,
+) {
+  return writer(
+    "native-full35-create-receipt",
+    JSON.stringify(receipt, null, 2),
+  );
+}
+
+async function createNativeFull35Fixture(t) {
+  const account = await api(t, "GET", `/accounts/${t.accountId}`);
+  insist(
+    account.result?.id === t.accountId,
+    "native full-35 account readback differs from the private target",
+  );
+  const zone = await api(t, "GET", `/zones/${t.zoneId}`);
+  insist(
+    zone.result?.id === t.zoneId &&
+      zone.result?.name === "yurucommu.com" &&
+      zone.result?.account?.id === t.accountId,
+    "native full-35 zone does not belong to the exact account and product domain",
+  );
+  assertWorkerScriptAbsent(
+    await api(t, "GET", `/accounts/${t.accountId}/workers/scripts`),
+  );
+  const inventory = await api(
+    t,
+    "GET",
+    `/accounts/${t.accountId}/d1/database?page=1&per_page=10000`,
+  );
+  const before = assertCompleteNativeFull35D1Inventory(inventory);
+  return withNativeFull35PostCreate(async () => {
+    let response;
+    let raw;
+    try {
+      response = await fetch(
+        `https://api.cloudflare.com/client/v4/accounts/${t.accountId}/d1/database`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${process.env.CLOUDFLARE_API_TOKEN}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ name: NATIVE_FULL35_DATABASE }),
+          signal: AbortSignal.timeout(30000),
+        },
+      );
+      raw = await response.text();
+    } catch (error) {
+      let diagnostic = "private diagnostics unavailable";
+      try {
+        diagnostic = privateDiagnostic(
+          "native-full35-create-transport",
+          String(
+            error instanceof Error ? `${error.name}: ${error.message}` : error,
+          ),
+        );
+      } catch (diagnosticError) {
+        diagnostic = `private diagnostic write failed: ${String(diagnosticError)}`;
+      }
+      throw new Error(
+        `native full-35 create outcome is indeterminate; ${diagnostic}; inspect D1 inventory before any retry`,
+      );
+    }
+    let value;
+    try {
+      value = JSON.parse(raw);
+    } catch {
+      value = null;
+    }
+    const createResult = value?.result;
+    const receipt = {
+      request: {
+        method: "POST",
+        path: `/accounts/${t.accountId}/d1/database`,
+        body: { name: NATIVE_FULL35_DATABASE },
+      },
+      requestSha256: createHash("sha256")
+        .update(JSON.stringify({ name: NATIVE_FULL35_DATABASE }))
+        .digest("hex"),
+      response: {
+        status: response.status,
+        success: value?.success === true,
+        uuid: createResult?.uuid,
+        name: createResult?.name,
+        raw: raw.split(process.env.CLOUDFLARE_API_TOKEN).join("[REDACTED]"),
+      },
+      responseSha256: createHash("sha256").update(raw).digest("hex"),
+    };
+    const receiptPath = writeNativeFull35CreateReceipt(receipt);
+    if (
+      !response.ok ||
+      !isApiSuccess(value) ||
+      typeof createResult?.uuid !== "string" ||
+      !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/iu.test(
+        createResult.uuid,
+      ) ||
+      createResult.name !== NATIVE_FULL35_DATABASE ||
+      before.some((item) => item.uuid === createResult.uuid)
+    ) {
+      throw new Error(
+        `native full-35 create response did not prove a unique exact fixture; receipt: ${receiptPath}; inspect D1 inventory before any retry`,
+      );
+    }
+    const databaseId = createResult.uuid;
+    const readback = await api(
+      t,
+      "GET",
+      `/accounts/${t.accountId}/d1/database/${databaseId}?fields=uuid,name`,
+    );
+    insist(
+      readback.result?.uuid === databaseId &&
+        readback.result?.name === NATIVE_FULL35_DATABASE,
+      "native full-35 created D1 UUID/name readback mismatch",
+    );
+    const { applyFreshIntegrationSchema } =
+      await import("./deploy-integration-schema.mjs");
+    const schemaProof = await applyFreshIntegrationSchema({
+      accountId: t.accountId,
+      databaseId,
+      token: process.env.CLOUDFLARE_API_TOKEN,
+      repo: REPO,
+      diagnosticsDir,
+      mode: "native-full35",
+    });
+    return {
+      phase: "native-full35",
+      status: "NATIVE_FULL35_DIAGNOSTIC_APPLIED",
+      databaseId,
+      databaseName: NATIVE_FULL35_DATABASE,
+      createReceipt: receiptPath,
+      schemaProof,
+    };
+  });
+}
+
 export async function deployIntegration(args) {
   const phase = parseIntegrationArgs(args);
   const t = loadIntegrationTarget();
@@ -892,6 +1096,18 @@ export async function deployIntegration(args) {
       throw error;
     }
   }
+  if (phase === "recover-prefix32") {
+    const db = databaseFromState(t, RESOURCE_ADDRESSES);
+    const { recoverPrefix32IntegrationSchema } =
+      await import("./deploy-integration-schema.mjs");
+    return recoverPrefix32IntegrationSchema({
+      accountId: t.accountId,
+      databaseId: db,
+      token: process.env.CLOUDFLARE_API_TOKEN,
+      repo: REPO,
+      diagnosticsDir,
+    });
+  }
   if (phase === "probe-case-parser") {
     const { runCaseParserProbe } =
       await import("./deploy-integration-parser-probe.mjs");
@@ -901,6 +1117,20 @@ export async function deployIntegration(args) {
       token: process.env.CLOUDFLARE_API_TOKEN,
       diagnosticsDir,
     });
+  }
+  if (phase === "probe-case-parser-comparison") {
+    const { runCaseParserProbe } =
+      await import("./deploy-integration-parser-probe.mjs");
+    return runCaseParserProbe({
+      accountId: t.accountId,
+      zoneId: t.zoneId,
+      token: process.env.CLOUDFLARE_API_TOKEN,
+      diagnosticsDir,
+      mode: "comparison",
+    });
+  }
+  if (phase === "native-full35") {
+    return createNativeFull35Fixture(t);
   }
   if (phase === "activate") {
     await schemaReady(t);

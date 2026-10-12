@@ -10,7 +10,18 @@ export interface IntegrationTarget {
   expectedUrl: string;
 }
 
-export function parseIntegrationArgs(args: string[]): string;
+export type IntegrationPhase =
+  | "preflight"
+  | "resources"
+  | "fresh-schema"
+  | "recover-prefix32"
+  | "probe-case-parser"
+  | "probe-case-parser-comparison"
+  | "native-full35"
+  | "activate"
+  | "domain";
+
+export function parseIntegrationArgs(args: string[]): IntegrationPhase;
 export function isApiSuccess(value: unknown): boolean;
 export function loadIntegrationTarget(path?: string): IntegrationTarget;
 export function assertPinnedRootDefaults(
@@ -32,6 +43,16 @@ export function assertCreateOnlyPlan(
 ): void;
 export function assertDomainChangeset(changeset: unknown): void;
 export function assertWorkerScriptAbsent(value: unknown): void;
+export function assertCompleteNativeFull35D1Inventory(
+  value: unknown,
+): unknown[];
+export function withNativeFull35PostCreate<T>(
+  action: () => T | Promise<T>,
+): Promise<T>;
+export function writeNativeFull35CreateReceipt(
+  receipt: unknown,
+  writer?: (label: string, output: string) => string,
+): string;
 export function assertInventoryPage(
   body: unknown,
   page: number,
