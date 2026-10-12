@@ -23,6 +23,7 @@ import {
   listFilteredDomains,
   loadIntegrationTarget,
   parseIntegrationArgs,
+  isApiSuccess,
 } from "./deploy-integration.mjs";
 
 const dirs: string[] = [];
@@ -68,6 +69,44 @@ test("only the explicit integration phase syntax is accepted", () => {
     ["--environment=integration", "--phase=resources", "--auto-approve"],
   ])
     expect(() => parseIntegrationArgs(args)).toThrow();
+});
+
+test("Cloudflare success envelopes accept null errors but fail closed on contradictions", () => {
+  const sanitizedQueueResponse = {
+    success: true,
+    errors: null,
+    result: Array.from({ length: 100 }, (_, index) => ({
+      queue_name: `queue-${index}`,
+    })),
+    result_info: {
+      page: 1,
+      per_page: 100,
+      count: 100,
+      total_count: 1066,
+      total_pages: 11,
+    },
+  };
+  expect(isApiSuccess(sanitizedQueueResponse)).toBe(true);
+  for (const success of [undefined, null, false]) {
+    expect(isApiSuccess({ success, errors: null })).toBe(false);
+  }
+  for (const value of [
+    { success: true, errors: [{ message: "denied" }] },
+    { success: true, errors: {} },
+    { success: true, errors: "" },
+    { success: true, error: "denied" },
+    { success: true, error: {} },
+    { success: true, error: false },
+  ]) {
+    expect(isApiSuccess(value)).toBe(false);
+  }
+  for (const value of [
+    { success: true },
+    { success: true, errors: null, error: null },
+    { success: true, errors: [], error: "" },
+  ]) {
+    expect(isApiSuccess(value)).toBe(true);
+  }
 });
 
 test("target binds exact origin, resource prefix, source and published artifact", () => {

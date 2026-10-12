@@ -11,6 +11,7 @@ export interface IntegrationTarget {
 }
 
 export function parseIntegrationArgs(args: string[]): string;
+export function isApiSuccess(value: unknown): boolean;
 export function loadIntegrationTarget(path?: string): IntegrationTarget;
 export function assertPinnedRootDefaults(
   source: string,
