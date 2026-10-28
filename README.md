@@ -133,6 +133,14 @@ self-host は現在利用でき、Takosumi 管理付き導入は実環境の作�
 direct Cloudflare path を定義しますが、credential、承認、migration、rollback は
 利用者側の runbook と authority で管理してください。
 
+Takosumi で root module `.` を選んだ場合は、高度な設定で
+`enable_cloudflare_resources` と `enable_cloudflare_worker_script` を明示的に有効にします。
+どちらも未指定時の既定値は無効です。OIDC 宣言は Accounts URL・issuer・client ID・
+登録済み redirect URI の公開4項目を受け取ります。redirect URI を指定する場合は、
+公開URLの `/api/auth/callback/takos` と一致する必要があります。
+OIDC-only の初回導入では、`oidc_owner_sub` に正当な利用者の subject を固定してください。
+公開4項目に owner subject や秘密値は含めず、以下の機密入力も正規の配置設定から渡します。
+
 root OpenTofu module で Worker を公開するときは、機密入力
 `session_hash_salt` が必須です。値をそのまま `YURUCOMMU_SESSION_HASH_SALT`
 Secret に渡し、汎用 `env` の同名キーは拒否します。新規環境では安全な場所で

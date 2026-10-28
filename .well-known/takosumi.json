@@ -121,6 +121,66 @@
               "en": "Release SHA-256"
             },
             "advanced": true
+          },
+          {
+            "name": "takosumi_accounts_url",
+            "source": {
+              "kind": "module_default"
+            },
+            "type": "string",
+            "format": "url",
+            "label": {
+              "ja": "Takosumi Accounts URL",
+              "en": "Takosumi Accounts URL"
+            },
+            "advanced": true
+          },
+          {
+            "name": "takosumi_accounts_redirect_uri",
+            "source": {
+              "kind": "module_default"
+            },
+            "type": "string",
+            "format": "url",
+            "label": {
+              "ja": "登録済みコールバックURL",
+              "en": "Registered callback URL"
+            },
+            "advanced": true
+          },
+          {
+            "name": "enable_cloudflare_resources",
+            "source": {
+              "kind": "user"
+            },
+            "type": "boolean",
+            "required": false,
+            "label": {
+              "ja": "Cloudflareリソースを作成",
+              "en": "Create Cloudflare resources"
+            },
+            "helper": {
+              "ja": "直接Cloudflareへ導入する場合に有効にします。未指定時は既存の既定値（無効）を使います。",
+              "en": "Enable for a direct Cloudflare install. Omitted values keep the existing disabled default."
+            },
+            "advanced": true
+          },
+          {
+            "name": "enable_cloudflare_worker_script",
+            "source": {
+              "kind": "user"
+            },
+            "type": "boolean",
+            "required": false,
+            "label": {
+              "ja": "Workerをデプロイ",
+              "en": "Deploy the Worker"
+            },
+            "helper": {
+              "ja": "直接Cloudflareへ導入する場合に有効にします。未指定時は既存の既定値（無効）を使います。",
+              "en": "Enable for a direct Cloudflare install. Omitted values keep the existing disabled default."
+            },
+            "advanced": true
           }
         ],
         "requires": [
@@ -139,8 +199,10 @@
             "scopes": ["openid", "profile", "email"],
             "deliver": {
               "variables": {
+                "accountsUrl": "takosumi_accounts_url",
                 "issuerUrl": "takosumi_accounts_issuer_url",
-                "clientId": "takosumi_accounts_client_id"
+                "clientId": "takosumi_accounts_client_id",
+                "redirectUri": "takosumi_accounts_redirect_uri"
               }
             }
           }
