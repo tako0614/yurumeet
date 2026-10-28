@@ -8,7 +8,7 @@ import {
   onCleanup,
   Show,
 } from "solid-js";
-import { A, useNavigate, useSearchParams } from "@solidjs/router";
+import { A, useLocation, useNavigate, useSearchParams } from "@solidjs/router";
 import {
   type Actor,
   type ActorNote,
@@ -828,8 +828,32 @@ function TalkListPane(props: {
 }) {
   const app = useApp();
   const chat = useChat();
+  const location = useLocation();
   const navigate = useNavigate();
-  const [query, setQuery] = createSignal("");
+  const [query, setQuery] = createSignal(chat.readTalkListFilter());
+  const restoreEntryFilter = () => setQuery(chat.readTalkListFilter());
+  window.addEventListener("popstate", restoreEntryFilter);
+  onCleanup(() => window.removeEventListener("popstate", restoreEntryFilter));
+  createEffect(
+    on(
+      () => [location.pathname, location.search, location.hash, location.state],
+      (_, previous) => {
+        if (!previous) return;
+        // Router updates location before its history write completes. Read
+        // after the transition so same-mounted talk entries use the new state.
+        const timer = window.setTimeout(restoreEntryFilter, 0);
+        onCleanup(() => window.clearTimeout(timer));
+      },
+    ),
+  );
+  createEffect(
+    on(
+      () => [app.origin(), app.actor().ap_id, app.authEpoch()],
+      (_, previous) => {
+        if (previous) restoreEntryFilter();
+      },
+    ),
+  );
   const [view, setView] = createSignal<"list" | "requests" | "archived">(
     "list",
   );
@@ -1037,7 +1061,11 @@ function TalkListPane(props: {
               type="search"
               placeholder="トークを検索"
               value={query()}
-              onInput={(event) => setQuery(event.currentTarget.value)}
+              onInput={(event) => {
+                const value = event.currentTarget.value;
+                setQuery(value);
+                chat.writeTalkListFilter(value);
+              }}
             />
           </label>
         </div>
