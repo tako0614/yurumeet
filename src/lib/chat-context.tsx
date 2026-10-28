@@ -9,7 +9,7 @@ import {
   type Accessor,
   type JSX,
 } from "solid-js";
-import { useLocation } from "@solidjs/router";
+import { useLocation, useNavigate } from "@solidjs/router";
 import {
   type CommunityMessage,
   type CommunityReadState,
@@ -64,6 +64,54 @@ export type ChatMessage = (DMMessage | CommunityMessage) & {
 const POLL_MS = 4000;
 const CONTACTS_POLL_MS = 20000;
 const TYPING_THROTTLE_MS = 2500;
+const TALK_FILTER_ENTRY_KEY = "yurumeTalkFilterEntry";
+
+/** Only the opaque entry ID goes into history; query text lives with ChatProvider. */
+export function createTalkListFilterHistory(
+  currentState: () => unknown,
+  replaceCurrentState: (state: Record<string, unknown>) => void,
+  currentScope: () => string,
+) {
+  const filters = new Map<string, string>();
+  let scope = currentScope();
+  const syncScope = () => {
+    const next = currentScope();
+    if (next !== scope) {
+      filters.clear();
+      scope = next;
+    }
+  };
+  const state = (): Record<string, unknown> => {
+    const value = currentState();
+    return value !== null && typeof value === "object" && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : {};
+  };
+  const marker = () => {
+    const value = state()[TALK_FILTER_ENTRY_KEY];
+    return typeof value === "string" ? value : null;
+  };
+  return {
+    read: () => {
+      syncScope();
+      return filters.get(marker() ?? "") ?? "";
+    },
+    write: (value: string) => {
+      syncScope();
+      let entry = marker();
+      if (!entry || !filters.has(entry)) {
+        if (!value) return;
+        entry = crypto.randomUUID();
+        filters.set(entry, value);
+        replaceCurrentState({ ...state(), [TALK_FILTER_ENTRY_KEY]: entry });
+        return;
+      }
+      filters.set(entry, value);
+    },
+    syncScope,
+    clear: () => filters.clear(),
+  };
+}
 
 async function loadContacts(): Promise<DMContact[]> {
   const data = await fetchDMContacts();
@@ -203,6 +251,8 @@ export type ChatContextValue = {
   contactsRefreshing: Accessor<boolean>;
   selected: Accessor<DMContact | null>;
   selectContact: (contact: DMContact | null) => void;
+  readTalkListFilter: () => string;
+  writeTalkListFilter: (value: string) => void;
   messages: Accessor<ChatMessage[]>;
   messagesLoading: Accessor<boolean>;
   /** True when the initial history load for the open conversation failed. */
@@ -273,6 +323,7 @@ export function ChatProvider(props: { children: JSX.Element }) {
     mounted = false;
   });
   const location = useLocation();
+  const navigate = useNavigate();
   const [contactsResource, { refetch: refetchContacts }] = createResource(
     app.origin,
     loadContacts,
@@ -295,6 +346,22 @@ export function ChatProvider(props: { children: JSX.Element }) {
   >();
   const scopeKey = () =>
     JSON.stringify([app.origin(), app.actor().ap_id, app.authEpoch()]);
+  const talkFilter = createTalkListFilterHistory(
+    () => (typeof window === "undefined" ? null : window.history.state),
+    (state) => {
+      if (typeof window === "undefined") return;
+      // Apply immediately so rapid input and a following profile navigation
+      // see the same entry, then synchronize Solid Router's location.state.
+      window.history.replaceState(state, "");
+      navigate(
+        `${window.location.pathname}${window.location.search}${window.location.hash}`,
+        { replace: true, resolve: false, scroll: false, state },
+      );
+    },
+    scopeKey,
+  );
+  createEffect(on(scopeKey, talkFilter.syncScope));
+  onCleanup(talkFilter.clear);
   createEffect(
     on(scopeKey, (key) => {
       for (const [previousKey, store] of recoveries) {
@@ -430,6 +497,8 @@ export function ChatProvider(props: { children: JSX.Element }) {
         !isWideViewport() &&
         typeof window !== "undefined"
       ) {
+        // The overlay is the same list context. Carry its opaque filter marker
+        // so profile -> Back can restore the list under the chat entry too.
         window.history.pushState(
           { ...(window.history.state ?? {}), yurumeChatOpen: true },
           "",
@@ -1030,6 +1099,8 @@ export function ChatProvider(props: { children: JSX.Element }) {
         contactsRefreshing: () => contactsResource.loading,
         selected,
         selectContact,
+        readTalkListFilter: talkFilter.read,
+        writeTalkListFilter: talkFilter.write,
         messages,
         messagesLoading,
         messagesError,
