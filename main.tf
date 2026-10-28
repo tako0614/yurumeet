@@ -124,6 +124,28 @@ variable "takosumi_accounts_client_id" {
   default     = ""
 }
 
+variable "takosumi_accounts_url" {
+  description = "Public Accounts API URL supplied by the registered OIDC install context."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = trimspace(var.takosumi_accounts_url) == "" || can(regex("^https://[^[:space:]]+$", trimspace(var.takosumi_accounts_url)))
+    error_message = "takosumi_accounts_url must be empty or an https URL."
+  }
+}
+
+variable "takosumi_accounts_redirect_uri" {
+  description = "Exact registered OIDC callback URI, when supplied by the installer."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = trimspace(var.takosumi_accounts_redirect_uri) == "" || can(regex("^https://[^[:space:]]+$", trimspace(var.takosumi_accounts_redirect_uri)))
+    error_message = "takosumi_accounts_redirect_uri must be empty or an https URL."
+  }
+}
+
 variable "oidc_owner_sub" {
   description = "OIDC/OAuth subject pinned to the single owner slot. Only this subject may become owner on first login; every other first-login is refused."
   type        = string
@@ -199,6 +221,8 @@ variable "env" {
         "AUTH_PASSWORD_HASH",
         "TAKOSUMI_ACCOUNTS_ISSUER_URL",
         "TAKOSUMI_ACCOUNTS_CLIENT_ID",
+        "TAKOSUMI_ACCOUNTS_URL",
+        "TAKOSUMI_ACCOUNTS_REDIRECT_URI",
         "OIDC_OWNER_SUB",
         "TAKOSUMI_ACCOUNTS_OWNER_SUB",
         "OIDC_ALLOWED_SUBS",
@@ -608,6 +632,20 @@ resource "cloudflare_workers_script" "worker" {
         text = trimspace(var.takosumi_accounts_client_id)
       },
     ] : [],
+    trimspace(var.takosumi_accounts_url) != "" ? [
+      {
+        type = "plain_text"
+        name = "TAKOSUMI_ACCOUNTS_URL"
+        text = trimspace(var.takosumi_accounts_url)
+      },
+    ] : [],
+    trimspace(var.takosumi_accounts_redirect_uri) != "" ? [
+      {
+        type = "plain_text"
+        name = "TAKOSUMI_ACCOUNTS_REDIRECT_URI"
+        text = trimspace(var.takosumi_accounts_redirect_uri)
+      },
+    ] : [],
     local.notification_push_gateway_url != "" ? [
       {
         type = "plain_text"
@@ -690,6 +728,14 @@ resource "cloudflare_workers_script" "worker" {
     precondition {
       condition     = !local.cloudflare_worker_enabled || local.provided_auth_password_hash != "" || local.has_takosumi_accounts_oidc
       error_message = "A deployed Yurumeet Worker requires an explicit auth_password_hash or a complete Takosumi Accounts issuer/client pair; no hidden bootstrap credential is generated."
+    }
+
+    precondition {
+      condition = !local.cloudflare_worker_enabled || !local.has_takosumi_accounts_oidc || trimspace(var.takosumi_accounts_redirect_uri) == "" || try(
+        trimspace(var.takosumi_accounts_redirect_uri) == "${trimsuffix(local.launch_url, "/")}/api/auth/callback/takos",
+        false,
+      )
+      error_message = "The registered OIDC redirect URI must match the public Yurumeet URL and /api/auth/callback/takos."
     }
 
     precondition {

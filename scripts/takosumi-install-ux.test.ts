@@ -409,12 +409,66 @@ describe("repository-owned Takosumi install UX", () => {
     expect(managedModuleSource).not.toContain("external_services");
   });
 
+  test("direct OIDC supplies every registered public input and receives the exact callback", () => {
+    expect(
+      rootModule.requires?.find(
+        (requirement) => requirement.kind === "identity.oidc",
+      ),
+    ).toEqual({
+      kind: "identity.oidc",
+      callbackPath: "/api/auth/callback/takos",
+      scopes: ["openid", "profile", "email"],
+      deliver: {
+        variables: {
+          accountsUrl: "takosumi_accounts_url",
+          issuerUrl: "takosumi_accounts_issuer_url",
+          clientId: "takosumi_accounts_client_id",
+          redirectUri: "takosumi_accounts_redirect_uri",
+        },
+      },
+    });
+    for (const name of [
+      "takosumi_accounts_url",
+      "takosumi_accounts_redirect_uri",
+    ]) {
+      expect(
+        rootModule.inputs.find((input) => input.name === name)?.source.kind,
+      ).toBe("module_default");
+      expect(rootModuleSource).toContain(`variable "${name}"`);
+    }
+    expect(rootModuleSource).toContain('name = "TAKOSUMI_ACCOUNTS_URL"');
+    expect(rootModuleSource).toContain(
+      'name = "TAKOSUMI_ACCOUNTS_REDIRECT_URI"',
+    );
+    expect(rootModuleSource).toContain(
+      '"${trimsuffix(local.launch_url, "/")}/api/auth/callback/takos"',
+    );
+  });
+
+  test("direct resource and Worker opt-ins remain explicit optional booleans", () => {
+    for (const name of [
+      "enable_cloudflare_resources",
+      "enable_cloudflare_worker_script",
+    ]) {
+      expect(
+        rootModule.inputs.find((input) => input.name === name),
+      ).toMatchObject({
+        source: { kind: "user" },
+        type: "boolean",
+        required: false,
+        advanced: true,
+      });
+      const declaration = rootModuleSource.match(
+        new RegExp(`variable "${name}" \\{([^}]+)\\}`),
+      );
+      expect(declaration?.[1]).toMatch(/default\s*=\s*false/);
+    }
+  });
+
   test("keeps host authority and secret values out of repository metadata", () => {
     expect(collectForbiddenKeys(manifest)).toEqual([]);
     for (const forbidden of [
       "cloudflare_account_id",
-      "enable_cloudflare_resources",
-      "enable_cloudflare_worker_script",
       "encryption_key",
       "oidc_owner_sub",
       "oidc_allowed_subs",

@@ -378,3 +378,81 @@ run "nel_blank_with_oidc_omits_password" {
     error_message = "Complete OIDC and the explicit owner pin must remain projected."
   }
 }
+
+# The installer supplies four public OIDC inputs. The callback must remain
+# exactly the URI registered for this app, without changing owner admission.
+run "registered_oidc_public_inputs" {
+  command = plan
+  variables {
+    takosumi_accounts_issuer_url   = "https://accounts.example.test"
+    takosumi_accounts_client_id    = "test-only-client"
+    takosumi_accounts_url          = "https://accounts-api.example.test"
+    takosumi_accounts_redirect_uri = "https://auth-input.example.test/api/auth/callback/takos"
+    oidc_owner_sub                 = "test-only-owner"
+  }
+  assert {
+    condition = alltrue([
+      for name, value in {
+        TAKOSUMI_ACCOUNTS_ISSUER_URL   = var.takosumi_accounts_issuer_url
+        TAKOSUMI_ACCOUNTS_CLIENT_ID    = var.takosumi_accounts_client_id
+        TAKOSUMI_ACCOUNTS_URL          = var.takosumi_accounts_url
+        TAKOSUMI_ACCOUNTS_REDIRECT_URI = var.takosumi_accounts_redirect_uri
+        } : length([
+          for binding in cloudflare_workers_script.worker[0].bindings : binding
+          if binding.name == name && binding.type == "plain_text" && binding.text == value
+      ]) == 1
+    ])
+    error_message = "Every registered public OIDC value must reach exactly one Worker binding."
+  }
+}
+
+run "registered_oidc_callback_wrong_origin" {
+  command = plan
+  variables {
+    takosumi_accounts_issuer_url   = "https://accounts.example.test"
+    takosumi_accounts_client_id    = "test-only-client"
+    takosumi_accounts_redirect_uri = "https://other.example.test/api/auth/callback/takos"
+    oidc_owner_sub                 = "test-only-owner"
+  }
+  expect_failures = [cloudflare_workers_script.worker]
+}
+
+run "registered_oidc_callback_wrong_path" {
+  command = plan
+  variables {
+    takosumi_accounts_issuer_url   = "https://accounts.example.test"
+    takosumi_accounts_client_id    = "test-only-client"
+    takosumi_accounts_redirect_uri = "https://auth-input.example.test/api/auth/callback"
+    oidc_owner_sub                 = "test-only-owner"
+  }
+  expect_failures = [cloudflare_workers_script.worker]
+}
+
+run "registered_oidc_callback_query_refused" {
+  command = plan
+  variables {
+    takosumi_accounts_issuer_url   = "https://accounts.example.test"
+    takosumi_accounts_client_id    = "test-only-client"
+    takosumi_accounts_redirect_uri = "https://auth-input.example.test/api/auth/callback/takos?extra=1"
+    oidc_owner_sub                 = "test-only-owner"
+  }
+  expect_failures = [cloudflare_workers_script.worker]
+}
+
+run "registered_oidc_accounts_api_cannot_be_overridden_by_env" {
+  command = plan
+  variables {
+    auth_password_hash = "test-only-token"
+    env                = { TAKOSUMI_ACCOUNTS_URL = "https://forged.example.test" }
+  }
+  expect_failures = [var.env]
+}
+
+run "registered_oidc_redirect_cannot_be_overridden_by_env" {
+  command = plan
+  variables {
+    auth_password_hash = "test-only-token"
+    env                = { TAKOSUMI_ACCOUNTS_REDIRECT_URI = "https://forged.example.test/callback" }
+  }
+  expect_failures = [var.env]
+}
