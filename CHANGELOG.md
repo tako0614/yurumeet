@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Adopt Core/API 4.2.0. The server sends standard Web Push itself with a VAPID
+  key derived from `ENCRYPTION_KEY`, so browser notifications need no push
+  gateway or hand-entered key. The service worker shows Declarative Web Push
+  and opens only same-origin pages. The ignored
+  `notification_push_web_push_public_key` variable and the `VITE_YURUME_*`
+  build-time push fallback are removed; the gateway URL remains for native app
+  pushers. Migrations are unchanged (35 files, byte-identical to Core 4.1.14).
+
 ## 0.2.0 - 2026-10-12
 
 - Adopt the published Core/API 4.1.14 and its 35-migration schema bundle,

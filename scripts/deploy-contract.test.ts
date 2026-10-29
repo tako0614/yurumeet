@@ -152,7 +152,7 @@ describe("deploy contract", () => {
     expect(integration?.obligations.provenance).toContain("v0.2.0");
     expect(integration?.obligations["post-conditions"]).toContain("fresh D1");
     expect(integration?.obligations["post-conditions"]).toContain(
-      "fresh-schema executes the pinned Core 4.1.14 migration set on that fresh D1 with the same exact 0034 CASE projection",
+      "fresh-schema executes the pinned Core 4.2.0 migration set on that fresh D1 with the same exact 0034 CASE projection",
     );
     expect(integration?.obligations["post-conditions"]).toContain(
       "recover-prefix32 accepts only the exact existing integration D1",
