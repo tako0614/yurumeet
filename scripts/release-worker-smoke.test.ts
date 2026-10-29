@@ -1,12 +1,13 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Database } from "bun:sqlite";
 import { build, stop } from "esbuild";
 
-import { createEntrySource } from "./build-takos-worker.ts";
+import { contentTypeFor, createEntrySource } from "./build-takos-worker.ts";
 import { PRODUCT_WIRE_IDENTITY } from "../src/product-identity.ts";
 import {
   assertClosedStoreInventoriesEqual,
@@ -43,6 +44,17 @@ function entrySource() {
       contentType: "text/html; charset=utf-8",
       body: Buffer.from(smokeHtml).toString("base64"),
     },
+    // The real manifest and one of its icons, so the artifact smoke's
+    // web-app-manifest check sees what the build embeds from public/.
+    ...Object.fromEntries(
+      ["manifest.webmanifest", "icons/yurumeet-192.png"].map((path) => [
+        path,
+        {
+          contentType: contentTypeFor(path),
+          body: readFileSync(join(repo, "public", path)).toString("base64"),
+        },
+      ]),
+    ),
   });
 }
 
@@ -590,6 +602,7 @@ describe("release Worker smoke", () => {
         "readyz",
         "discovery",
         "embedded-ui",
+        "web-app-manifest",
         "main-queue-fanout",
         "dlq-exhaustion",
         "scheduled-story-retention",
@@ -824,6 +837,26 @@ describe("release Worker smoke", () => {
       await expectSmokeToRejectFakeWrite(injected, error);
     }, 30_000);
   }
+
+  test("rejects an artifact that does not embed the web app manifest", async () => {
+    const source = entrySource();
+    expect(source).toContain('"manifest.webmanifest": {');
+    const directory = await mkdtemp(join(tmpdir(), "yurumeet-smoke-test-"));
+    temporaryDirectories.push(directory);
+    const artifactPath = await generatedArtifact(
+      directory,
+      source.replace(
+        '"manifest.webmanifest": {',
+        '"not-the-manifest.webmanifest": {',
+      ),
+    );
+    const result = await smoke(artifactPath);
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stdout.toString()).toBe("");
+    expect(result.stderr.toString()).toContain(
+      "embedded web app manifest was not served",
+    );
+  }, 60_000);
 
   test("rejects private media denial with image bytes", async () => {
     await expectSmokeToRejectFakeWrite(
