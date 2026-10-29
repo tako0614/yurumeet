@@ -316,16 +316,19 @@ Yurumeet は中央でホストされるアプリではなく、自分で動か�
 ブラウザ通知は設定画面から明示的に有効化します。ページを開いただけでは通知権限を要求しません。
 通知には DM やコミュニティメッセージの本文を載せず、service worker は通知を受けたあと Yurumeet を開きます。
 
-OpenTofu で Worker を作る場合は、次の 3 変数を設定します。
+ブラウザ通知に追加の設定は要りません。Yurumeet の Worker が標準の Web Push（RFC 8291・RFC 8292）を
+自分で送ります。VAPID 鍵は `ENCRYPTION_KEY` から導出し、公開鍵は `GET /api/notifications/pushers/config` の
+`web_push_instance_public_key` でブラウザへ渡します。push gateway も手入力の公開鍵も、build-time の値も使いません。
+`ENCRYPTION_KEY` を変えると VAPID 鍵も変わり、有効にしてあった購読は新しい鍵で作り直されます。
+
+push gateway は、ネイティブアプリの端末へ送る場合と、以前の版で gateway 経由に登録したブラウザの購読が
+まだ移っていない場合にだけ使います。OpenTofu で Worker を作る場合は、次の変数で設定します。
 
 - `notification_push_gateway_url` — 状態を持たない push gateway の公開 HTTPS notify endpoint
 - `notification_push_gateway_token` — Worker だけが gateway 呼び出しに使う secret bearer
-- `notification_push_web_push_public_key` — gateway の公開 VAPID key（秘密値ではありません）
 
-gateway URL と公開 VAPID key は必ず一緒に設定します。対応する VAPID private key は gateway 側だけに置き、
-Yurumeet の DB・browser・OpenTofu Output には保存しません。ローカルの UI 開発で runtime API がまだない場合だけ、
-`VITE_YURUME_NOTIFICATION_PUSH_GATEWAY_URL` と `VITE_YURUME_WEB_PUSH_PUBLIC_KEY` を build-time fallback
-として利用できます。
+以前の `notification_push_web_push_public_key` 変数と `VITE_YURUME_NOTIFICATION_PUSH_GATEWAY_URL`・
+`VITE_YURUME_WEB_PUSH_PUBLIC_KEY` の build-time fallback は廃止しました（core 4.2.0 以降は使われません）。
 
 ## 開発者向けの注意
 

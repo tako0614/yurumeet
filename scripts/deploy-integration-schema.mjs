@@ -22,7 +22,7 @@ const API = "https://api.cloudflare.com/client/v4";
 const DATABASE_NAME = "yurumeet-ga-20261012-0938-db";
 const NATIVE_FULL35_DATABASE_NAME = "yurumeet-ga-20261012-0938-native-full35";
 const WORKER_NAME = "yurumeet-ga-20261012-0938";
-const CORE_VERSION = "4.1.14";
+const CORE_VERSION = "4.2.0";
 const PREFIX32_LENGTH = 32;
 const MAX_SCHEMA_OBJECTS = 600;
 const MAX_COUNTED_TABLES = 240;
@@ -46,7 +46,7 @@ const LEDGER_INIT_SQL = `CREATE TABLE IF NOT EXISTS ${LEDGER} (
         applied_at TEXT NOT NULL
       )`;
 
-// This map pins the SQL bytes admitted by the published Core 4.1.14 package.
+// This map pins the SQL bytes admitted by the published Core 4.2.0 package.
 const MIGRATIONS = Object.freeze({
   "0001_init.sql":
     "5f79b32320d842914891f21b0589a3e4e88fe3286a252ce541f2535680641651",
@@ -761,7 +761,7 @@ async function verifyCoreInputs(repo) {
   );
   insist(
     corePackage.version === CORE_VERSION,
-    "installed Core version is not the qualified 4.1.14 release",
+    "installed Core version is not the qualified 4.2.0 release",
   );
   const migrationsDir = join(coreDir, "migrations");
   const names = (await readdir(migrationsDir, { withFileTypes: true }))
@@ -1583,7 +1583,7 @@ export async function recoverPrefix32IntegrationSchema({
   }
 }
 
-/** Apply the exact published Core 4.1.14 migration set to the isolated new D1. */
+/** Apply the exact published Core 4.2.0 migration set to the isolated new D1. */
 export async function applyFreshIntegrationSchema({
   accountId,
   databaseId,

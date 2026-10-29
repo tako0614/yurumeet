@@ -321,20 +321,26 @@ app never prompts for notification permission. Pushes contain no DM or
 community-message content; the service worker wakes the client and opens
 Yurumeet.
 
-When OpenTofu creates the Worker, configure these variables:
+Browser notifications need no extra configuration. The Yurumeet Worker sends
+standard Web Push (RFC 8291, RFC 8292) itself. Its VAPID key is derived from
+`ENCRYPTION_KEY`, and browsers receive the public key as
+`web_push_instance_public_key` from `GET /api/notifications/pushers/config`.
+No push gateway, hand-entered public key, or build-time value is involved.
+Changing `ENCRYPTION_KEY` changes the VAPID key, and enabled subscriptions are
+recreated with the new key.
+
+A push gateway is used only to reach native app devices, and for browser
+subscriptions that an earlier version registered through a gateway and that
+have not moved yet. When OpenTofu creates the Worker, configure it with:
 
 - `notification_push_gateway_url` — public HTTPS notify endpoint of the
   stateless push gateway
 - `notification_push_gateway_token` — secret bearer used only by the Worker
   when it calls that gateway
-- `notification_push_web_push_public_key` — the gateway's public VAPID key
-  (not a secret)
 
-The gateway URL and public VAPID key must be configured together. Keep the
-matching VAPID private key only at the gateway; it is never stored in the
-Yurumeet database, browser, or OpenTofu outputs. For local UI development
-against an older server only, `VITE_YURUME_NOTIFICATION_PUSH_GATEWAY_URL` and
-`VITE_YURUME_WEB_PUSH_PUBLIC_KEY` provide a build-time fallback.
+The former `notification_push_web_push_public_key` variable and the
+`VITE_YURUME_NOTIFICATION_PUSH_GATEWAY_URL` / `VITE_YURUME_WEB_PUSH_PUBLIC_KEY`
+build-time fallback are gone (core 4.2.0 and later do not use them).
 
 ## Developer notes
 

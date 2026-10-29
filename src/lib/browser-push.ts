@@ -1,7 +1,7 @@
 import {
   clearBrowserNotificationPush,
+  createBrowserPushConfigResolver,
   disableBrowserNotificationPush,
-  fetchNotificationPusherPublicConfig,
   type BrowserNotificationPushConfig,
   type BrowserNotificationPushRuntime,
 } from "@takosjp/yurucommu-api";
@@ -35,51 +35,76 @@ export function captureBrowserPushRuntime(): BrowserNotificationPushRuntime {
 const browserPushIdentity = {
   product: "yurume" as const,
   appId: "jp.takos.yurume.web",
+  appDisplayName: "Yurume",
   serviceWorkerPath: "/notification-push-sw.js",
 };
 
-export function yurumeBrowserPushConfig(): BrowserNotificationPushConfig | null {
-  const env = (
-    import.meta as unknown as {
-      readonly env?: Readonly<Record<string, string | undefined>>;
-    }
-  ).env;
-  const gatewayUrl = env?.VITE_YURUME_NOTIFICATION_PUSH_GATEWAY_URL?.trim();
-  const vapidPublicKey = env?.VITE_YURUME_WEB_PUSH_PUBLIC_KEY?.trim();
-  if (!gatewayUrl || !vapidPublicKey) return null;
-  return createConfig(gatewayUrl, vapidPublicKey);
+/**
+ * The shared yurucommu-core resolver owns which runtime values enable browser
+ * push: the server's own VAPID key from
+ * `GET /api/notifications/pushers/config`. There is no build-time fallback
+ * and no gateway: the server sends standard Web Push itself.
+ */
+function resolver() {
+  const lang = currentLanguage();
+  return createBrowserPushConfigResolver({
+    identity: { ...browserPushIdentity, ...(lang ? { lang } : {}) },
+    resolveServerOrigin: readYurumeetServerOrigin,
+  });
+}
+
+/** The page language (<html lang>) so the server writes push text in it. */
+function currentLanguage(): string | null {
+  if (typeof document === "undefined") return null;
+  const lang = document.documentElement.lang.trim();
+  return /^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*$/.test(lang) ? lang : null;
 }
 
 export async function resolveYurumeBrowserPushConfig(): Promise<BrowserNotificationPushConfig | null> {
-  try {
-    const runtime = await fetchNotificationPusherPublicConfig();
-    if (
-      !runtime.enabled ||
-      !runtime.gateway_url ||
-      !runtime.web_push_public_key
-    ) {
-      return null;
-    }
-    return createConfig(runtime.gateway_url, runtime.web_push_public_key);
-  } catch {
-    return yurumeBrowserPushConfig();
-  }
+  return resolver().resolveConfig();
 }
 
-function createConfig(
-  gatewayUrl: string,
-  vapidPublicKey: string,
-): BrowserNotificationPushConfig | null {
-  const serverOrigin = readYurumeetServerOrigin();
-  if (!serverOrigin) return null;
+/**
+ * Standard PushSubscription key accessors. A core that registers `webpush`
+ * pushers reads p256dh/auth through these, so the guarded wrapper must keep
+ * them (bound to the real subscription).
+ */
+type SubscriptionKeyAccess = {
+  getKey?(name: "p256dh" | "auth"): ArrayBuffer | null;
+  toJSON?(): {
+    readonly endpoint?: string | null;
+    readonly keys?: Readonly<Record<string, string>>;
+  };
+};
+
+function guardedKeyAccess(subscription: object, guard: () => void) {
+  const access = subscription as SubscriptionKeyAccess;
   return {
-    ...browserPushIdentity,
-    appDisplayName: "Yurume",
-    serverOrigin,
-    gatewayUrl,
-    vapidPublicKey,
+    ...(access.getKey
+      ? {
+          getKey(name: "p256dh" | "auth") {
+            guard();
+            return access.getKey!.call(subscription, name);
+          },
+        }
+      : {}),
+    ...(access.toJSON
+      ? {
+          toJSON() {
+            guard();
+            return access.toJSON!.call(subscription);
+          },
+        }
+      : {}),
   };
 }
+
+/** Registration worker fields, so the SDK can wait for activation. */
+type RegistrationWorkers = {
+  readonly active?: ServiceWorker | null;
+  readonly installing?: ServiceWorker | null;
+  readonly waiting?: ServiceWorker | null;
+};
 
 function throwIfPushCleanupInactive(
   signal: AbortSignal,
@@ -162,7 +187,20 @@ export function createGuardedBrowserPushRuntime(
 
   function guardRegistration(registration: BrowserServiceWorkerRegistration) {
     const pushManager = registration.pushManager;
+    const workers = registration as unknown as RegistrationWorkers;
     return {
+      get active() {
+        guard();
+        return workers.active;
+      },
+      get installing() {
+        guard();
+        return workers.installing;
+      },
+      get waiting() {
+        guard();
+        return workers.waiting;
+      },
       pushManager: {
         async getSubscription() {
           guard();
@@ -184,6 +222,7 @@ export function createGuardedBrowserPushRuntime(
               guard();
               return result;
             },
+            ...guardedKeyAccess(subscription, guard),
           };
         },
         subscribe: async (options: {
@@ -208,6 +247,7 @@ export function createGuardedBrowserPushRuntime(
               guard();
               return result;
             },
+            ...guardedKeyAccess(subscription, guard),
           };
         },
       },

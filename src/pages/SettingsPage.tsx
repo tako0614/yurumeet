@@ -3,6 +3,7 @@ import { A } from "@solidjs/router";
 import {
   type AccountInfo,
   type Actor,
+  type BrowserNotificationPushConfig,
   type BrowserNotificationPushState,
   deleteAccount,
   disableBrowserNotificationPush,
@@ -23,7 +24,6 @@ import { fullHandle, profilePath, titleFor, UserAvatar } from "../lib/ui.tsx";
 import {
   clearYurumeBrowserPushBeforeSignOut,
   resolveYurumeBrowserPushConfig,
-  yurumeBrowserPushConfig,
 } from "../lib/browser-push.ts";
 
 export default function SettingsPage() {
@@ -34,7 +34,7 @@ export default function SettingsPage() {
   const [muted, setMuted] = createSignal<Actor[]>([]);
   const [busy, setBusy] = createSignal(false);
   const [pushConfig, setPushConfig] =
-    createSignal<ReturnType<typeof yurumeBrowserPushConfig>>(null);
+    createSignal<BrowserNotificationPushConfig | null>(null);
   const [pushState, setPushState] =
     createSignal<BrowserNotificationPushState>("unconfigured");
   const [pushBusy, setPushBusy] = createSignal(false);
