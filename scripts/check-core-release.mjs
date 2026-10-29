@@ -6,7 +6,10 @@ import { fileURLToPath } from "node:url";
 
 // 4.1.11 established Workers DNS; 4.1.13 preserves guarded INSERT SELECT
 // composition. Core/API 4.1.14 fixes authenticated recommendation raw reads.
-export const MINIMUM_PRODUCT_RELEASE = "4.1.14";
+// Core/API 4.2.0 sends standard Web Push from the server with a VAPID key
+// derived from ENCRYPTION_KEY; this product no longer ships a gateway key or
+// build-time push fallback, so browser push stays unconfigured on 4.1.x.
+export const MINIMUM_PRODUCT_RELEASE = "4.2.0";
 
 const PACKAGE_NAMES = ["@takosjp/yurucommu-core", "@takosjp/yurucommu-api"];
 const REQUIRED_API_EXPORTS = [
