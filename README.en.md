@@ -11,14 +11,28 @@ Legacy contact-only drafts remain stored and are not automatically imported beca
 their author cannot be determined.
 
 Production Workers require a high-entropy `YURUCOMMU_SESSION_HASH_SALT` secret.
-The direct OpenTofu adapter requires the sensitive `session_hash_salt` input
-when it publishes a Worker and rejects that key in plaintext `env`. Generate
-a fresh value securely (for example, `openssl rand -hex 32`) and preserve the
-exact existing value on update; changing it can require users to log in again.
-Direct managed install's sealed input delivery remains unqualified. The portable
-manifest declares a generated-secret binding for fresh installs. Updating an
-existing Capsule requires separate platform custody/migration evidence because
-a changed generated-secret profile may also regenerate its encryption key.
+The direct OpenTofu adapter accepts an existing sensitive `session_hash_salt`,
+or explicit `manage_session_hash_salt = true` for a new installation. The latter
+is false by default and exposes only a non-secret advanced boolean. A dedicated
+random provider resource generates a 64-character salt and passes its sensitive
+result to the existing secret_text binding. Keep its private OpenTofu state and
+management flag: ordinary updates, service renames and Worker pauses/resumes
+retain that same resource. No salt value is exposed as a form field or Output.
+
+Managed mode refuses any supplied manual salt, including whitespace-only input.
+It does not adopt or migrate an existing installation's salt. Preserve the exact
+existing value and private state through updates and rollback; a salt change can
+require users to log in again. Manual mode preserves accepted bytes and refuses
+plaintext `env` delivery. Its sealed direct-install input path remains unqualified.
+The portable manifest retains its distinct generated-secret binding; updating an
+existing Capsule still requires separate custody/migration evidence because a
+changed generated-secret profile may also regenerate its encryption key.
+
+Managed salt does not supply an OIDC owner subject or enable first-login owner
+claim. The direct module still needs the legitimate owner-subject supplier,
+authentication and exact callback contract. Resource Apply is not one transaction:
+retain private state after a partial failure and review the normal Plan. Local
+source tests do not qualify an actual installation or secret custody.
 
 The Worker refuses missing, blank and known public development-fallback salts
 before Core effects, preserving every accepted byte. The code-only publishing

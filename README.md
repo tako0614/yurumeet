@@ -141,13 +141,23 @@ Takosumi で root module `.` を選んだ場合は、高度な設定で
 OIDC-only の初回導入では、`oidc_owner_sub` に正当な利用者の subject を固定してください。
 公開4項目に owner subject や秘密値は含めず、以下の機密入力も正規の配置設定から渡します。
 
-root OpenTofu module で Worker を公開するときは、機密入力
-`session_hash_salt` が必須です。値をそのまま `YURUCOMMU_SESSION_HASH_SALT`
-Secret に渡し、汎用 `env` の同名キーは拒否します。新規環境では安全な場所で
-`openssl rand -hex 32` などにより生成し、既存環境の更新では現在の値を保持して
-ください。salt を変えると session の照合が変わり、再ログインが必要になり得ます。
-Takosumi の direct install へ渡す sealed 入力経路は未検証で、通常の入力欄に秘密値を
-書いて代用しません。Wrangler を使う self-host でも同名の Worker Secret が必要です。
+root OpenTofu module で Worker を公開するときは、既存の機密入力
+`session_hash_salt`、または新規導入専用の `manage_session_hash_salt = true` を選びます。
+管理modeの既定値はfalseです。高度な設定のbooleanだけを受け取り、専用のrandom provider資源で
+64文字のsaltを生成し、既存の `YURUCOMMU_SESSION_HASH_SALT` Secretへ渡します。
+値は機密のOpenTofu stateに保持します。通常更新、サービス名変更、Workerの一時停止・再開では
+同じ管理資源を保持します。管理flagとprivate stateを維持し、saltを通常の入力欄やOutputへ出しません。
+
+管理modeと手動saltの併用は、空白だけの設定も含め拒否します。既存環境のsaltをこのmodeへ
+暗黙移行せず、その環境の正確な値とprivate stateを更新・rollbackでも保持してください。
+saltを変えるとsessionの照合が変わり、再ログインが必要になり得ます。
+手動modeでは値をそのままSecretへ渡し、汎用 `env` の同名キーは拒否します。手動saltの
+Takosumiからのsealed入力経路は未検証です。Wranglerによるself-hostでも同名のSecretが必要です。
+
+この選択はOIDCのowner subjectを生成・代用しません。direct moduleの正当なowner subjectの
+配送は引き続き未成立で、初回ログイン者へのowner自動割当も有効にしません。実導入にはこの入力と
+既存の認証・callback条件が必要です。各resourceのApplyは一つのtransactionではなく、途中失敗時も
+私有stateを保って正規のPlanで確認します。source/localの成功を実導入・custodyの資格へ広げません。
 
 Worker は未設定・空白だけの salt と公開された開発用 fallback を、Core の処理前に
 拒否します。受け入れた値は正規化しません。code-only の公開入口は

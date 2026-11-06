@@ -166,6 +166,23 @@
             "advanced": true
           },
           {
+            "name": "manage_session_hash_salt",
+            "source": {
+              "kind": "user"
+            },
+            "type": "boolean",
+            "required": false,
+            "label": {
+              "ja": "ログイン用saltをこのインストールで管理",
+              "en": "Manage this installation’s session salt"
+            },
+            "helper": {
+              "ja": "新規導入用です。更新やWorkerの一時停止でもsaltを保持します。既存のsaltとは併用できません。",
+              "en": "For a new installation. Retained across updates and Worker pauses. Cannot be combined with an existing salt."
+            },
+            "advanced": true
+          },
+          {
             "name": "enable_cloudflare_worker_script",
             "source": {
               "kind": "user"
