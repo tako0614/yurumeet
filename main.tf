@@ -86,6 +86,12 @@ variable "session_hash_salt" {
   sensitive   = true
 }
 
+variable "manage_session_hash_salt" {
+  description = "Explicitly manage a private persistent session salt for a new installation. Do not combine with session_hash_salt or use this to adopt an existing instance's salt. Retain the flag and private state across updates."
+  type        = bool
+  default     = false
+}
+
 variable "auth_password_hash" {
   description = "Sensitive canonical PBKDF2 hash or unambiguous bootstrap token for AUTH_PASSWORD_HASH. Nonblank HCL string values are preserved; padded PBKDF2-shaped values are rejected. Required for a managed Worker unless Takosumi Accounts OIDC is configured."
   type        = string
@@ -394,6 +400,7 @@ locals {
   ))
   provided_auth_password_hash   = local.auth_password_is_blank ? "" : var.auth_password_hash
   provided_session_hash_salt    = var.session_hash_salt
+  effective_session_hash_salt   = var.manage_session_hash_salt ? random_password.session_hash_salt[0].result : local.provided_session_hash_salt
   has_takosumi_accounts_oidc    = trimspace(var.takosumi_accounts_issuer_url) != "" && trimspace(var.takosumi_accounts_client_id) != ""
   effective_encryption_key      = local.provided_encryption_key != "" ? local.provided_encryption_key : random_id.encryption_key.hex
   effective_auth_password_hash  = local.provided_auth_password_hash
@@ -458,6 +465,36 @@ data "http" "worker_bundle" {
     attempts     = 3
     min_delay_ms = 1000
     max_delay_ms = 10000
+  }
+}
+
+resource "random_password" "session_hash_salt" {
+  # Keep the private salt even when the Worker is temporarily disabled. There
+  # are no project-name keepers or runtime inputs in this resource's identity.
+  count   = var.manage_session_hash_salt ? 1 : 0
+  length  = 64
+  special = false
+
+  lifecycle {
+    precondition {
+      condition     = var.session_hash_salt == ""
+      error_message = "Managed session salt and an explicit session_hash_salt are mutually exclusive; do not silently replace an existing salt."
+    }
+    precondition {
+      condition     = !local.cloudflare_worker_enabled || local.provided_auth_password_hash != "" || local.has_takosumi_accounts_oidc
+      error_message = "Configure the existing password or complete OIDC authentication before generating a managed Worker session salt."
+    }
+    precondition {
+      condition     = !local.cloudflare_worker_enabled || !local.has_takosumi_accounts_oidc || local.oidc_owner_sub != "" || var.allow_unpinned_owner_claim
+      error_message = "Configure the existing explicit OIDC owner policy before generating a managed Worker session salt."
+    }
+    precondition {
+      condition = !local.cloudflare_worker_enabled || !local.has_takosumi_accounts_oidc || trimspace(var.takosumi_accounts_redirect_uri) == "" || try(
+        trimspace(var.takosumi_accounts_redirect_uri) == "${trimsuffix(local.launch_url, "/")}/api/auth/callback/takos",
+        false,
+      )
+      error_message = "The registered OIDC callback must match the public Yurumeet URL before generating a managed Worker session salt."
+    }
   }
 }
 
@@ -598,7 +635,7 @@ resource "cloudflare_workers_script" "worker" {
       {
         type = "secret_text"
         name = "YURUCOMMU_SESSION_HASH_SALT"
-        text = local.provided_session_hash_salt
+        text = local.effective_session_hash_salt
       },
     ],
     local.effective_auth_password_hash != "" ? [
@@ -715,8 +752,13 @@ resource "cloudflare_workers_script" "worker" {
     }
 
     precondition {
-      condition     = !local.cloudflare_worker_enabled || trimspace(local.provided_session_hash_salt) != ""
-      error_message = "A deployed Worker requires an explicit sensitive session_hash_salt; preserve an existing instance's exact value and never supply it through plaintext env."
+      condition     = !var.manage_session_hash_salt || var.session_hash_salt == ""
+      error_message = "Managed session salt and an explicit session_hash_salt are mutually exclusive; do not silently replace an existing salt."
+    }
+
+    precondition {
+      condition     = !local.cloudflare_worker_enabled || trimspace(local.effective_session_hash_salt) != ""
+      error_message = "A deployed Worker requires an explicit sensitive session_hash_salt or explicit managed salt mode; preserve an existing instance's exact value and never supply it through plaintext env."
     }
 
     # Owner-slot race. With Takosumi Accounts OIDC configured, auth_password_hash

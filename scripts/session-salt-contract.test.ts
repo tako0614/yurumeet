@@ -55,3 +55,21 @@ test("salt is not collected as an unsealed direct install form value", () => {
     false,
   );
 });
+
+test("managed salt is an explicit non-secret new-install choice only for the direct module", () => {
+  const input = manifest.install.modules["."].inputs.find(
+    (entry: { name: string }) => entry.name === "manage_session_hash_salt",
+  );
+  expect(input).toMatchObject({
+    source: { kind: "user" },
+    type: "boolean",
+    required: false,
+    advanced: true,
+  });
+  expect(input.secret).toBeUndefined();
+  expect(
+    manifest.install.modules["deploy/takoform"].inputs.some(
+      (entry: { name: string }) => entry.name === "manage_session_hash_salt",
+    ),
+  ).toBe(false);
+});
