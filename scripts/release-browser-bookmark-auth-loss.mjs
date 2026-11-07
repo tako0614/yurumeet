@@ -50,10 +50,12 @@ async function sessionId(cookie, salt) {
   return `sha256:${Buffer.from(digest).toString("hex")}`;
 }
 
-async function rateCapacity(page, origin) {
-  const deadline = Date.now() + RATE_WAIT_MAX;
+async function rateCapacity(page, origin, phase) {
+  const startedAt = Date.now();
+  const deadline = startedAt + RATE_WAIT_MAX;
   let waited = false;
   while (true) {
+    const requestStartedAt = Date.now();
     const response = await page.request.get(`${origin}/api/auth/providers`, {
       timeout: TIMEOUT,
     });
@@ -61,6 +63,22 @@ async function rateCapacity(page, origin) {
     const limit = Number(headers["x-ratelimit-limit"]);
     const remaining = Number(headers["x-ratelimit-remaining"]);
     const reset = Number(headers["x-ratelimit-reset"]);
+    const observedAt = Date.now();
+    // Public capacity metadata only; never dump headers, bodies or identity.
+    console.error(
+      JSON.stringify({
+        kind: "yurumeet-bookmark-auth-capacity",
+        phase,
+        attempt: waited ? 2 : 1,
+        status: response.status(),
+        limit,
+        remaining,
+        resetAtSeconds: reset,
+        elapsedMs: observedAt - startedAt,
+        requestElapsedMs: observedAt - requestStartedAt,
+        waitBudgetRemainingMs: Math.max(0, deadline - observedAt),
+      }),
+    );
     need(
       limit === 20 &&
         Number.isFinite(remaining) &&
@@ -78,6 +96,16 @@ async function rateCapacity(page, origin) {
     const waitMs = Math.min(
       Math.max(1, reset * 1000 - Date.now() + 150),
       deadline - Date.now(),
+    );
+    console.error(
+      JSON.stringify({
+        kind: "yurumeet-bookmark-auth-wait",
+        phase,
+        waitMs,
+        resetAtSeconds: reset,
+        deadlineClipped: reset * 1000 + 150 > deadline,
+        waitBudgetRemainingMs: Math.max(0, deadline - Date.now()),
+      }),
     );
     need(
       waitMs > 0 && waitMs <= RATE_WAIT_MAX && Date.now() + waitMs <= deadline,
@@ -252,7 +280,7 @@ async function loginOwner({ browser, db, origin, password, sessionSalt }) {
       window.__bookmarkAuthLossUnhandledRejections += 1;
     });
   });
-  const anonymousRate = await rateCapacity(page, origin);
+  const anonymousRate = await rateCapacity(page, origin, "before-login");
   await page.goto(origin, { waitUntil: "domcontentloaded", timeout: TIMEOUT });
   const passwordInput = page.locator('input[type="password"]');
   await passwordInput.waitFor({ state: "visible", timeout: TIMEOUT });
@@ -287,7 +315,7 @@ async function loginOwner({ browser, db, origin, password, sessionSalt }) {
     issuedRow?.id === expectedId && typeof issuedRow.member_id === "string",
     "salted-cookie-session-row-exists",
   );
-  const authenticatedRate = await rateCapacity(page, origin);
+  const authenticatedRate = await rateCapacity(page, origin, "after-login");
   const me = await readAuth(page, origin);
   need(
     me.status === 200 && me.actorApId === issuedRow.member_id,
