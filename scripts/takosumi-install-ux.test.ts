@@ -269,7 +269,7 @@ describe("repository-owned Takosumi install UX", () => {
       "kind",
       "install",
     ]);
-    expect(manifest.apiVersion).toBe("takosumi.com/v2.4");
+    expect(manifest.apiVersion).toBe("takosumi.com/v2.6");
     expect(manifest.kind).toBe("Repository");
     assertExactKeys(manifest.install as unknown as Record<string, unknown>, [
       "modules",
@@ -409,7 +409,7 @@ describe("repository-owned Takosumi install UX", () => {
     expect(managedModuleSource).not.toContain("external_services");
   });
 
-  test("direct OIDC supplies every registered public input and receives the exact callback", () => {
+  test("direct OIDC pins the installing owner and receives the exact callback", () => {
     expect(
       rootModule.requires?.find(
         (requirement) => requirement.kind === "identity.oidc",
@@ -423,6 +423,7 @@ describe("repository-owned Takosumi install UX", () => {
           accountsUrl: "takosumi_accounts_url",
           issuerUrl: "takosumi_accounts_issuer_url",
           clientId: "takosumi_accounts_client_id",
+          ownerSubject: "oidc_owner_sub",
           redirectUri: "takosumi_accounts_redirect_uri",
         },
       },
@@ -443,6 +444,13 @@ describe("repository-owned Takosumi install UX", () => {
     expect(rootModuleSource).toContain(
       '"${trimsuffix(local.launch_url, "/")}/api/auth/callback/takos"',
     );
+    // The installer derives this client's owner. A repository only names its
+    // existing HCL target; the install form must not offer an override.
+    expect(
+      rootModule.inputs.some((input) => input.name === "oidc_owner_sub"),
+    ).toBe(false);
+    expect(rootModuleSource).toContain('variable "oidc_owner_sub"');
+    expect(rootModuleSource).toContain('name = "OIDC_OWNER_SUB"');
   });
 
   test("direct resource and Worker opt-ins remain explicit optional booleans", () => {
@@ -470,7 +478,6 @@ describe("repository-owned Takosumi install UX", () => {
     for (const forbidden of [
       "cloudflare_account_id",
       "encryption_key",
-      "oidc_owner_sub",
       "oidc_allowed_subs",
       "allow_unpinned_owner_claim",
     ]) {

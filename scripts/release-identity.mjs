@@ -97,7 +97,8 @@ export function releaseIdentityFailures({
 function releaseRepositoryFailures({ repository, takoformSource }) {
   const failures = [];
   if (
-    repository?.apiVersion !== "takosumi.com/v2.4" ||
+    (repository?.apiVersion !== "takosumi.com/v2.4" &&
+      repository?.apiVersion !== "takosumi.com/v2.6") ||
     repository?.kind !== "Repository"
   ) {
     failures.push(
