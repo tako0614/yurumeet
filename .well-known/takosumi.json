@@ -1,5 +1,5 @@
 {
-  "apiVersion": "takosumi.com/v2.4",
+  "apiVersion": "takosumi.com/v2.6",
   "kind": "Repository",
   "install": {
     "modules": {
@@ -219,6 +219,7 @@
                 "accountsUrl": "takosumi_accounts_url",
                 "issuerUrl": "takosumi_accounts_issuer_url",
                 "clientId": "takosumi_accounts_client_id",
+                "ownerSubject": "oidc_owner_sub",
                 "redirectUri": "takosumi_accounts_redirect_uri"
               }
             }

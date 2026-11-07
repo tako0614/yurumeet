@@ -106,6 +106,38 @@ function checkTag(tag: string, overrides: Record<string, unknown> = {}) {
 }
 
 describe("release identity", () => {
+  test("accepts current owner projection and retained four-slot repositories", () => {
+    expect(checkCandidate()).toEqual([]);
+    const legacy = structuredClone(repository);
+    legacy.apiVersion = "takosumi.com/v2.4";
+    const oidc = legacy.install.modules["."].requires.find(
+      (requirement: { kind: string }) => requirement.kind === "identity.oidc",
+    );
+    delete oidc.deliver.variables.ownerSubject;
+    expect(checkCandidate({ repository: legacy })).toEqual([]);
+  });
+
+  test("refuses repository versions the product has not adopted", () => {
+    for (const apiVersion of [
+      "takosumi.com/v2.5",
+      "takosumi.com/v2.7",
+      "",
+      null,
+    ]) {
+      expect(
+        checkCandidate({ repository: { ...repository, apiVersion } }),
+      ).toContain(
+        ".well-known/takosumi.json has an unexpected repository kind",
+      );
+    }
+  });
+
+  test("refuses a non-Repository kind even with an adopted version", () => {
+    expect(
+      checkCandidate({ repository: { ...repository, kind: "Other" } }),
+    ).toContain(".well-known/takosumi.json has an unexpected repository kind");
+  });
+
   test("the existing published release remains valid in lock mode", () => {
     expect(lock.releases[publishedTag]).toBeDefined();
     expect(checkTag(publishedTag)).toEqual([]);
