@@ -193,7 +193,7 @@ export function reconcileFetchedWindow(
   fetched: ChatMessage[],
   coverage: { hasMore: boolean; requestedIds: ReadonlySet<string> },
 ): ChatMessage[] {
-  if (existing.length === 0) return fetched;
+  if (existing.length === 0) return fetched.length === 0 ? existing : fetched;
   if (fetched.length === 0 && coverage.hasMore) return existing;
   const byId = new Map(fetched.map((m) => [m.id, m]));
   const oldest = fetched[0];

@@ -92,6 +92,10 @@ test("unchanged pages retain the same array and row references", () => {
     reconcileFetchedWindow(before, [{ ...newest }], options(before, true)),
   ).toBe(before);
 });
+test("an unchanged empty poll retains its reference and does not refresh contacts", () => {
+  const before: ChatMessage[] = [];
+  expect(reconcileFetchedWindow(before, [], options(before))).toBe(before);
+});
 test("current server edits replace their row and append new messages", () => {
   const old = row("a", "2026-11-01T00:00:00Z"),
     edited = { ...old, content: "updated" },
