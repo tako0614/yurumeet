@@ -135,11 +135,12 @@ direct Cloudflare path を定義しますが、credential、承認、migration�
 
 Takosumi で root module `.` を選んだ場合は、高度な設定で
 `enable_cloudflare_resources` と `enable_cloudflare_worker_script` を明示的に有効にします。
-どちらも未指定時の既定値は無効です。OIDC 宣言は Accounts URL・issuer・client ID・
-登録済み redirect URI の公開4項目を受け取ります。redirect URI を指定する場合は、
-公開URLの `/api/auth/callback/takos` と一致する必要があります。
-OIDC-only の初回導入では、`oidc_owner_sub` に正当な利用者の subject を固定してください。
-公開4項目に owner subject や秘密値は含めず、以下の機密入力も正規の配置設定から渡します。
+どちらも未指定時の既定値は無効です。v2.6 の OIDC 宣言は Accounts URL・issuer・client ID・
+登録済み redirect URI に加え、現在の導入者の client 固有 subject を `oidc_owner_sub` へ配送します。
+正規の宣言を採用した Takosumi では、利用者が本人IDを手入力する必要はありません。
+redirect URI は公開URLの `/api/auth/callback/takos` と一致する必要があります。
+Takosumi 外の self-host では、OIDC-only の初回導入前に正当な subject を固定してください。
+Workspace ID や Principal ID を subject の代わりに使わず、以下の機密入力も正規の配置設定から渡します。
 
 root OpenTofu module で Worker を公開するときは、既存の機密入力
 `session_hash_salt`、または新規導入専用の `manage_session_hash_salt = true` を選びます。
@@ -154,9 +155,9 @@ saltを変えるとsessionの照合が変わり、再ログインが必要にな
 手動modeでは値をそのままSecretへ渡し、汎用 `env` の同名キーは拒否します。手動saltの
 Takosumiからのsealed入力経路は未検証です。Wranglerによるself-hostでも同名のSecretが必要です。
 
-この選択はOIDCのowner subjectを生成・代用しません。direct moduleの正当なowner subjectの
-配送は引き続き未成立で、初回ログイン者へのowner自動割当も有効にしません。実導入にはこの入力と
-既存の認証・callback条件が必要です。各resourceのApplyは一つのtransactionではなく、途中失敗時も
+salt の選択は OIDC の owner subject を生成・代用しません。root の本人ID配送は v2.6 宣言と
+既存の Accounts materializer を使い、初回ログイン者への owner 自動割当は既定の無効を維持します。
+実サービスへの採用・正当な本人認証・実導入は source の受理とは別に確認してください。各resourceのApplyは一つのtransactionではなく、途中失敗時も
 私有stateを保って正規のPlanで確認します。source/localの成功を実導入・custodyの資格へ広げません。
 
 Worker は未設定・空白だけの salt と公開された開発用 fallback を、Core の処理前に

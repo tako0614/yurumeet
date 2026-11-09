@@ -29,8 +29,12 @@ existing Capsule still requires separate custody/migration evidence because a
 changed generated-secret profile may also regenerate its encryption key.
 
 Managed salt does not supply an OIDC owner subject or enable first-login owner
-claim. The direct module still needs the legitimate owner-subject supplier,
-authentication and exact callback contract. Resource Apply is not one transaction:
+claim. The v2.6 root manifest explicitly requests the current installer's
+client-specific owner subject through the existing Accounts materializer into
+`oidc_owner_sub`; an adopted Takosumi install does not ask users to type it.
+Self-hosting outside Takosumi still requires a legitimate subject before the
+first OIDC-only login. Never substitute a Workspace or Principal ID. The exact
+callback contract, real authentication and serving adoption remain required. Resource Apply is not one transaction:
 retain private state after a partial failure and review the normal Plan. Local
 source tests do not qualify an actual installation or secret custody.
 

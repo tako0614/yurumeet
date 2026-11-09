@@ -2,6 +2,7 @@
 // reads racing the four-second poll. Only the initial 503 is synthetic: every
 // successful GET and every message mutation goes through the local Worker.
 import { createHash } from "node:crypto";
+import { qualifyBrowserRemoteDeletePoll } from "./release-browser-remote-delete-poll.mjs";
 
 const sha256 = (body) => createHash("sha256").update(body).digest("hex");
 
@@ -645,6 +646,7 @@ async function lanePendingFull({
     return {
       kind,
       communityApId: community.apId,
+      communityDisplayName: community.displayName,
       initialStatus: captured.status,
       pollStatus: poll.status,
       pollMessageId: messageId,
@@ -964,6 +966,19 @@ export async function qualifyBrowserHistoryReadOrder({
     mode,
     checks,
   });
+  const remoteChecks = [];
+  const remoteDeletion =
+    mode === "candidate"
+      ? await qualifyBrowserRemoteDeletePoll({
+          page,
+          db,
+          origin,
+          communityApId: success.communityApId,
+          communityDisplayName: success.communityDisplayName,
+          messageId: success.pollMessageId,
+          checks: remoteChecks,
+        })
+      : null;
   const sessionsAfter = await rows(db, "SELECT * FROM sessions ORDER BY id");
   const otherActorsAfter = await rows(
     db,
@@ -992,7 +1007,9 @@ export async function qualifyBrowserHistoryReadOrder({
     checks.length === start + 3,
     "history qualification did not append exactly three checks",
   );
+  checks.push(...remoteChecks);
   return {
+    remoteDeletion,
     status: mode === "candidate" ? "PASSED" : "EXPECTED_BASELINE_RED",
     fixtureScope:
       "local disposable native Worker communities/messages; initial 503 is browser transport only",
