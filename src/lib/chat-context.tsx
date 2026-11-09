@@ -180,23 +180,23 @@ function sameRenderedMessage(a: ChatMessage, b: ChatMessage): boolean {
 
 /**
  * Merge a polled newest-page window into the displayed list. Known messages
- * keep their position but adopt the server copy when edited; messages that
- * fall INSIDE the fetched window yet are missing from it were deleted
- * remotely and are dropped. Anything OLDER than the window wasn't fetched,
- * and anything NEWER may simply have committed after this poll's snapshot —
- * both are left untouched (as are local pending/failed sends). Genuinely new
- * messages append. The SAME array reference is returned when nothing changed
+ * keep their position but adopt the server copy when edited; messages
+ * present when the read started but missing from its covered history were
+ * deleted remotely. A complete page covers all history, including an empty
+ * conversation; a partial page covers its oldest boundary and newer rows.
+ * Rows added after dispatch and local pending/failed sends stay untouched.
+ * Genuinely new messages append. The SAME array reference stays when unchanged
  * so scroll effects don't re-fire on every poll.
  */
-function reconcileFetchedWindow(
+export function reconcileFetchedWindow(
   existing: ChatMessage[],
   fetched: ChatMessage[],
+  coverage: { hasMore: boolean; requestedIds: ReadonlySet<string> },
 ): ChatMessage[] {
   if (existing.length === 0) return fetched;
-  if (fetched.length === 0) return existing;
+  if (fetched.length === 0 && coverage.hasMore) return existing;
   const byId = new Map(fetched.map((m) => [m.id, m]));
   const oldest = fetched[0];
-  const newest = fetched[fetched.length - 1];
   // Composite (created_at, id) comparison, mirroring the server's keyset
   // cursor, so same-millisecond messages resolve deterministically.
   const notBefore = (m: ChatMessage, ref: ChatMessage) =>
@@ -221,7 +221,10 @@ function reconcileFetchedWindow(
       }
       continue;
     }
-    if (notBefore(message, oldest) && notBefore(newest, message)) {
+    if (
+      coverage.requestedIds.has(message.id) &&
+      (!coverage.hasMore || (oldest && notBefore(message, oldest)))
+    ) {
       changed = true; // deleted remotely
       continue;
     }
@@ -691,6 +694,7 @@ export function ChatProvider(props: { children: JSX.Element }) {
         void (async () => {
           const principal = scopeKey();
           const fetchedAtRevision = recovery().revision();
+          const requestedIds = new Set(messages().map((message) => message.id));
           const isScopeCurrent = () =>
             isSelectedContact(contact) && principal === scopeKey();
           try {
@@ -703,12 +707,13 @@ export function ChatProvider(props: { children: JSX.Element }) {
                   // A poll can recover a failed full read, or finish while the
                   // full read is still pending. In both cases it establishes
                   // the newest page, its paging cursor and usable UI state.
-                  if (messagesError() || messagesLoading()) {
+                  if (messagesError() || messagesLoading() || !page.hasMore) {
                     setMessagesHasMore(page.hasMore);
                   }
                   setMessagesError(false);
                   setMessagesLoading(false);
                   let receivedWhileOpen = false;
+                  let historyChanged = false;
                   setMessages((prev) => {
                     const known = new Set(prev.map((message) => message.id));
                     receivedWhileOpen = page.messages.some(
@@ -716,9 +721,15 @@ export function ChatProvider(props: { children: JSX.Element }) {
                         !known.has(message.id) &&
                         message.sender.ap_id !== app.actor().ap_id,
                     );
+                    const reconciled = reconcileFetchedWindow(
+                      prev,
+                      page.messages,
+                      { hasMore: page.hasMore, requestedIds },
+                    );
+                    historyChanged = reconciled !== prev;
                     return mergeOutgoing(
                       contact,
-                      reconcileFetchedWindow(prev, page.messages),
+                      reconciled,
                       fetchedAtRevision,
                       new Set(page.messages.map((message) => message.id)),
                     );
@@ -728,6 +739,7 @@ export function ChatProvider(props: { children: JSX.Element }) {
                   setPartnerLastReadAt(page.partnerLastReadAt);
                   setReadStates(page.readStates);
                   if (receivedWhileOpen) markRead(contact);
+                  else if (historyChanged) void refetchContacts();
                 },
                 onFailure: () => {
                   // Transient for the message list, but counted toward the
