@@ -298,6 +298,87 @@ export async function qualifyBrowserPostDraft({ page, db, origin, actorApId }) {
       "browser-post-draft-failure-preserves-newer-input-explicit-retry",
     );
 
+    for (const refusedOldUpload of [false, true]) {
+      const label = refusedOldUpload ? "old-failure" : "old-success";
+      const file = (name) => ({
+        name,
+        mimeType: "image/png",
+        buffer: Buffer.from(
+          "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jqS8AAAAASUVORK5CYII=",
+          "base64",
+        ),
+      });
+      await open();
+      const oldUpload = holdNext("upload", refusedOldUpload);
+      await dialog.locator('input[type="file"]').setInputFiles(file("old.png"));
+      await bounded(oldUpload.ready.promise, "old upload held");
+      await dialog.locator(".p-composer-close").click();
+      await dialog.waitFor({ state: "hidden", timeout: 10_000 });
+      await open();
+      assert(
+        await dialog
+          .getByRole("button", { name: "画像を追加", exact: true })
+          .isEnabled(),
+        "retired upload kept the next draft locked",
+      );
+      const replacement = holdNext("upload");
+      await dialog
+        .locator('input[type="file"]')
+        .setInputFiles(file("replacement.png"));
+      const replacementResult = await bounded(
+        replacement.ready.promise,
+        "replacement upload held",
+      );
+      assert(
+        replacementResult?.status === 200,
+        "replacement upload did not commit at Worker",
+      );
+      const oldResponse = page.waitForResponse(
+        (response) =>
+          new URL(response.url()).pathname === "/api/media/upload" &&
+          response.request().method() === "POST",
+        { timeout: 15_000 },
+      );
+      oldUpload.release.resolve();
+      await (await oldResponse).body();
+      await page.evaluate(
+        () =>
+          new Promise((resolve) =>
+            requestAnimationFrame(() => requestAnimationFrame(resolve)),
+          ),
+      );
+      assert(
+        (await dialog.locator(".p-composer-media-item").count()) === 0 &&
+          (await dialog.locator(".p-composer-error").count()) === 0 &&
+          (await dialog
+            .getByRole("button", { name: "画像を追加", exact: true })
+            .isDisabled()) &&
+          (await submit.isDisabled()),
+        "retired upload changed the new draft's media/error/upload state",
+      );
+      replacement.release.resolve();
+      await dialog
+        .locator(".p-composer-media-alt")
+        .waitFor({ state: "visible", timeout: 10_000 });
+      await dialog.locator(".p-composer-media-alt").fill("replacement image");
+      const content = `post-draft replacement upload ${label}`;
+      const post = await send(content);
+      const request = records.find(
+        (record) => record.kind === "post" && record.body?.content === content,
+      );
+      assert(
+        post.attachments?.length === 1 &&
+          post.attachments[0].name === "replacement image" &&
+          request?.body.attachments?.length === 1 &&
+          request.body.attachments[0].r2_key ===
+            replacementResult.result.r2_key,
+        "next explicit Post did not contain only its replacement upload",
+      );
+      checks.push(
+        `browser-post-draft-retired-upload-${label}-cannot-change-reopened-draft`,
+      );
+    }
+
     const after = await db
       .prepare(
         "SELECT (SELECT COUNT(*) FROM actors) AS actors, (SELECT COUNT(*) FROM sessions) AS sessions",
@@ -309,10 +390,10 @@ export async function qualifyBrowserPostDraft({ page, db, origin, actorApId }) {
     );
     assert(
       records.filter((record) => record.kind === "post" && !record.refused)
-        .length === 9 &&
+        .length === 11 &&
         records.filter((record) => record.kind === "post" && record.refused)
           .length === 1 &&
-        records.filter((record) => record.kind === "upload").length === 2,
+        records.filter((record) => record.kind === "upload").length === 6,
       "unexpected automatic/replayed request",
     );
     assert(
@@ -325,9 +406,9 @@ export async function qualifyBrowserPostDraft({ page, db, origin, actorApId }) {
     return {
       status: "PASSED",
       checks,
-      posts: 9,
+      posts: 11,
       refusedPosts: 1,
-      uploads: 2,
+      uploads: 6,
       actorSessionCounts: { before, after },
       pageErrors: errors,
       blockedOutbound: blocked,

@@ -57,7 +57,10 @@ export function PostComposer(props: {
     !uploading() &&
     !overLimit();
 
+  let draftGeneration = 0;
   const reset = () => {
+    draftGeneration += 1;
+    setUploading(false);
     setContent("");
     setSummary("");
     setCwOpen(false);
@@ -84,6 +87,8 @@ export function PostComposer(props: {
 
   const handleFiles = async (files: FileList | null) => {
     if (!files) return;
+    const generation = draftGeneration;
+    const currentDraft = () => generation === draftGeneration;
     let skippedType = 0;
     let skippedCap = 0;
     let skippedSize = 0;
@@ -95,6 +100,7 @@ export function PostComposer(props: {
     setError(null);
     try {
       for (const file of Array.from(files)) {
+        if (!currentDraft()) return;
         if (!file.type.startsWith("image/")) {
           skippedType++;
           continue;
@@ -108,7 +114,10 @@ export function PostComposer(props: {
           continue;
         }
         try {
-          const uploaded = await uploadProductMedia(file);
+          const uploaded = await uploadProductMedia(file, () => {
+            if (!currentDraft()) throw new Error("Retired composer upload");
+          });
+          if (!currentDraft()) return;
           setMedia((prev) => [
             ...prev,
             {
@@ -120,6 +129,7 @@ export function PostComposer(props: {
             },
           ]);
         } catch {
+          if (!currentDraft()) return;
           uploadFailed = true;
         }
       }
@@ -129,8 +139,10 @@ export function PostComposer(props: {
       else if (skippedCap > 0) setError(`画像は ${MAX_ATTACHMENTS} 枚までです`);
       else if (skippedType > 0) setError("画像ファイルを選んでください");
     } finally {
-      setUploading(false);
-      if (fileInput) fileInput.value = "";
+      if (currentDraft()) {
+        setUploading(false);
+        if (fileInput) fileInput.value = "";
+      }
     }
   };
 
