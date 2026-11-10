@@ -144,6 +144,9 @@ export function PostComposer(props: {
 
   const submit = async () => {
     if (!canPost()) return;
+    const draftFingerprint = () =>
+      JSON.stringify([content(), summary(), cwOpen(), visibility(), media()]);
+    const submittedDraft = draftFingerprint();
     setPosting(true);
     setError(null);
     try {
@@ -161,6 +164,10 @@ export function PostComposer(props: {
       });
       props.onPosted?.(post);
       app.toast(props.replyTo ? "返信しました" : "投稿しました");
+      // The ACK belongs to the submitted draft. Keep edits and media work
+      // started while that request was pending for the next explicit submit.
+      if (uploading() || error() || draftFingerprint() !== submittedDraft)
+        return;
       reset();
       props.onClose();
     } catch {

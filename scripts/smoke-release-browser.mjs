@@ -22,6 +22,7 @@ import {
 import { qualifyBrowserCommunityDeleteReload } from "./release-browser-community-delete-reload.mjs";
 import { qualifyBrowserFeedRefresh } from "./release-browser-feed-refresh.mjs";
 import { qualifyBrowserFeedAck } from "./release-browser-feed-ack.mjs";
+import { qualifyBrowserPostDraft } from "./release-browser-post-draft.mjs";
 import { qualifyStorySubmit } from "./release-browser-story-submit.mjs";
 import {
   qualifyStoryOutcome,
@@ -594,6 +595,24 @@ async function smoke(artifact, digest) {
       await phase("feed-ack-page-close", () => feedAckPage.close());
     }
 
+    const postDraftPage = await context.newPage();
+    let postDraft;
+    try {
+      await postDraftPage.goto(`${origin}/?tab=timeline`, {
+        waitUntil: "domcontentloaded",
+        timeout: 20_000,
+      });
+      postDraft = await phase("post-draft", qualifyBrowserPostDraft, {
+        page: postDraftPage,
+        db,
+        origin,
+        actorApId: ownerId,
+      });
+      checks.push(...postDraft.checks);
+    } finally {
+      await phase("post-draft-page-close", () => postDraftPage.close());
+    }
+
     const storyPage = await context.newPage();
     const storyPageErrors = [];
     const storyServerErrors = [];
@@ -1151,6 +1170,7 @@ async function smoke(artifact, digest) {
       communityDeleteReload,
       feedRefresh,
       feedAck,
+      postDraft,
       storySubmit,
       storyOutcome,
       storyOutcomeConfirmed,
