@@ -22,7 +22,7 @@ output "cloudflare_worker_route_id" {
 }
 
 output "launch_url" {
-  description = "Public URL for the published Yurumeet instance, when the Capsule has enough hostname input to derive it."
+  description = "Explicit existing-instance app_url, or the derived workers.dev URL when this module manages the Worker and enables workers.dev; otherwise null."
   value       = local.launch_url
 }
 

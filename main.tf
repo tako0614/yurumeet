@@ -57,7 +57,7 @@ variable "worker_name" {
 }
 
 variable "app_url" {
-  description = "Canonical public URL for the published Yurumeet instance. When empty, launch_url is derived from worker_name and cloudflare_workers_subdomain."
+  description = "Canonical public URL for an existing published Yurumeet instance. When empty, launch_url is derived from worker_name and cloudflare_workers_subdomain only when this module manages the Worker and enables its workers.dev endpoint."
   type        = string
   default     = ""
 
@@ -389,7 +389,7 @@ locals {
   worker_assets_enabled         = local.cloudflare_worker_enabled && var.enable_worker_assets && !local.worker_bundle_uses_url
   resource_prefix               = var.project_name
   worker_name                   = trimspace(var.worker_name) != "" ? trimspace(var.worker_name) : local.resource_prefix
-  workers_dev_url               = trimspace(var.cloudflare_workers_subdomain) != "" ? "https://${local.worker_name}.${trimspace(var.cloudflare_workers_subdomain)}.workers.dev" : null
+  workers_dev_url               = local.cloudflare_worker_enabled && var.enable_workers_dev_subdomain && trimspace(var.cloudflare_workers_subdomain) != "" ? "https://${local.worker_name}.${trimspace(var.cloudflare_workers_subdomain)}.workers.dev" : null
   launch_url                    = trimspace(var.app_url) != "" ? trimspace(var.app_url) : local.workers_dev_url
   provided_encryption_key       = trimspace(var.encryption_key)
   # Preserve the established HCL blank policy and omit values Core disables

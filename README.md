@@ -135,7 +135,13 @@ direct Cloudflare path を定義しますが、credential、承認、migration�
 
 Takosumi で root module `.` を選んだ場合は、高度な設定で
 `enable_cloudflare_resources` と `enable_cloudflare_worker_script` を明示的に有効にします。
-どちらも未指定時の既定値は無効です。v2.6 の OIDC 宣言は Accounts URL・issuer・client ID・
+どちらも未指定時の既定値は無効です。
+root の `launch_url` と `api_url` は、明示した `app_url` を既存の公開環境への参照として保持します。
+`app_url` が空の場合は、この module が Worker を管理し、`enable_workers_dev_subdomain` が有効なときだけ
+`cloudflare_workers_subdomain` から URL を導出します。subdomain の入力や backing resource の作成だけでは Worker の URL を返しません。
+既存の管理対象 Worker を変更しない Plan でも URL は保持します。URL の出力は HTTP 到達性や
+実導入の成功証明ではなく、Worker を作らない場合も他の resource に変更がないとは限りません。
+v2.6 の OIDC 宣言は Accounts URL・issuer・client ID・
 登録済み redirect URI に加え、現在の導入者の client 固有 subject を `oidc_owner_sub` へ配送します。
 正規の宣言を採用した Takosumi では、利用者が本人IDを手入力する必要はありません。
 redirect URI は公開URLの `/api/auth/callback/takos` と一致する必要があります。
