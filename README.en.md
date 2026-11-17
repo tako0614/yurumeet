@@ -244,6 +244,14 @@ official production target operated by us. `wrangler.jsonc` and the root
 OpenTofu module define the direct Cloudflare path, while credentials, approval,
 migrations, and recovery remain under that operator's runbook and authority.
 
+For the root module, `launch_url` and `api_url` preserve an explicit `app_url`
+as a reference to an existing published instance. With no `app_url`, the module
+only derives a URL from `cloudflare_workers_subdomain` when it manages the
+Worker and `enable_workers_dev_subdomain` is enabled. A subdomain or backing resources alone do not advertise a Worker URL.
+An unchanged managed Worker keeps its URL on a no-op Plan. Outputs do not prove
+HTTP reachability or successful live installation; no Worker does not imply
+that the entire Plan has no resource changes.
+
 `wrangler.jsonc` is also the single source for the Worker compatibility date
 and flags. The root `main.tf` decodes that file, so keep it as strict JSON
 without JSONC comments or trailing commas. The D1 migration record remains
