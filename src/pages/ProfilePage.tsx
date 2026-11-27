@@ -381,7 +381,7 @@ export default function ProfilePage() {
           <Show
             when={!error()}
             fallback={
-              <div class="p-timeline-state">
+              <div class="p-timeline-state" role="alert">
                 <p>プロフィールを読み込めませんでした</p>
                 <button type="button" onClick={load}>
                   再読み込み

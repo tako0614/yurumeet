@@ -54,6 +54,7 @@ import { createTimelineFeed } from "./lib/timeline-feed.ts";
 import { useApp } from "./lib/app-context.tsx";
 import { useChat } from "./lib/chat-context.tsx";
 import { DialogA11y } from "./lib/dialog.tsx";
+import { formatYurumeetTitle } from "./lib/page-title.ts";
 import {
   ComposeFab,
   PostComposer,
@@ -231,8 +232,10 @@ function HomeView(props: {
     navigate(communityPath(community.ap_id));
   };
 
+  let homeSearchInput: HTMLInputElement | undefined;
   return (
     <section class="p-home" ref={preserveTabScroll("home")}>
+      <h1 class="yc-visually-hidden">ホーム</h1>
       <A class="p-home-account" href="/profile">
         <Avatar value={props.actor} />
         <div class="p-home-account-main">
@@ -247,20 +250,41 @@ function HomeView(props: {
           <polyline points="9 6 15 12 9 18" />
         </svg>
       </A>
-      <label class="p-home-search">
+      <div class="p-home-search" role="search">
         <svg viewBox="0 0 24 24" aria-hidden="true">
           <circle cx="11" cy="11" r="7" />
           <path d="m16 16 5 5" />
         </svg>
         <input
+          ref={homeSearchInput}
           type="search"
           name="homeSearch"
           value={query()}
           onInput={(event) => setQuery(event.currentTarget.value)}
+          onKeyDown={(event) => {
+            if (event.isComposing || event.keyCode === 229) return;
+            if (event.key === "Escape" && query()) {
+              event.preventDefault();
+              setQuery("");
+            }
+          }}
           placeholder="友だち・グループを検索"
           aria-label="友だち・グループを検索"
         />
-      </label>
+        <Show when={query().length > 0}>
+          <button
+            type="button"
+            class="yc-search-clear"
+            aria-label="検索をクリア"
+            onClick={() => {
+              setQuery("");
+              homeSearchInput?.focus();
+            }}
+          >
+            <CloseIcon />
+          </button>
+        </Show>
+      </div>
       <HomeNoteBar
         actor={props.actor}
         notes={props.notes}
@@ -311,7 +335,21 @@ function HomeView(props: {
                   <li class="p-home-empty">
                     <Show
                       when={!searching()}
-                      fallback={<>一致する友だちはいません</>}
+                      fallback={
+                        <>
+                          一致する友だちはいません
+                          <button
+                            type="button"
+                            class="p-home-empty-cta"
+                            onClick={() => {
+                              setQuery("");
+                              homeSearchInput?.focus();
+                            }}
+                          >
+                            検索をクリア
+                          </button>
+                        </>
+                      }
                     >
                       まだ友だちはいません
                       <button
@@ -803,7 +841,11 @@ function HomeNoteBar(props: {
               )}
             </Show>
             <Show when={error()}>
-              {(message) => <p class="p-note-editor-error">{message()}</p>}
+              {(message) => (
+                <p class="p-note-editor-error" role="alert">
+                  {message()}
+                </p>
+              )}
             </Show>
             <div class="p-note-editor-actions">
               <span
@@ -845,6 +887,11 @@ function TalkListPane(props: {
   const location = useLocation();
   const navigate = useNavigate();
   const [query, setQuery] = createSignal(chat.readTalkListFilter());
+  let talkSearchInput: HTMLInputElement | undefined;
+  const clearTalkQuery = () => {
+    setQuery("");
+    chat.writeTalkListFilter("");
+  };
   const restoreEntryFilter = () => setQuery(chat.readTalkListFilter());
   window.addEventListener("popstate", restoreEntryFilter);
   onCleanup(() => window.removeEventListener("popstate", restoreEntryFilter));
@@ -1013,16 +1060,23 @@ function TalkListPane(props: {
       <Show
         when={view() === "list"}
         fallback={
-          <button
-            type="button"
-            class="p-talk-subhead"
-            onClick={() => setView("list")}
-          >
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <polyline points="14 18 8 12 14 6" />
-            </svg>
-            {view() === "requests" ? "メッセージリクエスト" : "アーカイブ済み"}
-          </button>
+          <div class="p-talk-subhead">
+            <button
+              type="button"
+              class="p-talk-subhead-back"
+              aria-label="トーク一覧に戻る"
+              onClick={() => setView("list")}
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <polyline points="14 18 8 12 14 6" />
+              </svg>
+            </button>
+            <h1 class="p-talk-subhead-title">
+              {view() === "requests"
+                ? "メッセージリクエスト"
+                : "アーカイブ済み"}
+            </h1>
+          </div>
         }
       >
         <div class="p-talk-list-head">
@@ -1065,23 +1119,45 @@ function TalkListPane(props: {
 
       <Show when={view() === "list"}>
         <div class="p-talk-list-search">
-          <label>
+          <div class="p-talk-list-search__field" role="search">
             <svg viewBox="0 0 24 24" aria-hidden="true">
               <circle cx="11" cy="11" r="7" />
               <path d="m16 16 5 5" />
             </svg>
             <input
+              ref={talkSearchInput}
               name="talkSearch"
               type="search"
               placeholder="トークを検索"
+              aria-label="トークを検索"
               value={query()}
               onInput={(event) => {
                 const value = event.currentTarget.value;
                 setQuery(value);
                 chat.writeTalkListFilter(value);
               }}
+              onKeyDown={(event) => {
+                if (event.isComposing || event.keyCode === 229) return;
+                if (event.key === "Escape" && query()) {
+                  event.preventDefault();
+                  clearTalkQuery();
+                }
+              }}
             />
-          </label>
+            <Show when={query().length > 0}>
+              <button
+                type="button"
+                class="yc-search-clear"
+                aria-label="検索をクリア"
+                onClick={() => {
+                  clearTalkQuery();
+                  talkSearchInput?.focus();
+                }}
+              >
+                <CloseIcon />
+              </button>
+            </Show>
+          </div>
         </div>
         <div class="p-talk-chips">
           <button
@@ -1120,9 +1196,22 @@ function TalkListPane(props: {
                 fallback={
                   props.contactsError ? null : (
                     <li class="p-home-empty">
-                      {searching()
-                        ? "一致するトークはありません"
-                        : "まだトークはありません"}
+                      <Show
+                        when={searching()}
+                        fallback={<>まだトークはありません</>}
+                      >
+                        一致するトークはありません
+                        <button
+                          type="button"
+                          class="p-home-empty-cta"
+                          onClick={() => {
+                            clearTalkQuery();
+                            talkSearchInput?.focus();
+                          }}
+                        >
+                          検索をクリア
+                        </button>
+                      </Show>
                     </li>
                   )
                 }
@@ -1330,6 +1419,7 @@ function TimelineView(props: {
   });
   return (
     <section class="p-timeline" ref={preserveTabScroll("timeline")}>
+      <h1 class="yc-visually-hidden">タイムライン</h1>
       <StoryBar
         actor={props.actor}
         actorStories={props.stories}
@@ -1367,7 +1457,7 @@ function TimelineView(props: {
           <Show
             when={!(props.postsError && props.posts.length === 0)}
             fallback={
-              <div class="p-timeline-state">
+              <div class="p-timeline-state" role="alert">
                 <p>タイムラインを読み込めませんでした</p>
                 <button type="button" onClick={() => props.onRetry()}>
                   再読み込み
@@ -1588,6 +1678,7 @@ function StoryViewerModal(props: {
   createEffect(() => {
     if (props.initialActorIndex === null) return;
     const onKey = (event: KeyboardEvent) => {
+      if (event.isComposing || event.keyCode === 229) return;
       if (event.key === "ArrowLeft") goPrev();
       else if (event.key === "ArrowRight") goNext();
     };
@@ -2217,7 +2308,11 @@ function StoryComposerModal(props: {
                 }}
               />
               <Show when={error()}>
-                {(message) => <p class="p-story-composer-error">{message()}</p>}
+                {(message) => (
+                  <p class="p-story-composer-error" role="alert">
+                    {message()}
+                  </p>
+                )}
               </Show>
               <div class="p-story-composer-actions">
                 <span>{caption().trim().length} / 120</span>
@@ -2288,6 +2383,21 @@ export default function App() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const tab = (): AppTab => normalizeTab(searchParams.tab);
+
+  createEffect(() => {
+    const selected = chat.selected();
+    if (tab() === "talk" && selected) {
+      document.title = formatYurumeetTitle(titleFor(selected));
+      return;
+    }
+    const label =
+      tab() === "home"
+        ? "ホーム"
+        : tab() === "timeline"
+          ? "タイムライン"
+          : "トーク";
+    document.title = formatYurumeetTitle(label);
+  });
 
   const feed = createTimelineFeed({
     fetchPage: fetchTimeline,

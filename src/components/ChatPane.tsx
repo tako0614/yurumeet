@@ -95,6 +95,7 @@ export function ChatPane() {
   const [searchQuery, setSearchQuery] = createSignal("");
   const [searchIndex, setSearchIndex] = createSignal(0);
   let searchInput: HTMLInputElement | undefined;
+  let searchToggleBtn: HTMLButtonElement | undefined;
   const searchHits = createMemo(() =>
     searchOpen() ? searchMessages(chat.messages(), searchQuery()) : [],
   );
@@ -225,10 +226,34 @@ export function ChatPane() {
     });
   }
 
-  createEscapeClose(searchOpen, () => {
+  let searchFocusRaf: number | undefined;
+  const cancelSearchFocusRaf = () => {
+    if (searchFocusRaf !== undefined) {
+      cancelAnimationFrame(searchFocusRaf);
+      searchFocusRaf = undefined;
+    }
+  };
+  onCleanup(cancelSearchFocusRaf);
+
+  const closeSearch = (restoreFocus = false) => {
+    cancelSearchFocusRaf();
     setSearchOpen(false);
     setSearchQuery("");
-  });
+    if (restoreFocus) {
+      searchFocusRaf = requestAnimationFrame(() => {
+        searchFocusRaf = undefined;
+        if (
+          !searchOpen() &&
+          searchToggleBtn?.isConnected &&
+          searchToggleBtn.getClientRects().length > 0
+        ) {
+          searchToggleBtn.focus();
+        }
+      });
+    }
+  };
+
+  createEscapeClose(searchOpen, () => closeSearch(true));
 
   const jumpToHit = (index: number) => {
     const id = searchHits()[index];
@@ -238,12 +263,15 @@ export function ChatPane() {
 
   const toggleSearch = () => {
     if (searchOpen()) {
-      setSearchOpen(false);
-      setSearchQuery("");
+      closeSearch(true);
       return;
     }
+    cancelSearchFocusRaf();
     setSearchOpen(true);
-    requestAnimationFrame(() => searchInput?.focus());
+    searchFocusRaf = requestAnimationFrame(() => {
+      searchFocusRaf = undefined;
+      if (searchOpen() && searchInput?.isConnected) searchInput.focus();
+    });
   };
 
   // Step through matches. Hits run oldest → newest, so "older" walks the index
@@ -755,6 +783,7 @@ export function ChatPane() {
                   </A>
                 </Show>
                 <button
+                  ref={searchToggleBtn}
                   class="p-talk-chat-action"
                   classList={{ "is-active": searchOpen() }}
                   type="button"
@@ -786,7 +815,8 @@ export function ChatPane() {
                         setSearchQuery(event.currentTarget.value)
                       }
                       onKeyDown={(event) => {
-                        if (event.key === "Enter" && !event.isComposing) {
+                        if (event.isComposing || event.keyCode === 229) return;
+                        if (event.key === "Enter") {
                           event.preventDefault();
                           // Enter walks backward through history (older), the
                           // way messenger search steps up the thread.
@@ -803,6 +833,19 @@ export function ChatPane() {
                           ? `${searchIndex() + 1}/${searchHits().length}`
                           : "一致なし"}
                       </span>
+                    </Show>
+                    <Show when={searchQuery().length > 0}>
+                      <button
+                        type="button"
+                        class="yc-search-clear"
+                        aria-label="検索語をクリア"
+                        onClick={() => {
+                          setSearchQuery("");
+                          searchInput?.focus();
+                        }}
+                      >
+                        <CloseIcon />
+                      </button>
                     </Show>
                   </div>
                   <div class="p-talk-chat-search__nav">
@@ -833,10 +876,7 @@ export function ChatPane() {
                       type="button"
                       class="p-talk-chat-search__close"
                       aria-label="検索を閉じる"
-                      onClick={() => {
-                        setSearchOpen(false);
-                        setSearchQuery("");
-                      }}
+                      onClick={() => closeSearch(true)}
                     >
                       <CloseIcon />
                     </button>
@@ -1057,6 +1097,8 @@ export function ChatPane() {
                                         type="button"
                                         class="c-talk-msg-action"
                                         aria-label="メッセージ操作"
+                                        aria-haspopup="menu"
+                                        aria-expanded={menuFor() === message.id}
                                         onClick={() =>
                                           setMenuFor(
                                             menuFor() === message.id
@@ -1118,7 +1160,10 @@ export function ChatPane() {
                                       </Show>
                                     </div>
                                     <Show when={message.failed}>
-                                      <div class="c-talk-chat-failed">
+                                      <div
+                                        class="c-talk-chat-failed"
+                                        role="alert"
+                                      >
                                         <span>
                                           {message.deliveryFailure ===
                                           "rejected"
@@ -1374,6 +1419,7 @@ export function ChatPane() {
                         ref={draftInput}
                         class="p-talk-chat-send__textarea"
                         name="message"
+                        aria-label="メッセージを入力"
                         aria-describedby={
                           draftStorageStatus() !== "saved"
                             ? "talk-draft-storage-warning"

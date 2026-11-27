@@ -84,35 +84,39 @@ export function NavRail(props: {
         <A
           href="/profile"
           aria-label={`${props.actor.name ?? "自分"} のプロフィール`}
+          aria-current={activeKey() === "profile" ? "page" : undefined}
         >
           <UserAvatar value={props.actor} />
         </A>
       </div>
-      <ul class="l-header__ul">
-        <For each={TABS}>
-          {(tab) => (
-            <li
-              classList={{
-                "l-header__ul-item": true,
-                "is-active": activeKey() === tab.key,
-              }}
-            >
-              <A
-                href={tab.href}
-                aria-label={accessibleLabel(tab.key, tab.label)}
+      <nav aria-label="主なメニュー">
+        <ul class="l-header__ul">
+          <For each={TABS}>
+            {(tab) => (
+              <li
+                classList={{
+                  "l-header__ul-item": true,
+                  "is-active": activeKey() === tab.key,
+                }}
               >
-                <NavIcon name={tab.key} />
-                <span>{tab.label}</span>
-                <Show when={badgeFor(tab.key) > 0}>
-                  <em class="l-header__badge" aria-hidden="true">
-                    {formatBadgeCount(badgeFor(tab.key))}
-                  </em>
-                </Show>
-              </A>
-            </li>
-          )}
-        </For>
-      </ul>
+                <A
+                  href={tab.href}
+                  aria-label={accessibleLabel(tab.key, tab.label)}
+                  aria-current={activeKey() === tab.key ? "page" : undefined}
+                >
+                  <NavIcon name={tab.key} />
+                  <span>{tab.label}</span>
+                  <Show when={badgeFor(tab.key) > 0}>
+                    <em class="l-header__badge" aria-hidden="true">
+                      {formatBadgeCount(badgeFor(tab.key))}
+                    </em>
+                  </Show>
+                </A>
+              </li>
+            )}
+          </For>
+        </ul>
+      </nav>
     </header>
   );
 }

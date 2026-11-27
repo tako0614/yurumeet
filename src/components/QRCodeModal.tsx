@@ -370,7 +370,7 @@ export function QRCodeModal(props: { onClose: () => void }) {
                 </Show>
 
                 <Show when={!lookingUp() && !scanResult() && scanError()}>
-                  <div class="p-qr-state">
+                  <div class="p-qr-state" role="alert">
                     <p class="p-qr-error">{scanError()}</p>
                     <button
                       type="button"
