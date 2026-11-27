@@ -461,16 +461,20 @@ let dmRequests = [
 ];
 const UNREAD_NOTIF_IDS = ["notif-req", "notif-story", "notif-1", "notif-reply"];
 
+function mockMessageId(id: string = crypto.randomUUID()): string {
+  return new URL(`/ap/objects/${id}`, origin).href;
+}
+
 let userMessages: Record<string, Message[]> = {
   [akari.ap_id]: [
     {
-      id: "dm-1",
+      id: mockMessageId("dm-1"),
       sender: postAuthor(akari),
       content: "写真、さっき送っておいたよ〜 見た？",
       created_at: "2026-07-05T05:00:00.000Z",
     },
     {
-      id: "dm-2",
+      id: mockMessageId("dm-2"),
       sender: postAuthor(me),
       content: "見た！めっちゃいいね、ありがとう",
       created_at: "2026-07-05T05:02:00.000Z",
@@ -478,7 +482,7 @@ let userMessages: Record<string, Message[]> = {
   ],
   [ren.ap_id]: [
     {
-      id: "dm-3",
+      id: mockMessageId("dm-3"),
       sender: postAuthor(ren),
       content: "夜の写真データ、あとでこっちにも送ります。",
       created_at: "2026-07-05T04:30:00.000Z",
@@ -489,13 +493,13 @@ let userMessages: Record<string, Message[]> = {
 let communityMessages: Record<string, Message[]> = {
   [communities[0].ap_id]: [
     {
-      id: "cm-1",
+      id: mockMessageId("cm-1"),
       sender: postAuthor(ren),
       content: "週末のメニュー、これで行きましょう",
       created_at: "2026-07-05T05:40:00.000Z",
     },
     {
-      id: "cm-2",
+      id: mockMessageId("cm-2"),
       sender: postAuthor(akari),
       content: "会場の写真、あとでまとめて追加します",
       created_at: "2026-07-05T05:42:00.000Z",
@@ -503,7 +507,7 @@ let communityMessages: Record<string, Message[]> = {
   ],
   [communities[1].ap_id]: [
     {
-      id: "cm-3",
+      id: mockMessageId("cm-3"),
       sender: postAuthor(mio),
       content: "今夜21時から通話しよう🌙",
       created_at: "2026-07-05T04:35:00.000Z",
@@ -1049,7 +1053,7 @@ async function handleDm(
     if (method === "POST") {
       const body = await readJson(request);
       const message: Message = {
-        id: `dm-${Date.now()}`,
+        id: mockMessageId(),
         sender: postAuthor(me),
         content: typeof body.content === "string" ? body.content : "",
         created_at: new Date().toISOString(),
@@ -1195,7 +1199,7 @@ async function handleCommunities(
     if (method === "POST") {
       const body = await readJson(request);
       const message: Message = {
-        id: `cm-${Date.now()}`,
+        id: mockMessageId(),
         sender: postAuthor(me),
         content: typeof body.content === "string" ? body.content : "",
         created_at: new Date().toISOString(),
@@ -1837,6 +1841,50 @@ async function runSelfTest(): Promise<void> {
       );
     }
     await response.text();
+  }
+
+  for (const path of [
+    `/api/dm/user/${encodeURIComponent(akari.ap_id)}/messages`,
+    `/api/communities/${encodeURIComponent(communities[0].ap_id)}/messages`,
+  ]) {
+    const url = `http://mock.local${path}`;
+    const content = "mock send and history check";
+    const sent = await handleRequest(
+      new Request(url, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ content }),
+      }),
+    );
+    if (sent.status !== 200) throw new Error(`mock send failed for ${path}`);
+    const { message } = (await sent.json()) as { message: Message };
+    let id: URL;
+    try {
+      id = new URL(message.id);
+    } catch {
+      throw new Error("mock acknowledgement must have an absolute message ID");
+    }
+    if (
+      !(id.protocol === "http:" || id.protocol === "https:") ||
+      !id.pathname.startsWith("/ap/objects/") ||
+      message.sender.ap_id !== me.ap_id ||
+      message.content !== content
+    ) {
+      throw new Error("mock message acknowledgement is invalid");
+    }
+    const history = await handleRequest(new Request(url));
+    if (history.status !== 200)
+      throw new Error(`mock history failed for ${path}`);
+    const { messages } = (await history.json()) as { messages: Message[] };
+    if (
+      messages.filter((candidate) => candidate.id === message.id).length !==
+        1 ||
+      messages.some((candidate) => !URL.canParse(candidate.id))
+    ) {
+      throw new Error(
+        "mock history must keep each acknowledged message ID once",
+      );
+    }
   }
 
   const registerResponse = await handleRequest(

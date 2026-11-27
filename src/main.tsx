@@ -566,7 +566,12 @@ function AppErrorFallback() {
         <p>
           画面を表示できませんでした。再読み込みすると復帰する場合があります。
         </p>
-        <button type="button" onClick={() => window.location.reload()}>
+        <button
+          type="button"
+          onClick={() => {
+            if (window.navigator.onLine !== false) window.location.reload();
+          }}
+        >
           再読み込み
         </button>
       </section>

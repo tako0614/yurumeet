@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test";
 
-import { isLikelyStaleAssetError } from "./chunk-reload.ts";
+import {
+  installStaleAssetReload,
+  isLikelyStaleAssetError,
+} from "./chunk-reload.ts";
 
 describe("stale asset detection", () => {
   // These are the strings the browsers actually produce when a hashed route
@@ -47,4 +50,47 @@ describe("stale asset detection", () => {
       expect(isLikelyStaleAssetError(value)).toBe(false);
     }
   });
+});
+
+test("an offline import failure preserves the next online reload slot", () => {
+  const original = Object.getOwnPropertyDescriptor(globalThis, "window");
+  const handlers = new Map<
+    string,
+    (event: { reason?: Error; message?: string }) => void
+  >();
+  const storage = new Map<string, string>();
+  const navigator = { onLine: false };
+  let reloads = 0;
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: {
+      navigator,
+      addEventListener: handlers.set.bind(handlers),
+      location: {
+        href: "https://yurumeet.example/profile",
+        reload: () => reloads++,
+      },
+      sessionStorage: {
+        getItem: storage.get.bind(storage),
+        setItem: storage.set.bind(storage),
+      },
+    },
+  });
+  try {
+    const message = "Failed to fetch dynamically imported module";
+    installStaleAssetReload();
+    handlers.get("unhandledrejection")!({ reason: new TypeError(message) });
+    handlers.get("error")!({ message });
+    expect(reloads).toBe(0);
+    expect(storage.size).toBe(0);
+
+    navigator.onLine = true;
+    handlers.get("error")!({ message });
+    handlers.get("unhandledrejection")!({ reason: new TypeError(message) });
+    expect(reloads).toBe(1);
+    expect(storage.size).toBe(1);
+  } finally {
+    if (original) Object.defineProperty(globalThis, "window", original);
+    else Reflect.deleteProperty(globalThis, "window");
+  }
 });

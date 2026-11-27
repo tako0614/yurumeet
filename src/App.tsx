@@ -183,6 +183,7 @@ function HomeView(props: {
 
   const [allCommunities, { refetch: refetchCommunities }] =
     createResource(fetchCommunities);
+  const communitiesFailed = () => allCommunities.state === "errored";
   const [creating, setCreating] = createSignal(false);
   const [qrOpen, setQrOpen] = createSignal(false);
   const [joiningId, setJoiningId] = createSignal<string | null>(null);
@@ -191,6 +192,7 @@ function HomeView(props: {
       props.contacts.filter((c) => c.type === "community").map((c) => c.ap_id),
     );
   const discoverable = () => {
+    if (communitiesFailed()) return [];
     const joined = joinedIds();
     return (allCommunities() ?? []).filter(
       (c) =>
@@ -416,6 +418,18 @@ function HomeView(props: {
             </For>
           </Show>
         </ul>
+        <Show when={communitiesFailed()}>
+          <div class="p-home-empty" role="alert">
+            グループを読み込めませんでした。
+            <button
+              type="button"
+              class="p-home-empty-cta"
+              onClick={() => void refetchCommunities()}
+            >
+              再試行
+            </button>
+          </div>
+        </Show>
         <Show when={discoverable().length > 0}>
           <div class="p-home-subhead">見つける</div>
           <ul>
