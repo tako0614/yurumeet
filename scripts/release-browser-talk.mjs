@@ -844,7 +844,7 @@ export async function qualifyBrowserTalk({
       .getByRole("link", { name: "トーク、未読 1件", exact: true })
       .waitFor({ state: "visible", timeout: 3_000 });
 
-    await page.getByRole("button", { name: "アーカイブ済み" }).click();
+    await page.getByRole("button", { name: "トーク一覧に戻る" }).click();
     await unreadContactRow.waitFor({ state: "visible", timeout: 5_000 });
     await page
       .getByRole("button", {
