@@ -250,7 +250,7 @@ function HomeView(props: {
           <polyline points="9 6 15 12 9 18" />
         </svg>
       </A>
-      <label class="p-home-search">
+      <div class="p-home-search" role="search">
         <svg viewBox="0 0 24 24" aria-hidden="true">
           <circle cx="11" cy="11" r="7" />
           <path d="m16 16 5 5" />
@@ -262,6 +262,7 @@ function HomeView(props: {
           value={query()}
           onInput={(event) => setQuery(event.currentTarget.value)}
           onKeyDown={(event) => {
+            if (event.isComposing || event.keyCode === 229) return;
             if (event.key === "Escape" && query()) {
               event.preventDefault();
               setQuery("");
@@ -275,8 +276,7 @@ function HomeView(props: {
             type="button"
             class="yc-search-clear"
             aria-label="検索をクリア"
-            onClick={(event) => {
-              event.preventDefault();
+            onClick={() => {
               setQuery("");
               homeSearchInput?.focus();
             }}
@@ -284,7 +284,7 @@ function HomeView(props: {
             <CloseIcon />
           </button>
         </Show>
-      </label>
+      </div>
       <HomeNoteBar
         actor={props.actor}
         notes={props.notes}
@@ -1060,16 +1060,23 @@ function TalkListPane(props: {
       <Show
         when={view() === "list"}
         fallback={
-          <button
-            type="button"
-            class="p-talk-subhead"
-            onClick={() => setView("list")}
-          >
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <polyline points="14 18 8 12 14 6" />
-            </svg>
-            {view() === "requests" ? "メッセージリクエスト" : "アーカイブ済み"}
-          </button>
+          <div class="p-talk-subhead">
+            <button
+              type="button"
+              class="p-talk-subhead-back"
+              aria-label="トーク一覧に戻る"
+              onClick={() => setView("list")}
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <polyline points="14 18 8 12 14 6" />
+              </svg>
+            </button>
+            <h1 class="p-talk-subhead-title">
+              {view() === "requests"
+                ? "メッセージリクエスト"
+                : "アーカイブ済み"}
+            </h1>
+          </div>
         }
       >
         <div class="p-talk-list-head">
@@ -1112,7 +1119,7 @@ function TalkListPane(props: {
 
       <Show when={view() === "list"}>
         <div class="p-talk-list-search">
-          <label>
+          <div class="p-talk-list-search__field" role="search">
             <svg viewBox="0 0 24 24" aria-hidden="true">
               <circle cx="11" cy="11" r="7" />
               <path d="m16 16 5 5" />
@@ -1130,6 +1137,7 @@ function TalkListPane(props: {
                 chat.writeTalkListFilter(value);
               }}
               onKeyDown={(event) => {
+                if (event.isComposing || event.keyCode === 229) return;
                 if (event.key === "Escape" && query()) {
                   event.preventDefault();
                   clearTalkQuery();
@@ -1141,8 +1149,7 @@ function TalkListPane(props: {
                 type="button"
                 class="yc-search-clear"
                 aria-label="検索をクリア"
-                onClick={(event) => {
-                  event.preventDefault();
+                onClick={() => {
                   clearTalkQuery();
                   talkSearchInput?.focus();
                 }}
@@ -1150,7 +1157,7 @@ function TalkListPane(props: {
                 <CloseIcon />
               </button>
             </Show>
-          </label>
+          </div>
         </div>
         <div class="p-talk-chips">
           <button
@@ -1671,6 +1678,7 @@ function StoryViewerModal(props: {
   createEffect(() => {
     if (props.initialActorIndex === null) return;
     const onKey = (event: KeyboardEvent) => {
+      if (event.isComposing || event.keyCode === 229) return;
       if (event.key === "ArrowLeft") goPrev();
       else if (event.key === "ArrowRight") goNext();
     };

@@ -226,10 +226,31 @@ export function ChatPane() {
     });
   }
 
+  let searchFocusRaf: number | undefined;
+  const cancelSearchFocusRaf = () => {
+    if (searchFocusRaf !== undefined) {
+      cancelAnimationFrame(searchFocusRaf);
+      searchFocusRaf = undefined;
+    }
+  };
+  onCleanup(cancelSearchFocusRaf);
+
   const closeSearch = (restoreFocus = false) => {
+    cancelSearchFocusRaf();
     setSearchOpen(false);
     setSearchQuery("");
-    if (restoreFocus) requestAnimationFrame(() => searchToggleBtn?.focus());
+    if (restoreFocus) {
+      searchFocusRaf = requestAnimationFrame(() => {
+        searchFocusRaf = undefined;
+        if (
+          !searchOpen() &&
+          searchToggleBtn?.isConnected &&
+          searchToggleBtn.getClientRects().length > 0
+        ) {
+          searchToggleBtn.focus();
+        }
+      });
+    }
   };
 
   createEscapeClose(searchOpen, () => closeSearch(true));
@@ -245,8 +266,12 @@ export function ChatPane() {
       closeSearch(true);
       return;
     }
+    cancelSearchFocusRaf();
     setSearchOpen(true);
-    requestAnimationFrame(() => searchInput?.focus());
+    searchFocusRaf = requestAnimationFrame(() => {
+      searchFocusRaf = undefined;
+      if (searchOpen() && searchInput?.isConnected) searchInput.focus();
+    });
   };
 
   // Step through matches. Hits run oldest → newest, so "older" walks the index
@@ -790,7 +815,8 @@ export function ChatPane() {
                         setSearchQuery(event.currentTarget.value)
                       }
                       onKeyDown={(event) => {
-                        if (event.key === "Enter" && !event.isComposing) {
+                        if (event.isComposing || event.keyCode === 229) return;
+                        if (event.key === "Enter") {
                           event.preventDefault();
                           // Enter walks backward through history (older), the
                           // way messenger search steps up the thread.

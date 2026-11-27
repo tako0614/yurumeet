@@ -73,6 +73,7 @@ export function DialogA11y(props: {
     });
 
     const onKey = (event: KeyboardEvent) => {
+      if (event.isComposing || event.keyCode === 229) return;
       if (dialogStack[dialogStack.length - 1] !== token) return;
       const root = props.root();
       if (!root) return;
@@ -126,6 +127,7 @@ export function createEscapeClose(
   createEffect(() => {
     if (!active()) return;
     const onKey = (event: KeyboardEvent) => {
+      if (event.isComposing || event.keyCode === 229) return;
       if (event.key !== "Escape") return;
       event.preventDefault();
       event.stopPropagation();
