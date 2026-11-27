@@ -1,6 +1,7 @@
 import { render } from "solid-js/web";
 import {
   createEffect,
+  createMemo,
   createSignal,
   ErrorBoundary,
   For,
@@ -8,6 +9,7 @@ import {
   onCleanup,
   onMount,
   Show,
+  untrack,
   type JSX,
 } from "solid-js";
 import { DialogA11y } from "./lib/dialog.tsx";
@@ -47,6 +49,8 @@ import {
 } from "./lib/auth-request.ts";
 import { installStaleAssetReload } from "./lib/chunk-reload.ts";
 import { createUnreadBadgeRefresh } from "./lib/badge-refresh.ts";
+import { acquireInert, restoreOverlayFocus } from "./lib/mobile-overlay.ts";
+import "./lib/theme.ts";
 import "./styles.css";
 
 const PostDetailPage = lazy(() => import("./pages/PostDetailPage.tsx"));
@@ -473,12 +477,93 @@ function ConnectionError(props: { onRetry: () => void; message?: string }) {
 function Shell(props: { children?: JSX.Element }) {
   const app = useApp();
   const chat = useChat();
+  const mobileMedia =
+    typeof window !== "undefined" && typeof window.matchMedia === "function"
+      ? window.matchMedia("(max-width: 768px)")
+      : null;
+  const [isMobile, setIsMobile] = createSignal(mobileMedia?.matches ?? false);
+  const chatOpen = createMemo(() => !!chat.selected());
+  const [headerEl, setHeaderEl] = createSignal<HTMLElement | undefined>();
+  const [panelEl, setPanelEl] = createSignal<HTMLDivElement | undefined>();
+  const [chatEl, setChatEl] = createSignal<HTMLDivElement | undefined>();
+
+  onMount(() => {
+    if (!mobileMedia) return;
+    const onChange = (event: MediaQueryListEvent) => setIsMobile(event.matches);
+    mobileMedia.addEventListener("change", onChange);
+    onCleanup(() => mobileMedia.removeEventListener("change", onChange));
+  });
+
+  // On mobile, `.app-chat` slides over `.app-panel` and `.l-header` as a
+  // full-viewport overlay. Ref-counted `inert` keeps keyboard focus and screen
+  // readers inside whichever pane is actually visible, and restores focus to
+  // the triggering room button when navigating back.
+  createEffect(() => {
+    const mobile = isMobile();
+    const open = chatOpen();
+    const header = headerEl();
+    const panel = panelEl();
+    const chatPane = chatEl();
+
+    if (!mobile) return;
+
+    if (!open) {
+      const releaseChat = acquireInert(chatPane);
+      onCleanup(releaseChat);
+      return;
+    }
+
+    const active = document.activeElement;
+    const opener =
+      active instanceof HTMLElement &&
+      (panel?.contains(active) || header?.contains(active))
+        ? active
+        : null;
+    const openerContactId =
+      opener?.getAttribute("data-contact-ap-id") ??
+      untrack(() => chat.selected()?.ap_id ?? null);
+
+    const releasePanel = acquireInert(panel);
+    const releaseHeader = acquireInert(header);
+
+    queueMicrotask(() => {
+      if (!isMobile() || !chatOpen() || !chatPane?.isConnected) return;
+      if (
+        document.activeElement instanceof HTMLElement &&
+        chatPane.contains(document.activeElement)
+      ) {
+        return;
+      }
+      const backButton =
+        chatPane.querySelector<HTMLElement>(".p-talk-chat-prev");
+      (backButton ?? chatPane).focus();
+    });
+
+    onCleanup(() => {
+      releasePanel();
+      releaseHeader();
+      if (isMobile() && !chatOpen()) {
+        const replacement =
+          !opener?.isConnected && openerContactId && panel
+            ? (Array.from(
+                panel.querySelectorAll<HTMLElement>("[data-contact-ap-id]"),
+              ).find(
+                (el) =>
+                  el.getAttribute("data-contact-ap-id") === openerContactId,
+              ) ?? null)
+            : null;
+        restoreOverlayFocus(replacement ?? opener, document);
+      }
+    });
+  });
+
   return (
     <>
       <a href="#main" class="yc-skip-link">
         本文へスキップ
       </a>
       <NavRail
+        ref={(el) => setHeaderEl(el)}
         actor={app.actor()}
         hideOnMobile={!!chat.selected()}
         unreadTalk={app.unreadTalk()}
@@ -490,8 +575,10 @@ function Shell(props: { children?: JSX.Element }) {
         class="app-main"
         classList={{ "is-chat-open": !!chat.selected() }}
       >
-        <div class="app-panel">{props.children}</div>
-        <div class="app-chat">
+        <div class="app-panel" ref={(el) => setPanelEl(el)}>
+          {props.children}
+        </div>
+        <div class="app-chat" tabIndex={-1} ref={(el) => setChatEl(el)}>
           <ChatPane />
         </div>
       </main>

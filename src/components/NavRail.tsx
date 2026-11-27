@@ -56,6 +56,7 @@ export function NavRail(props: {
   hideOnMobile?: boolean;
   unreadNotifications?: number;
   unreadTalk?: number;
+  ref?: (el: HTMLElement) => void;
 }) {
   const location = useLocation();
   const [searchParams] = useSearchParams();
@@ -79,7 +80,10 @@ export function NavRail(props: {
     return undefined;
   };
   return (
-    <header classList={{ "l-header": true, "is-inview": props.hideOnMobile }}>
+    <header
+      ref={props.ref}
+      classList={{ "l-header": true, "is-inview": props.hideOnMobile }}
+    >
       <div class="l-header-logo">
         <A
           href="/profile"

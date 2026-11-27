@@ -22,7 +22,7 @@ import { uploadProductMedia } from "../lib/media-upload.ts";
 import { PageLayout, PageHeader } from "../components/PageLayout.tsx";
 import { useApp } from "../lib/app-context.tsx";
 import { useChat } from "../lib/chat-context.tsx";
-import { createEscapeClose, DialogA11y } from "../lib/dialog.tsx";
+import { DialogA11y, MenuA11y } from "../lib/dialog.tsx";
 import {
   CloseIcon,
   decodeApIdParam,
@@ -76,11 +76,6 @@ export default function CommunityPage() {
   const canInvite = () =>
     community()?.member_role === "owner" ||
     community()?.member_role === "moderator";
-
-  createEscapeClose(
-    () => memberMenuFor() !== null,
-    () => setMemberMenuFor(null),
-  );
 
   let gen = 0;
   // Returning to the same ID starts a new route lifetime too.
@@ -485,99 +480,113 @@ export default function CommunityPage() {
                       </Show>
                     }
                   >
-                    {(member) => (
-                      <div class="p-community-member">
-                        <A
-                          href={profilePath(member.ap_id)}
-                          class="p-community-member-link"
-                        >
-                          <UserAvatar value={member} size={40} />
-                          <span>
-                            <strong>{titleFor(member)}</strong>
-                            <small>@{member.preferred_username}</small>
+                    {(member) => {
+                      let memberMenuBtn: HTMLButtonElement | undefined;
+                      let memberMenuEl: HTMLDivElement | undefined;
+                      return (
+                        <div class="p-community-member">
+                          <A
+                            href={profilePath(member.ap_id)}
+                            class="p-community-member-link"
+                          >
+                            <UserAvatar value={member} size={40} />
+                            <span>
+                              <strong>{titleFor(member)}</strong>
+                              <small>@{member.preferred_username}</small>
+                            </span>
+                          </A>
+                          <span class="p-community-role">
+                            {ROLE_LABEL[member.role] ?? member.role}
                           </span>
-                        </A>
-                        <span class="p-community-role">
-                          {ROLE_LABEL[member.role] ?? member.role}
-                        </span>
-                        <Show
-                          when={
-                            isOwner() &&
-                            member.role !== "owner" &&
-                            member.ap_id !== app.actor().ap_id
-                          }
-                        >
-                          <div class="p-community-member-more">
-                            <button
-                              type="button"
-                              class="p-community-member-menu-btn"
-                              aria-label={`${titleFor(member)} のメンバー操作`}
-                              aria-haspopup="true"
-                              aria-expanded={memberMenuFor() === member.ap_id}
-                              disabled={memberBusy() === member.ap_id}
-                              onClick={() =>
-                                setMemberMenuFor(
-                                  memberMenuFor() === member.ap_id
-                                    ? null
-                                    : member.ap_id,
-                                )
-                              }
-                            >
-                              <svg viewBox="0 0 24 24" aria-hidden="true">
-                                <circle cx="5" cy="12" r="1.6" />
-                                <circle cx="12" cy="12" r="1.6" />
-                                <circle cx="19" cy="12" r="1.6" />
-                              </svg>
-                            </button>
-                            <Show when={memberMenuFor() === member.ap_id}>
+                          <Show
+                            when={
+                              isOwner() &&
+                              member.role !== "owner" &&
+                              member.ap_id !== app.actor().ap_id
+                            }
+                          >
+                            <div class="p-community-member-more">
                               <button
+                                ref={memberMenuBtn}
                                 type="button"
-                                class="c-post-menu-scrim"
-                                aria-label="閉じる"
-                                onClick={() => setMemberMenuFor(null)}
-                              />
-                              <div class="c-post-menu-list" role="menu">
-                                <Show
-                                  when={member.role === "moderator"}
-                                  fallback={
+                                class="p-community-member-menu-btn"
+                                aria-label={`${titleFor(member)} のメンバー操作`}
+                                aria-haspopup="menu"
+                                aria-expanded={memberMenuFor() === member.ap_id}
+                                disabled={memberBusy() === member.ap_id}
+                                onClick={() =>
+                                  setMemberMenuFor(
+                                    memberMenuFor() === member.ap_id
+                                      ? null
+                                      : member.ap_id,
+                                  )
+                                }
+                              >
+                                <svg viewBox="0 0 24 24" aria-hidden="true">
+                                  <circle cx="5" cy="12" r="1.6" />
+                                  <circle cx="12" cy="12" r="1.6" />
+                                  <circle cx="19" cy="12" r="1.6" />
+                                </svg>
+                              </button>
+                              <Show when={memberMenuFor() === member.ap_id}>
+                                <button
+                                  type="button"
+                                  class="c-post-menu-scrim"
+                                  aria-label="閉じる"
+                                  onClick={() => setMemberMenuFor(null)}
+                                />
+                                <div
+                                  ref={memberMenuEl}
+                                  class="c-post-menu-list"
+                                  role="menu"
+                                >
+                                  <MenuA11y
+                                    menu={() => memberMenuEl}
+                                    trigger={() => memberMenuBtn}
+                                    onClose={() => setMemberMenuFor(null)}
+                                  />
+                                  <Show
+                                    when={member.role === "moderator"}
+                                    fallback={
+                                      <button
+                                        type="button"
+                                        role="menuitem"
+                                        onClick={() =>
+                                          void handleRoleChange(
+                                            member,
+                                            "moderator",
+                                          )
+                                        }
+                                      >
+                                        モデレーターにする
+                                      </button>
+                                    }
+                                  >
                                     <button
                                       type="button"
                                       role="menuitem"
                                       onClick={() =>
-                                        void handleRoleChange(
-                                          member,
-                                          "moderator",
-                                        )
+                                        void handleRoleChange(member, "member")
                                       }
                                     >
-                                      モデレーターにする
+                                      メンバーに戻す
                                     </button>
-                                  }
-                                >
+                                  </Show>
                                   <button
                                     type="button"
                                     role="menuitem"
-                                    onClick={() =>
-                                      void handleRoleChange(member, "member")
-                                    }
+                                    class="is-danger"
+                                    onClick={() => void handleKick(member)}
                                   >
-                                    メンバーに戻す
+                                    グループから削除
                                   </button>
-                                </Show>
-                                <button
-                                  type="button"
-                                  role="menuitem"
-                                  class="is-danger"
-                                  onClick={() => void handleKick(member)}
-                                >
-                                  グループから削除
-                                </button>
-                              </div>
-                            </Show>
-                          </div>
-                        </Show>
-                      </div>
-                    )}
+                                </div>
+                              </Show>
+                            </div>
+                          </Show>
+                        </div>
+                      );
+                    }}
                   </For>
                 </section>
 

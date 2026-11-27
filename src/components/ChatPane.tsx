@@ -12,7 +12,8 @@ import { type DMContact, type MediaAttachment } from "@takosjp/yurucommu-api";
 import { uploadProductMedia } from "../lib/media-upload.ts";
 import { useApp } from "../lib/app-context.tsx";
 import { type ChatMessage, useChat } from "../lib/chat-context.tsx";
-import { createEscapeClose, DialogA11y } from "../lib/dialog.tsx";
+import { createEscapeClose, DialogA11y, MenuA11y } from "../lib/dialog.tsx";
+import { shouldHandleSearchShortcut } from "../lib/keyboard-shortcut.ts";
 import { createDraftSession, type DraftState } from "../lib/draft-store.ts";
 import { createScopedDraftIdentity } from "../lib/outgoing-journal.ts";
 import { searchMessages } from "../lib/message-search.ts";
@@ -111,11 +112,6 @@ export function ChatPane() {
   const coarsePointer =
     typeof window !== "undefined" &&
     window.matchMedia("(pointer: coarse)").matches;
-
-  createEscapeClose(
-    () => menuFor() !== null,
-    () => setMenuFor(null),
-  );
 
   // Draft text and staged attachments belong to the conversation they were
   // typed in: carrying them across a switch risks a wrong-recipient send
@@ -226,24 +222,15 @@ export function ChatPane() {
     });
   }
 
-  let searchFocusRaf: number | undefined;
-  const cancelSearchFocusRaf = () => {
-    if (searchFocusRaf !== undefined) {
-      cancelAnimationFrame(searchFocusRaf);
-      searchFocusRaf = undefined;
-    }
-  };
-  onCleanup(cancelSearchFocusRaf);
-
   const closeSearch = (restoreFocus = false) => {
-    cancelSearchFocusRaf();
     setSearchOpen(false);
     setSearchQuery("");
     if (restoreFocus) {
-      searchFocusRaf = requestAnimationFrame(() => {
-        searchFocusRaf = undefined;
+      queueMicrotask(() => {
         if (
           !searchOpen() &&
+          (document.activeElement === document.body ||
+            !document.activeElement?.isConnected) &&
           searchToggleBtn?.isConnected &&
           searchToggleBtn.getClientRects().length > 0
         ) {
@@ -254,6 +241,51 @@ export function ChatPane() {
   };
 
   createEscapeClose(searchOpen, () => closeSearch(true));
+
+  const focusSearchInput = (selectAll = false) => {
+    const apply = () => {
+      if (searchOpen() && searchInput?.isConnected) {
+        searchInput.focus();
+        if (selectAll) searchInput.select();
+      }
+    };
+    if (searchInput?.isConnected) {
+      apply();
+    } else {
+      queueMicrotask(apply);
+    }
+  };
+
+  // Guarded `/` shortcut: focuses in-chat search when a thread is open (or
+  // falls back to a visible Talk/Home search input when no thread is open).
+  if (typeof document !== "undefined") {
+    const onSlashKeyDown = (event: KeyboardEvent) => {
+      if (!shouldHandleSearchShortcut(event, document)) return;
+      if (chat.selected()) {
+        event.preventDefault();
+        if (!searchOpen()) {
+          setSearchOpen(true);
+        }
+        focusSearchInput(true);
+        return;
+      }
+      const panelSearch = document.querySelector<HTMLInputElement>(
+        'input[name="talkSearch"], input[name="homeSearch"]',
+      );
+      if (
+        panelSearch &&
+        panelSearch.isConnected &&
+        !panelSearch.closest("[inert]") &&
+        panelSearch.getClientRects().length > 0
+      ) {
+        event.preventDefault();
+        panelSearch.focus();
+        panelSearch.select();
+      }
+    };
+    document.addEventListener("keydown", onSlashKeyDown);
+    onCleanup(() => document.removeEventListener("keydown", onSlashKeyDown));
+  }
 
   const jumpToHit = (index: number) => {
     const id = searchHits()[index];
@@ -266,12 +298,8 @@ export function ChatPane() {
       closeSearch(true);
       return;
     }
-    cancelSearchFocusRaf();
     setSearchOpen(true);
-    searchFocusRaf = requestAnimationFrame(() => {
-      searchFocusRaf = undefined;
-      if (searchOpen() && searchInput?.isConnected) searchInput.focus();
-    });
+    focusSearchInput(false);
   };
 
   // Step through matches. Hits run oldest → newest, so "older" walks the index
@@ -881,6 +909,24 @@ export function ChatPane() {
                       <CloseIcon />
                     </button>
                   </div>
+                  <Show
+                    when={
+                      searchQuery().trim().length > 0 && chat.messagesHasMore()
+                    }
+                  >
+                    <div class="p-talk-chat-search__more">
+                      <button
+                        type="button"
+                        class="p-talk-chat-search__older"
+                        disabled={chat.loadingOlder()}
+                        onClick={() => void loadOlderPreservingScroll()}
+                      >
+                        {chat.loadingOlder()
+                          ? "読み込み中…"
+                          : "古いメッセージを読み込む"}
+                      </button>
+                    </div>
+                  </Show>
                 </div>
               </Show>
               <Show when={chat.connectionLost()}>
@@ -954,6 +1000,8 @@ export function ChatPane() {
                           const primary = () =>
                             showDay() ||
                             prev()?.sender.ap_id !== message.sender.ap_id;
+                          let msgMenuBtn: HTMLButtonElement | undefined;
+                          let msgMenuEl: HTMLDivElement | undefined;
                           return (
                             <>
                               <Show when={showDay()}>
@@ -1094,6 +1142,7 @@ export function ChatPane() {
                                         </p>
                                       </Show>
                                       <button
+                                        ref={msgMenuBtn}
                                         type="button"
                                         class="c-talk-msg-action"
                                         aria-label="メッセージ操作"
@@ -1124,9 +1173,15 @@ export function ChatPane() {
                                           onClick={() => setMenuFor(null)}
                                         />
                                         <div
+                                          ref={msgMenuEl}
                                           class="c-talk-msg-menu"
                                           role="menu"
                                         >
+                                          <MenuA11y
+                                            menu={() => msgMenuEl}
+                                            trigger={() => msgMenuBtn}
+                                            onClose={() => setMenuFor(null)}
+                                          />
                                           <button
                                             type="button"
                                             role="menuitem"
