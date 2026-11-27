@@ -222,17 +222,7 @@ export function ChatPane() {
     });
   }
 
-  let searchFocusRaf: number | undefined;
-  const cancelSearchFocusRaf = () => {
-    if (searchFocusRaf !== undefined) {
-      cancelAnimationFrame(searchFocusRaf);
-      searchFocusRaf = undefined;
-    }
-  };
-  onCleanup(cancelSearchFocusRaf);
-
   const closeSearch = (restoreFocus = false) => {
-    cancelSearchFocusRaf();
     setSearchOpen(false);
     setSearchQuery("");
     if (restoreFocus) {
@@ -274,7 +264,6 @@ export function ChatPane() {
       if (chat.selected()) {
         event.preventDefault();
         if (!searchOpen()) {
-          cancelSearchFocusRaf();
           setSearchOpen(true);
         }
         focusSearchInput(true);
@@ -309,7 +298,6 @@ export function ChatPane() {
       closeSearch(true);
       return;
     }
-    cancelSearchFocusRaf();
     setSearchOpen(true);
     focusSearchInput(false);
   };

@@ -432,5 +432,16 @@ describe("design tokens WCAG AA contrast", () => {
         ).toBeGreaterThanOrEqual(4.5);
       }
     }
+
+    // Ensure search hit text always pairs with --ym-highlight-fg (not --ym-text)
+    // so yellow highlights remain readable in dark mode.
+    const searchHitBlock = css.match(/\.c-search-hit\s*\{[^}]*\}/)?.[0] ?? "";
+    expect(searchHitBlock).toContain("color: var(--ym-highlight-fg);");
+    expect(searchHitBlock).toContain(
+      "background-color: var(--ym-highlight-bg);",
+    );
+
+    const badgeBlock = css.match(/\.l-header__badge\s*\{[^}]*\}/)?.[0] ?? "";
+    expect(badgeBlock).toContain("box-shadow: 0 0 0 2px var(--ym-rail-bg);");
   });
 });

@@ -474,7 +474,7 @@ ul {
   font-size: 10px;
   font-style: normal;
   font-weight: 800;
-  box-shadow: 0 0 0 2px #242428;
+  box-shadow: 0 0 0 2px var(--ym-rail-bg);
 }
 
 .l-header__ul-item svg {
@@ -1189,7 +1189,7 @@ ul {
 .c-search-hit {
   border-radius: 3px;
   background-color: var(--ym-highlight-bg);
-  color: var(--ym-text);
+  color: var(--ym-highlight-fg);
   padding: 0 1px;
 }
 
