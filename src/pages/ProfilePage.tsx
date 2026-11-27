@@ -22,7 +22,7 @@ import { PostCard } from "../components/timeline/PostCard.tsx";
 import { ProfileEditModal } from "../components/profile/ProfileEditModal.tsx";
 import { useApp } from "../lib/app-context.tsx";
 import { useChat } from "../lib/chat-context.tsx";
-import { createEscapeClose, DialogA11y } from "../lib/dialog.tsx";
+import { DialogA11y, MenuA11y } from "../lib/dialog.tsx";
 import {
   attachmentSrc,
   CloseIcon,
@@ -73,9 +73,10 @@ export default function ProfilePage() {
   const [hasMore, setHasMore] = createSignal(false);
   const [loadingMore, setLoadingMore] = createSignal(false);
   const chat = useChat();
-
-  createEscapeClose(menuOpen, () => setMenuOpen(false));
-  createEscapeClose(ownMenuOpen, () => setOwnMenuOpen(false));
+  let ownMenuBtnRef: HTMLButtonElement | undefined;
+  let ownMenuListRef: HTMLDivElement | undefined;
+  let otherMenuBtnRef: HTMLButtonElement | undefined;
+  let otherMenuListRef: HTMLDivElement | undefined;
 
   const canSeePosts = () => {
     const p = profile();
@@ -412,10 +413,11 @@ export default function ProfilePage() {
                             <>
                               <div class="p-profile-more">
                                 <button
+                                  ref={ownMenuBtnRef}
                                   type="button"
                                   class="p-profile-icon-btn"
                                   aria-label="メニュー"
-                                  aria-haspopup="true"
+                                  aria-haspopup="menu"
                                   aria-expanded={ownMenuOpen()}
                                   onClick={() => setOwnMenuOpen((v) => !v)}
                                 >
@@ -432,7 +434,16 @@ export default function ProfilePage() {
                                     aria-label="閉じる"
                                     onClick={() => setOwnMenuOpen(false)}
                                   />
-                                  <div class="c-post-menu-list" role="menu">
+                                  <div
+                                    ref={ownMenuListRef}
+                                    class="c-post-menu-list"
+                                    role="menu"
+                                  >
+                                    <MenuA11y
+                                      menu={() => ownMenuListRef}
+                                      trigger={() => ownMenuBtnRef}
+                                      onClose={() => setOwnMenuOpen(false)}
+                                    />
                                     <button
                                       type="button"
                                       role="menuitem"
@@ -487,10 +498,11 @@ export default function ProfilePage() {
                         >
                           <div class="p-profile-more">
                             <button
+                              ref={otherMenuBtnRef}
                               type="button"
                               class="p-profile-icon-btn"
                               aria-label="その他"
-                              aria-haspopup="true"
+                              aria-haspopup="menu"
                               aria-expanded={menuOpen()}
                               onClick={() => setMenuOpen((v) => !v)}
                             >
@@ -507,7 +519,16 @@ export default function ProfilePage() {
                                 aria-label="閉じる"
                                 onClick={() => setMenuOpen(false)}
                               />
-                              <div class="c-post-menu-list" role="menu">
+                              <div
+                                ref={otherMenuListRef}
+                                class="c-post-menu-list"
+                                role="menu"
+                              >
+                                <MenuA11y
+                                  menu={() => otherMenuListRef}
+                                  trigger={() => otherMenuBtnRef}
+                                  onClose={() => setMenuOpen(false)}
+                                />
                                 <button
                                   type="button"
                                   role="menuitem"

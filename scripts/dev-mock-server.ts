@@ -1715,6 +1715,9 @@ async function handleRequest(request: Request): Promise<Response> {
   const searchResponse = await handleSearch(request, method, path, url);
   if (searchResponse) return searchResponse;
 
+  if (path === "/api/notifications/pushers/config" && method === "GET") {
+    return json(request, {});
+  }
   if (path === "/api/notifications/pushers" && method === "POST") {
     const body = await readJson(request);
     const pusher =
@@ -1829,6 +1832,7 @@ async function runSelfTest(): Promise<void> {
     ["GET", "/api/dm/contacts", 200],
     ["GET", "/api/communities", 200],
     ["GET", "/api/search/hashtags/trending", 200],
+    ["GET", "/api/notifications/pushers/config", 200],
   ];
 
   for (const [method, path, expectedStatus] of checks) {

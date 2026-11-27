@@ -15,7 +15,7 @@ import {
   unrepostPost,
 } from "@takosjp/yurucommu-api";
 import { useApp } from "../../lib/app-context.tsx";
-import { createEscapeClose, DialogA11y } from "../../lib/dialog.tsx";
+import { DialogA11y, MenuA11y } from "../../lib/dialog.tsx";
 import {
   actorHandle,
   attachmentSrc,
@@ -163,8 +163,8 @@ export function PostCard(props: {
   const body = () => stripHtml(props.post.content).trim();
   const hidden = () => !!props.post.summary && !cwRevealed();
   const openDetail = () => navigate(postPath(props.post.ap_id));
-
-  createEscapeClose(menuOpen, () => setMenuOpen(false));
+  let menuBtnRef: HTMLButtonElement | undefined;
+  let menuListRef: HTMLDivElement | undefined;
 
   const toggleLike = async () => {
     if (liking()) return;
@@ -325,10 +325,11 @@ export function PostCard(props: {
         </div>
         <div class="c-post-menu">
           <button
+            ref={menuBtnRef}
             type="button"
             class="c-post-menu-btn"
             aria-label="その他"
-            aria-haspopup="true"
+            aria-haspopup="menu"
             aria-expanded={menuOpen()}
             onClick={() => setMenuOpen((v) => !v)}
           >
@@ -345,7 +346,12 @@ export function PostCard(props: {
               aria-label="閉じる"
               onClick={() => setMenuOpen(false)}
             />
-            <div class="c-post-menu-list" role="menu">
+            <div ref={menuListRef} class="c-post-menu-list" role="menu">
+              <MenuA11y
+                menu={() => menuListRef}
+                trigger={() => menuBtnRef}
+                onClose={() => setMenuOpen(false)}
+              />
               <Show
                 when={isOwn()}
                 fallback={

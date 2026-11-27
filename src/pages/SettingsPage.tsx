@@ -20,14 +20,25 @@ import {
 import { PageLayout, PageHeader } from "../components/PageLayout.tsx";
 import { useApp } from "../lib/app-context.tsx";
 import { DialogA11y } from "../lib/dialog.tsx";
+import { type ThemePreference, useTheme } from "../lib/theme.ts";
 import { fullHandle, profilePath, titleFor, UserAvatar } from "../lib/ui.tsx";
 import {
   clearYurumeBrowserPushBeforeSignOut,
   resolveYurumeBrowserPushConfig,
 } from "../lib/browser-push.ts";
 
+const THEME_OPTIONS: ReadonlyArray<{
+  value: ThemePreference;
+  label: string;
+}> = [
+  { value: "system", label: "自動" },
+  { value: "light", label: "ライト" },
+  { value: "dark", label: "ダーク" },
+];
+
 export default function SettingsPage() {
   const app = useApp();
+  const { theme, setTheme } = useTheme();
   const [accounts, setAccounts] = createSignal<AccountInfo[]>([]);
   const [currentApId, setCurrentApId] = createSignal("");
   const [blocked, setBlocked] = createSignal<Actor[]>([]);
@@ -213,6 +224,35 @@ export default function SettingsPage() {
           >
             ログアウト
           </button>
+        </section>
+
+        <section class="p-settings-section">
+          <h2>表示</h2>
+          <div class="p-settings-account p-settings-theme-row">
+            <span class="p-settings-account-main">
+              <strong>テーマ</strong>
+              <small>端末の設定に合わせるか、ライト・ダークを選べます</small>
+            </span>
+            <div
+              class="p-settings-theme-group"
+              role="group"
+              aria-label="テーマ"
+            >
+              {THEME_OPTIONS.map((option) => (
+                <button
+                  type="button"
+                  classList={{
+                    "p-settings-theme-btn": true,
+                    "is-active": theme() === option.value,
+                  }}
+                  aria-pressed={theme() === option.value}
+                  onClick={() => setTheme(option.value)}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+          </div>
         </section>
 
         <section class="p-settings-section">

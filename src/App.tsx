@@ -1225,6 +1225,7 @@ function TalkListPane(props: {
                   >
                     <button
                       type="button"
+                      data-contact-ap-id={contact.ap_id}
                       aria-label={
                         (contact.unread_count ?? 0) > 0
                           ? `${titleFor(contact)}、未読 ${contact.unread_count}件`
