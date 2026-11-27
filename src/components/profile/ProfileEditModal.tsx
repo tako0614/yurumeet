@@ -240,7 +240,11 @@ export function ProfileEditModal(props: {
           </div>
 
           <Show when={error()}>
-            {(message) => <p class="p-composer-error">{message()}</p>}
+            {(message) => (
+              <p class="p-composer-error" role="alert">
+                {message()}
+              </p>
+            )}
           </Show>
         </div>
       </div>

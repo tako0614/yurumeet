@@ -22,6 +22,10 @@
     sans-serif;
 }
 
+:root {
+  color-scheme: light;
+}
+
 html,
 body,
 #root {
@@ -72,10 +76,61 @@ button:disabled {
 a:focus-visible,
 button:focus-visible,
 input:focus-visible,
+select:focus-visible,
 textarea:focus-visible,
 [tabindex]:focus-visible {
   outline: 2px solid #ff3b3b;
   outline-offset: 2px;
+}
+
+.yc-skip-link {
+  position: fixed;
+  top: 8px;
+  left: 12px;
+  z-index: 200;
+  border-radius: 10px;
+  background: #17171c;
+  color: #ffffff;
+  padding: 10px 16px;
+  font-size: 13px;
+  font-weight: 800;
+  text-decoration: none;
+  transform: translateY(-200%);
+  transition: transform 0.15s ease;
+}
+
+.yc-skip-link:focus-visible {
+  transform: translateY(0);
+}
+
+.yc-search-clear {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 28px;
+  place-items: center;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: #63636e;
+  padding: 6px;
+  transition:
+    background-color 0.14s ease,
+    color 0.14s ease;
+}
+
+.yc-search-clear:hover {
+  background: rgba(17, 17, 22, 0.08);
+  color: #17171c;
+}
+
+.yc-search-clear svg {
+  width: 100%;
+  height: 100%;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.2;
+  stroke-linecap: round;
 }
 
 img {
@@ -150,6 +205,10 @@ ul {
 
 .l-header-logo:hover {
   background-color: transparent;
+}
+
+.l-header > nav {
+  width: 100%;
 }
 
 .l-header__ul {
@@ -281,6 +340,12 @@ ul {
     display: none;
   }
 
+  .l-header > nav {
+    display: flex;
+    width: 100%;
+    height: 100%;
+  }
+
   .l-header__ul {
     width: 100%;
     justify-content: space-evenly;
@@ -308,7 +373,6 @@ ul {
   display: block;
   flex: 0 0 auto;
   border-radius: 50%;
-  outline: none;
   transition: opacity 0.16s ease;
 }
 
@@ -368,12 +432,17 @@ ul {
   box-shadow: inset 0 0 0 1.5px #d4d4df;
 }
 
+.p-talk-list-search label:has(input:focus-visible) {
+  outline: 2px solid #ff3b3b;
+  outline-offset: 2px;
+}
+
 .p-talk-list-search svg {
   width: 16px;
   height: 16px;
   flex: 0 0 auto;
   fill: none;
-  stroke: #8a8a96;
+  stroke: #63636e;
   stroke-width: 2;
   stroke-linecap: round;
 }
@@ -388,8 +457,12 @@ ul {
   font-weight: 500;
 }
 
+.p-talk-list-search input::-webkit-search-cancel-button {
+  -webkit-appearance: none;
+}
+
 .p-talk-list-search input::placeholder {
-  color: #8a8a96;
+  color: #63636e;
 }
 
 .p-talk-list-rooms {
@@ -419,7 +492,7 @@ ul {
   height: 100%;
   align-items: center;
   border: none;
-  outline: none;
+  border-radius: 8px;
   background-color: transparent;
   color: #000000;
   padding: 10px 8px;
@@ -466,7 +539,7 @@ ul {
 
 .c-talk-rooms-time {
   flex: 0 0 auto;
-  color: #9a9aa4;
+  color: #63636e;
   font-size: 11px;
   font-weight: 500;
 }
@@ -482,12 +555,15 @@ ul {
 
 .c-talk-rooms-badge {
   display: grid;
+  flex: 0 0 auto;
   min-width: 22px;
   height: 22px;
+  margin-left: 8px;
   place-items: center;
   border-radius: 999px;
   background: #ff3b3b;
   color: #ffffff;
+  padding: 0 6px;
   font-size: 12px;
   font-weight: 900;
 }
@@ -711,7 +787,7 @@ ul {
 
 .p-talk-chat-title-main span {
   overflow: hidden;
-  color: #7d7d86;
+  color: #5b5b66;
   font-size: 12px;
   font-weight: 500;
   line-height: 1.3;
@@ -721,13 +797,12 @@ ul {
 
 .p-talk-chat-prev {
   display: grid;
-  width: 34px;
-  height: 34px;
-  flex: 0 0 34px;
+  width: 36px;
+  height: 36px;
+  flex: 0 0 36px;
   place-items: center;
   border: none;
   border-radius: 50%;
-  outline: none;
   background-color: transparent;
   padding: 7px;
   transition: background-color 0.16s ease;
@@ -754,14 +829,13 @@ ul {
 /* Header trailing action (in-conversation search toggle). */
 .p-talk-chat-action {
   display: grid;
-  width: 34px;
-  height: 34px;
-  flex: 0 0 34px;
+  width: 36px;
+  height: 36px;
+  flex: 0 0 36px;
   margin-right: 6px;
   place-items: center;
   border: none;
   border-radius: 50%;
-  outline: none;
   background-color: transparent;
   color: #55555e;
   padding: 7px;
@@ -807,7 +881,12 @@ ul {
   gap: 8px;
   border-radius: 999px;
   background-color: #ffffff;
-  padding: 0 12px;
+  padding: 0 8px 0 12px;
+}
+
+.p-talk-chat-search__field:has(input:focus-visible) {
+  outline: 2px solid #ff3b3b;
+  outline-offset: 2px;
 }
 
 .p-talk-chat-search__field svg {
@@ -815,7 +894,7 @@ ul {
   height: 16px;
   flex: 0 0 16px;
   fill: none;
-  stroke: #9a9aa4;
+  stroke: #63636e;
   stroke-width: 1.8;
   stroke-linecap: round;
   stroke-linejoin: round;
@@ -834,7 +913,7 @@ ul {
 
 .p-talk-chat-search__count {
   flex: 0 0 auto;
-  color: #7d7d86;
+  color: #5b5b66;
   font-size: 12px;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
@@ -1059,7 +1138,7 @@ ul {
   display: flex;
   flex-direction: column;
   justify-content: end;
-  color: #7d7d86;
+  color: #5b5b66;
   font-size: 11px;
   white-space: nowrap;
 }
@@ -1343,6 +1422,11 @@ ul {
   overflow-wrap: anywhere;
 }
 
+.p-talk-chat-send__form:has(.p-talk-chat-send__textarea:focus-visible) {
+  outline: 2px solid #ff3b3b;
+  outline-offset: 2px;
+}
+
 .p-talk-chat-send__send {
   display: grid;
   width: 36px;
@@ -1497,12 +1581,17 @@ ul {
   box-shadow: inset 0 0 0 1.5px #d4d4df;
 }
 
+.p-home-search:has(input:focus-visible) {
+  outline: 2px solid #ff3b3b;
+  outline-offset: 2px;
+}
+
 .p-home-search svg {
   width: 17px;
   height: 17px;
   flex: 0 0 auto;
   fill: none;
-  stroke: currentColor;
+  stroke: #63636e;
   stroke-width: 2;
   stroke-linecap: round;
 }
@@ -1519,8 +1608,12 @@ ul {
   font-weight: 500;
 }
 
+.p-home-search input::-webkit-search-cancel-button {
+  -webkit-appearance: none;
+}
+
 .p-home-search input::placeholder {
-  color: #7d7d86;
+  color: #63636e;
   font-weight: 700;
 }
 
@@ -1767,7 +1860,6 @@ ul {
   resize: none;
   border: 1px solid #262632;
   border-radius: 14px;
-  outline: none;
   background: #1a1a22;
   color: #ffffff;
   padding: 12px;
@@ -2383,21 +2475,28 @@ ul {
 .c-timeline-stat {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 5px;
   border: none;
+  border-radius: 999px;
   background: transparent;
-  padding: 2px 0;
+  padding: 6px 8px;
+  min-height: 36px;
+  min-width: 36px;
   font-size: 12px;
   font-weight: 700;
 }
 
 .c-timeline-action {
   color: #55555e;
-  transition: color 0.16s ease;
+  transition:
+    color 0.16s ease,
+    background-color 0.16s ease;
 }
 
 .c-timeline-action:hover {
-  color: #ff5a5a;
+  background: #f2f2f8;
+  color: #ff3b3b;
 }
 
 .c-timeline-action:active {
@@ -2863,7 +2962,6 @@ ul {
   resize: none;
   border: 1px solid #262632;
   border-radius: 14px;
-  outline: none;
   background: #1a1a22;
   color: #ffffff;
   padding: 12px;
@@ -3006,7 +3104,6 @@ ul {
   width: 100%;
   border: 1px solid #e2e2ea;
   border-radius: 12px;
-  outline: none;
   background: #f4f4f8;
   padding: 0 14px;
   font-size: 15px;
@@ -3451,7 +3548,6 @@ ul {
   width: 100%;
   border: 1px solid #ededf3;
   border-radius: 10px;
-  outline: none;
   background: #f7f7fb;
   padding: 8px 10px;
   font-size: 13px;
@@ -3466,7 +3562,6 @@ ul {
   min-height: 120px;
   resize: none;
   border: none;
-  outline: none;
   background: transparent;
   font: inherit;
   font-size: 16px;
@@ -3523,7 +3618,6 @@ ul {
   left: 6px;
   border: none;
   border-radius: 8px;
-  outline: none;
   background: rgba(255, 255, 255, 0.92);
   padding: 5px 8px;
   font-size: 11px;
@@ -3688,14 +3782,14 @@ ul {
 
 .c-post-menu-btn {
   display: grid;
-  width: 30px;
-  height: 30px;
+  width: 36px;
+  height: 36px;
   place-items: center;
   border: none;
   border-radius: 50%;
   background: transparent;
-  color: #9a9aa4;
-  padding: 6px;
+  color: #63636e;
+  padding: 8px;
   transition:
     background-color 0.16s ease,
     color 0.16s ease;
@@ -4140,10 +4234,15 @@ ul {
 
 .p-profile-stats button,
 .p-profile-stats span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 34px;
   border: none;
+  border-radius: 6px;
   background: transparent;
-  color: #7d7d86;
-  padding: 0;
+  color: #5b5b66;
+  padding: 4px 2px;
   font-size: 13px;
 }
 
@@ -4246,7 +4345,6 @@ ul {
   width: 100%;
   border: 1px solid #e2e2ea;
   border-radius: 10px;
-  outline: none;
   background: #f7f7fb;
   padding: 10px;
   font: inherit;
@@ -4590,14 +4688,14 @@ ul {
 
 .c-notif-archive {
   display: grid;
-  width: 30px;
-  height: 30px;
-  flex: 0 0 30px;
+  width: 36px;
+  height: 36px;
+  flex: 0 0 36px;
   place-items: center;
   border: none;
   border-radius: 50%;
   background: transparent;
-  color: #9a9aa4;
+  color: #63636e;
 }
 
 .c-notif-archive:hover {
@@ -4695,7 +4793,7 @@ ul {
   margin: 0;
   border-bottom: 1px solid #ededf3;
   background: #f7f7fb;
-  color: #7d7d86;
+  color: #5b5b66;
   padding: 12px 16px;
   font-size: 13px;
   font-weight: 800;
@@ -4704,7 +4802,7 @@ ul {
 .p-settings-section h3 {
   margin: 0;
   padding: 12px 16px 4px;
-  color: #9a9aa4;
+  color: #63636e;
   font-size: 12px;
   font-weight: 700;
 }
@@ -4746,21 +4844,21 @@ ul {
 }
 
 .p-settings-account-main small {
-  overflow: hidden;
-  color: #7d7d86;
+  color: #5b5b66;
   font-size: 12px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
 }
 
 .p-settings-current {
-  color: #9a9aa4;
+  color: #63636e;
   font-size: 12px;
   font-weight: 700;
 }
 
 .p-settings-btn {
   flex: 0 0 auto;
+  min-height: 34px;
   border: 1px solid #d4d4df;
   border-radius: 999px;
   background: #ffffff;
@@ -4768,10 +4866,20 @@ ul {
   padding: 6px 14px;
   font-size: 13px;
   font-weight: 700;
+  transition:
+    background-color 0.16s ease,
+    opacity 0.16s ease;
 }
 
-.p-settings-btn:hover {
+.p-settings-btn:hover:not(:disabled) {
   background: #f2f2f8;
+}
+
+.p-settings-btn:disabled {
+  opacity: 0.48;
+  border-color: #e2e2ea;
+  background: #f2f2f8;
+  color: #63636e;
 }
 
 .p-settings-row {
@@ -5568,7 +5676,6 @@ ul {
 
 .p-edit-extra-row input:focus {
   border-color: #ff8a8a;
-  outline: none;
 }
 
 .p-edit-extra-remove {

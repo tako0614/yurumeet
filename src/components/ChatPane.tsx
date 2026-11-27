@@ -95,6 +95,7 @@ export function ChatPane() {
   const [searchQuery, setSearchQuery] = createSignal("");
   const [searchIndex, setSearchIndex] = createSignal(0);
   let searchInput: HTMLInputElement | undefined;
+  let searchToggleBtn: HTMLButtonElement | undefined;
   const searchHits = createMemo(() =>
     searchOpen() ? searchMessages(chat.messages(), searchQuery()) : [],
   );
@@ -225,10 +226,13 @@ export function ChatPane() {
     });
   }
 
-  createEscapeClose(searchOpen, () => {
+  const closeSearch = (restoreFocus = false) => {
     setSearchOpen(false);
     setSearchQuery("");
-  });
+    if (restoreFocus) requestAnimationFrame(() => searchToggleBtn?.focus());
+  };
+
+  createEscapeClose(searchOpen, () => closeSearch(true));
 
   const jumpToHit = (index: number) => {
     const id = searchHits()[index];
@@ -238,8 +242,7 @@ export function ChatPane() {
 
   const toggleSearch = () => {
     if (searchOpen()) {
-      setSearchOpen(false);
-      setSearchQuery("");
+      closeSearch(true);
       return;
     }
     setSearchOpen(true);
@@ -755,6 +758,7 @@ export function ChatPane() {
                   </A>
                 </Show>
                 <button
+                  ref={searchToggleBtn}
                   class="p-talk-chat-action"
                   classList={{ "is-active": searchOpen() }}
                   type="button"
@@ -804,6 +808,19 @@ export function ChatPane() {
                           : "一致なし"}
                       </span>
                     </Show>
+                    <Show when={searchQuery().length > 0}>
+                      <button
+                        type="button"
+                        class="yc-search-clear"
+                        aria-label="検索語をクリア"
+                        onClick={() => {
+                          setSearchQuery("");
+                          searchInput?.focus();
+                        }}
+                      >
+                        <CloseIcon />
+                      </button>
+                    </Show>
                   </div>
                   <div class="p-talk-chat-search__nav">
                     <button
@@ -833,10 +850,7 @@ export function ChatPane() {
                       type="button"
                       class="p-talk-chat-search__close"
                       aria-label="検索を閉じる"
-                      onClick={() => {
-                        setSearchOpen(false);
-                        setSearchQuery("");
-                      }}
+                      onClick={() => closeSearch(true)}
                     >
                       <CloseIcon />
                     </button>
@@ -1057,6 +1071,8 @@ export function ChatPane() {
                                         type="button"
                                         class="c-talk-msg-action"
                                         aria-label="メッセージ操作"
+                                        aria-haspopup="menu"
+                                        aria-expanded={menuFor() === message.id}
                                         onClick={() =>
                                           setMenuFor(
                                             menuFor() === message.id
@@ -1118,7 +1134,10 @@ export function ChatPane() {
                                       </Show>
                                     </div>
                                     <Show when={message.failed}>
-                                      <div class="c-talk-chat-failed">
+                                      <div
+                                        class="c-talk-chat-failed"
+                                        role="alert"
+                                      >
                                         <span>
                                           {message.deliveryFailure ===
                                           "rejected"
@@ -1374,6 +1393,7 @@ export function ChatPane() {
                         ref={draftInput}
                         class="p-talk-chat-send__textarea"
                         name="message"
+                        aria-label="メッセージを入力"
                         aria-describedby={
                           draftStorageStatus() !== "saved"
                             ? "talk-draft-storage-warning"

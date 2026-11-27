@@ -475,18 +475,26 @@ function Shell(props: { children?: JSX.Element }) {
   const chat = useChat();
   return (
     <>
+      <a href="#main" class="yc-skip-link">
+        本文へスキップ
+      </a>
       <NavRail
         actor={app.actor()}
         hideOnMobile={!!chat.selected()}
         unreadTalk={app.unreadTalk()}
         unreadNotifications={app.unreadNotifications()}
       />
-      <div class="app-main" classList={{ "is-chat-open": !!chat.selected() }}>
+      <main
+        id="main"
+        tabIndex={-1}
+        class="app-main"
+        classList={{ "is-chat-open": !!chat.selected() }}
+      >
         <div class="app-panel">{props.children}</div>
         <div class="app-chat">
           <ChatPane />
         </div>
-      </div>
+      </main>
     </>
   );
 }

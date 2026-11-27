@@ -1,6 +1,7 @@
-import { Show, type JSX } from "solid-js";
+import { createEffect, Show, type JSX } from "solid-js";
 import { useNavigate } from "@solidjs/router";
 import type { NavKey } from "./NavRail.tsx";
+import { formatYurumeetTitle } from "../lib/page-title.ts";
 import { BackIcon } from "../lib/ui.tsx";
 
 /**
@@ -21,6 +22,9 @@ export function PageHeader(props: {
   actions?: JSX.Element;
 }) {
   const navigate = useNavigate();
+  createEffect(() => {
+    document.title = formatYurumeetTitle(props.title);
+  });
   return (
     <div class="p-page-header">
       <Show when={props.back !== false}>

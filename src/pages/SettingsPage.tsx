@@ -162,7 +162,7 @@ export default function SettingsPage() {
       <PageHeader title="設定" />
       <div class="p-page-body p-settings">
         <Show when={listsError()}>
-          <section class="p-settings-section">
+          <section class="p-settings-section" role="alert">
             <div class="p-settings-account">
               <span class="p-settings-account-main">
                 <strong>設定を読み込めませんでした</strong>

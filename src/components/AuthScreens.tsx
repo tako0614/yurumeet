@@ -53,7 +53,11 @@ export function ServerConnect(props: { onConnect: (origin: string) => void }) {
           <button type="submit">開く</button>
         </form>
         <Show when={error()}>
-          {(message) => <p class="p-connect-error">{message()}</p>}
+          {(message) => (
+            <p class="p-connect-error" role="alert">
+              {message()}
+            </p>
+          )}
         </Show>
       </section>
     </main>
