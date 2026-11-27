@@ -34,6 +34,7 @@ export function installStaleAssetReload(): void {
   if (typeof window === "undefined") return;
 
   const reload = (value: unknown) => {
+    if (window.navigator.onLine === false) return;
     if (!isLikelyStaleAssetError(value)) return;
     // The cooldown is what keeps a genuinely broken deploy from turning into a
     // reload loop: a second failure for the same URL within a minute falls
