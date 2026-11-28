@@ -3591,6 +3591,8 @@ ul {
 }
 
 .yc-toast {
+  display: inline-flex;
+  align-items: center;
   max-width: min(90vw, 420px);
   border-radius: 12px;
   background: var(--ym-inverted-bg);
@@ -4613,7 +4615,11 @@ ul {
   object-fit: cover;
 }
 
-.p-edit-banner:focus-within,
+.p-edit-banner:focus-within {
+  outline: 2px solid var(--ym-accent);
+  outline-offset: -2px;
+}
+
 .p-edit-avatar:focus-within {
   outline: 2px solid var(--ym-accent);
   outline-offset: 2px;
@@ -4812,11 +4818,30 @@ ul {
 }
 
 .p-sheet-head button {
+  display: grid;
+  width: 36px;
+  height: 36px;
+  flex: 0 0 36px;
+  place-items: center;
   border: none;
+  border-radius: 50%;
   background: transparent;
-  color: var(--ym-text-faint);
-  padding: 4px;
-  font-size: 15px;
+  color: var(--ym-text-secondary);
+  padding: 0;
+}
+
+.p-sheet-head button:hover {
+  background: var(--ym-surface-hover);
+  color: var(--ym-text-strong);
+}
+
+.p-sheet-head button svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
 }
 
 .p-sheet-body {
@@ -6705,6 +6730,14 @@ ul {
     height: 44px;
   }
 
+  .p-story-viewer-head {
+    padding-right: 52px;
+  }
+
+  .p-story-progress {
+    margin-right: 52px;
+  }
+
   .p-home-section-head .p-home-section-add,
   .p-talk-chat-prev,
   .p-talk-chat-action,
@@ -6722,6 +6755,8 @@ ul {
   .p-story-pause,
   .p-story-composer-head button,
   .p-note-editor-head button,
+  .p-sheet-head button,
+  .p-composer-close,
   .p-edit-extra-remove {
     width: 44px;
     height: 44px;
@@ -6762,6 +6797,11 @@ ul {
   .p-profile-stats button,
   .p-community-actions button,
   .p-talk-chip,
+  .p-story-actions button,
+  .p-qr-tabs button,
+  .p-qr-share,
+  .p-note-editor-actions button,
+  .yc-toast-action,
   .p-notfound a {
     min-height: 44px;
   }

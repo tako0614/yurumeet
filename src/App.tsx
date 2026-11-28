@@ -50,6 +50,10 @@ import {
   storyIntentSession,
   type StoryIntentSessionEntry,
 } from "./lib/story-intent-session.ts";
+import {
+  resolveStoryDeepLink,
+  syncStoryVideoPlayback,
+} from "./lib/story-viewer.ts";
 import { createTimelineFeed } from "./lib/timeline-feed.ts";
 import { useApp } from "./lib/app-context.tsx";
 import { useChat } from "./lib/chat-context.tsx";
@@ -1572,6 +1576,7 @@ function StoryViewerModal(props: {
   const [userPaused, setUserPaused] = createSignal(false);
   const [pointerHeld, setPointerHeld] = createSignal(false);
   const [confirmPaused, setConfirmPaused] = createSignal(false);
+  const [videoEl, setVideoEl] = createSignal<HTMLVideoElement | undefined>();
   const paused = () => userPaused() || pointerHeld() || confirmPaused();
 
   // Adopt the open target ONLY when the viewer is (re)opened at a given
@@ -1727,6 +1732,12 @@ function StoryViewerModal(props: {
     }),
   );
 
+  // Keep video stories paused/resumed in sync with the timer and progress bar.
+  createEffect(() => {
+    currentStory()?.ap_id;
+    syncStoryVideoPlayback(videoEl(), paused());
+  });
+
   // Escape close + focus trap live in DialogA11y; this handles arrows and
   // keyboard pause/resume (WCAG 2.2.2).
   createEffect(() => {
@@ -1835,8 +1846,9 @@ function StoryViewerModal(props: {
               <button
                 class="p-story-pause"
                 type="button"
+                autofocus
                 aria-pressed={userPaused()}
-                aria-label={userPaused() ? "再生を再開" : "一時停止"}
+                aria-label="一時停止"
                 onClick={() => setUserPaused((value) => !value)}
               >
                 <Show
@@ -1899,10 +1911,19 @@ function StoryViewerModal(props: {
                     }
                   >
                     <video
+                      ref={(el) => {
+                        setVideoEl(el);
+                        onCleanup(() => {
+                          if (videoEl() === el) setVideoEl(undefined);
+                        });
+                      }}
                       src={src()}
-                      autoplay
+                      autoplay={!paused()}
                       muted
                       playsinline
+                      onPlay={(event) => {
+                        if (paused()) event.currentTarget.pause();
+                      }}
                       onError={() => setMediaError(true)}
                     />
                   </Show>
@@ -1920,14 +1941,12 @@ function StoryViewerModal(props: {
                 type="button"
                 classList={{ "is-active": !!story().liked }}
                 aria-pressed={!!story().liked}
-                aria-label={story().liked ? "いいねを取り消す" : "いいね"}
                 onClick={() => void props.onLike?.(story())}
               >
                 いいね {story().like_count || ""}
               </button>
               <button
                 type="button"
-                aria-label="シェア"
                 onClick={() => void props.onShare?.(story())}
               >
                 シェア {story().share_count || ""}
@@ -2542,6 +2561,7 @@ export default function App() {
   const [postComposerOpen, setPostComposerOpen] = createSignal(false);
 
   const openStoryGroup = (group: ActorStories) => {
+    if (stories.error) return;
     const actualIndex = (stories() ?? []).findIndex(
       (item) => item.actor.ap_id === group.actor.ap_id,
     );
@@ -2557,21 +2577,18 @@ export default function App() {
   createEffect(() => {
     const raw = searchParams.story;
     const storyApId = Array.isArray(raw) ? raw[0] : raw;
-    const groups = stories() ?? [];
-    if (!storyApId || stories.loading || stories.error) return;
-    for (const [actorIndex, group] of groups.entries()) {
-      const storyIndex = group.stories.findIndex(
-        (story) => story.ap_id === storyApId,
-      );
-      if (storyIndex < 0) continue;
-      setStoryViewerStoryIndex(storyIndex);
-      setStoryViewerActorIndex(actorIndex);
-      // Consume the param immediately: a later stories() refetch must not
-      // re-run this effect and yank the open viewer back to the target.
-      setSearchParams({ story: undefined }, { replace: true });
-      return;
+    const resolution = resolveStoryDeepLink(storyApId, {
+      loading: stories.loading,
+      error: stories.error,
+      read: () => stories(),
+    });
+    if (resolution.kind === "wait") return;
+    if (resolution.kind === "open") {
+      setStoryViewerStoryIndex(resolution.storyIndex);
+      setStoryViewerActorIndex(resolution.actorIndex);
     }
-
+    // Consume the param immediately: a later stories() refetch must not
+    // re-run this effect and yank the open viewer back to the target.
     setSearchParams({ story: undefined }, { replace: true });
   });
 

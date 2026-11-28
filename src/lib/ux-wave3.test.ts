@@ -1,6 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
+import type { ActorStories } from "@takosjp/yurucommu-api";
 import { handleTabListKeyDown } from "./keyboard-shortcut.ts";
+import {
+  resolveStoryDeepLink,
+  syncStoryVideoPlayback,
+} from "./story-viewer.ts";
 
 function relativeLuminance(hex: string): number {
   const clean = hex.replace("#", "");
@@ -220,5 +225,150 @@ describe("Wave 3 dark-mode QR, disabled buttons, note bubbles, and landing contr
     expect(contrastRatio("#ffffff", accentBtn)).toBeGreaterThanOrEqual(4.5);
     expect(contrastRatio("#ffffff", accentInk)).toBeGreaterThanOrEqual(4.5);
     expect(contrastRatio(faint, "#ffffff")).toBeGreaterThanOrEqual(4.5);
+  });
+});
+
+describe("Wave 3 review fixes: StoryViewer video/ARIA, stories.error, QR tabpanel, and focus/mobile layout", () => {
+  test("syncStoryVideoPlayback pauses and resumes videos safely", () => {
+    const calls: string[] = [];
+    const video = {
+      pause() {
+        calls.push("pause");
+      },
+      play() {
+        calls.push("play");
+        return Promise.reject(new Error("autoplay blocked"));
+      },
+    };
+
+    syncStoryVideoPlayback(undefined, true);
+    syncStoryVideoPlayback(null, false);
+    syncStoryVideoPlayback(video, true);
+    syncStoryVideoPlayback(video, false);
+    expect(calls).toEqual(["pause", "play"]);
+  });
+
+  test("resolveStoryDeepLink never reads stories() while errored or loading", () => {
+    let reads = 0;
+    const throwingResource = {
+      loading: false,
+      error: new Error("500 /api/stories"),
+      read() {
+        reads += 1;
+        throw new Error("must not read errored resource");
+      },
+    };
+    expect(
+      resolveStoryDeepLink(
+        "https://example.test/ap/stories/1",
+        throwingResource,
+      ),
+    ).toEqual({ kind: "wait" });
+    expect(reads).toBe(0);
+
+    expect(
+      resolveStoryDeepLink("https://example.test/ap/stories/1", {
+        loading: true,
+        error: undefined,
+        read() {
+          reads += 1;
+          return [];
+        },
+      }),
+    ).toEqual({ kind: "wait" });
+    expect(reads).toBe(0);
+
+    expect(
+      resolveStoryDeepLink(undefined, {
+        loading: false,
+        error: undefined,
+        read() {
+          reads += 1;
+          return [];
+        },
+      }),
+    ).toEqual({ kind: "wait" });
+    expect(reads).toBe(0);
+
+    const groups = [
+      {
+        actor: { ap_id: "https://example.test/ap/users/a" },
+        has_unviewed: true,
+        stories: [
+          { ap_id: "https://example.test/ap/stories/s1" },
+          { ap_id: "https://example.test/ap/stories/s2" },
+        ],
+      },
+    ] as unknown as ActorStories[];
+
+    expect(
+      resolveStoryDeepLink("https://example.test/ap/stories/s2", {
+        loading: false,
+        error: undefined,
+        read: () => groups,
+      }),
+    ).toEqual({ kind: "open", actorIndex: 0, storyIndex: 1 });
+
+    expect(
+      resolveStoryDeepLink("https://example.test/ap/stories/missing", {
+        loading: false,
+        error: undefined,
+        read: () => groups,
+      }),
+    ).toEqual({ kind: "clear" });
+  });
+
+  test("StoryViewerModal keeps constant ARIA toggle name, visible counts, and video pause sync", () => {
+    const appSrc = readFileSync(new URL("../App.tsx", import.meta.url), "utf8");
+    const pauseBtn =
+      appSrc.match(/<button\s+class="p-story-pause"[\s\S]*?>/)?.[0] ?? "";
+    expect(pauseBtn).toContain("autofocus");
+    expect(pauseBtn).toContain("aria-pressed={userPaused()}");
+    expect(pauseBtn).toContain('aria-label="一時停止"');
+    expect(pauseBtn).not.toContain("再生を再開");
+
+    const actionsBlock =
+      appSrc.match(
+        /<div class="p-story-actions">[\s\S]*?<Show when=\{!isOwnStory\(\)/,
+      )?.[0] ?? "";
+    expect(actionsBlock).toContain("aria-pressed={!!story().liked}");
+    expect(actionsBlock).not.toContain("aria-label=");
+    expect(appSrc).toContain("syncStoryVideoPlayback(videoEl(), paused())");
+  });
+
+  test("QRCodeModal uses a persistent tabpanel id so inactive tab aria-controls never dangles", () => {
+    const qrSrc = readFileSync(
+      new URL("../components/QRCodeModal.tsx", import.meta.url),
+      "utf8",
+    );
+    const controls = Array.from(
+      qrSrc.matchAll(/aria-controls="([^"]+)"/g),
+      (m) => m[1],
+    );
+    expect(controls).toEqual(["qr-tabpanel", "qr-tabpanel"]);
+    expect(qrSrc).toContain('id="qr-tabpanel"');
+    expect(qrSrc).toContain('role="tabpanel"');
+  });
+
+  test("CSS fixes mobile story header clearance, inset banner focus ring, and visible sheet close icon", () => {
+    const css = readFileSync(new URL("../styles.css", import.meta.url), "utf8");
+    const mobileBlock = css.slice(css.indexOf("@media (max-width: 768px)"));
+    expect(mobileBlock).toContain(
+      ".p-story-viewer-head {\n    padding-right: 52px;",
+    );
+    expect(mobileBlock).toContain(
+      ".p-story-progress {\n    margin-right: 52px;",
+    );
+    expect(mobileBlock).toContain(".p-sheet-head button,");
+    expect(mobileBlock).toContain(".yc-toast-action,");
+
+    const bannerFocus =
+      css.match(/\.p-edit-banner:focus-within\s*\{[^}]*\}/)?.[0] ?? "";
+    expect(bannerFocus).toContain("outline-offset: -2px;");
+
+    const sheetCloseSvg =
+      css.match(/\.p-sheet-head button svg\s*\{[^}]*\}/)?.[0] ?? "";
+    expect(sheetCloseSvg).toContain("width: 18px;");
+    expect(sheetCloseSvg).toContain("height: 18px;");
   });
 });

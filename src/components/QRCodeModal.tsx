@@ -279,7 +279,7 @@ export function QRCodeModal(props: { onClose: () => void }) {
             type="button"
             role="tab"
             aria-selected={tab() === "myqr"}
-            aria-controls="qr-panel-myqr"
+            aria-controls="qr-tabpanel"
             tabindex={tab() === "myqr" ? 0 : -1}
             classList={{ "is-active": tab() === "myqr" }}
             onClick={() => setTab("myqr")}
@@ -291,7 +291,7 @@ export function QRCodeModal(props: { onClose: () => void }) {
             type="button"
             role="tab"
             aria-selected={tab() === "scan"}
-            aria-controls="qr-panel-scan"
+            aria-controls="qr-tabpanel"
             tabindex={tab() === "scan" ? 0 : -1}
             classList={{ "is-active": tab() === "scan" }}
             onClick={() => setTab("scan")}
@@ -300,7 +300,7 @@ export function QRCodeModal(props: { onClose: () => void }) {
           </button>
         </div>
         <div
-          id={tab() === "myqr" ? "qr-panel-myqr" : "qr-panel-scan"}
+          id="qr-tabpanel"
           role="tabpanel"
           aria-labelledby={tab() === "myqr" ? "qr-tab-myqr" : "qr-tab-scan"}
           class="p-sheet-body p-qr-body"
