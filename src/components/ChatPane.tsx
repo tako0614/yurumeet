@@ -7,6 +7,7 @@ import {
   onCleanup,
   Show,
 } from "solid-js";
+import { Dynamic } from "solid-js/web";
 import { A } from "@solidjs/router";
 import { type DMContact, type MediaAttachment } from "@takosjp/yurucommu-api";
 import { uploadProductMedia } from "../lib/media-upload.ts";
@@ -49,7 +50,7 @@ type StagedMedia = MediaAttachment & {
   isScopeCurrent: () => boolean;
 };
 
-export function ChatPane() {
+export function ChatPane(props: { isMobile?: boolean } = {}) {
   const app = useApp();
   const chat = useChat();
   const olderHistoryScroll = createOlderHistoryScroll();
@@ -789,7 +790,12 @@ export function ChatPane() {
                     >
                       <Avatar value={contact()} />
                       <div class="p-talk-chat-title-main">
-                        <p>{titleFor(contact())}</p>
+                        <Dynamic
+                          component={props.isMobile ? "h1" : "h2"}
+                          class="p-talk-chat-title-name"
+                        >
+                          {titleFor(contact())}
+                        </Dynamic>
                         <span>{contactSubtitle(contact())}</span>
                       </div>
                     </A>
@@ -801,7 +807,12 @@ export function ChatPane() {
                   >
                     <Avatar value={contact()} />
                     <div class="p-talk-chat-title-main">
-                      <p>{titleFor(contact())}</p>
+                      <Dynamic
+                        component={props.isMobile ? "h1" : "h2"}
+                        class="p-talk-chat-title-name"
+                      >
+                        {titleFor(contact())}
+                      </Dynamic>
                       <span classList={{ "is-typing": chat.isTyping() }}>
                         {chat.isTyping()
                           ? "入力中…"
@@ -1034,6 +1045,7 @@ export function ChatPane() {
                                     <A
                                       class="c-talk-chat-icon"
                                       href={profilePath(message.sender.ap_id)}
+                                      aria-label={`${titleFor(message.sender)} のプロフィール`}
                                     >
                                       <Avatar value={message.sender} />
                                     </A>
@@ -1091,6 +1103,11 @@ export function ChatPane() {
                                                       href={src}
                                                       target="_blank"
                                                       rel="noopener noreferrer"
+                                                      aria-label={
+                                                        attachment.name
+                                                          ? `${attachment.name} を拡大表示`
+                                                          : "画像を拡大表示"
+                                                      }
                                                       onClick={(event) => {
                                                         // Plain tap opens the
                                                         // in-app lightbox; the

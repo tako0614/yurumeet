@@ -21,6 +21,7 @@ import {
 } from "@takosjp/yurucommu-api";
 import { PageLayout, PageHeader } from "../components/PageLayout.tsx";
 import { useApp } from "../lib/app-context.tsx";
+import { handleTabListKeyDown } from "../lib/keyboard-shortcut.ts";
 import {
   formatPostTime,
   postPath,
@@ -528,47 +529,16 @@ export default function NotificationsPage() {
         class="p-notif-filters"
         role="tablist"
         aria-label="通知の種類"
-        onKeyDown={(event) => {
-          // Roving arrow-key navigation between the filter tabs.
-          if (
-            event.key !== "ArrowRight" &&
-            event.key !== "ArrowLeft" &&
-            event.key !== "Home" &&
-            event.key !== "End"
-          ) {
-            return;
-          }
-          const tabs = Array.from(
-            event.currentTarget.querySelectorAll<HTMLButtonElement>(
-              '[role="tab"]:not(:disabled)',
-            ),
-          );
-          if (tabs.length === 0) return;
-          const current = tabs.findIndex(
-            (tab) => tab === document.activeElement,
-          );
-          let next: number;
-          if (event.key === "Home") next = 0;
-          else if (event.key === "End") next = tabs.length - 1;
-          else if (event.key === "ArrowRight") {
-            next = current < 0 ? 0 : (current + 1) % tabs.length;
-          } else {
-            next =
-              current < 0
-                ? tabs.length - 1
-                : (current - 1 + tabs.length) % tabs.length;
-          }
-          event.preventDefault();
-          tabs[next].focus();
-          tabs[next].click();
-        }}
+        onKeyDown={(event) => handleTabListKeyDown(event, event.currentTarget)}
       >
         <For each={FILTERS}>
           {(f) => (
             <button
+              id={`notif-tab-${f.key}`}
               type="button"
               role="tab"
               aria-selected={filter() === f.key}
+              aria-controls="notifications-tabpanel"
               tabindex={filter() === f.key ? 0 : -1}
               disabled={archiveMutationPending()}
               classList={{
@@ -582,12 +552,18 @@ export default function NotificationsPage() {
           )}
         </For>
       </div>
-      <div class="p-page-body">
+      <div
+        id="notifications-tabpanel"
+        role="tabpanel"
+        aria-labelledby={`notif-tab-${filter()}`}
+        class="p-page-body"
+      >
         <Show
           when={scopeReady() && displayedScopeIsCurrent() && !loading()}
           fallback={
-            <div class="p-detail-loading">
+            <div class="p-detail-loading" role="status">
               <SpinnerIcon />
+              <span class="yc-visually-hidden">読み込み中…</span>
             </div>
           }
         >
@@ -631,6 +607,7 @@ export default function NotificationsPage() {
                       if (rowLinked && target) navigate(target);
                     }}
                     onKeyDown={(event) => {
+                      if (event.isComposing || event.keyCode === 229) return;
                       if (
                         event.target === event.currentTarget &&
                         rowLinked &&
@@ -646,6 +623,7 @@ export default function NotificationsPage() {
                     <A
                       href={profilePath(n.actor.ap_id)}
                       class="c-notif-avatar"
+                      aria-label={`${titleFor(n.actor)} のプロフィール`}
                       onClick={(event) => event.stopPropagation()}
                     >
                       <UserAvatar value={n.actor} size={40} />

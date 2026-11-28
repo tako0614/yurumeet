@@ -101,7 +101,7 @@ export default function PostDetailPage() {
           <Show
             when={!error()}
             fallback={
-              <div class="p-timeline-state">
+              <div class="p-timeline-state" role="alert">
                 <p>投稿を読み込めませんでした</p>
                 <button type="button" onClick={load}>
                   再読み込み
@@ -213,8 +213,9 @@ export default function PostDetailPage() {
 
 function PostDetailLoading() {
   return (
-    <div class="p-detail-loading">
+    <div class="p-detail-loading" role="status">
       <SpinnerIcon />
+      <span class="yc-visually-hidden">読み込み中…</span>
     </div>
   );
 }

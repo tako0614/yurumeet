@@ -13,6 +13,7 @@ import {
 import { useApp } from "../lib/app-context.tsx";
 import { useChat } from "../lib/chat-context.tsx";
 import { DialogA11y } from "../lib/dialog.tsx";
+import { handleTabListKeyDown } from "../lib/keyboard-shortcut.ts";
 import { parseScannedContact } from "../lib/qr-contact.ts";
 import {
   CloseIcon,
@@ -265,27 +266,45 @@ export function QRCodeModal(props: { onClose: () => void }) {
             <CloseIcon />
           </button>
         </div>
-        <div class="p-qr-tabs" role="tablist">
+        <div
+          class="p-qr-tabs"
+          role="tablist"
+          aria-label="友だち追加の方法"
+          onKeyDown={(event) =>
+            handleTabListKeyDown(event, event.currentTarget)
+          }
+        >
           <button
+            id="qr-tab-myqr"
             type="button"
             role="tab"
             aria-selected={tab() === "myqr"}
+            aria-controls="qr-tabpanel"
+            tabindex={tab() === "myqr" ? 0 : -1}
             classList={{ "is-active": tab() === "myqr" }}
             onClick={() => setTab("myqr")}
           >
             マイQRコード
           </button>
           <button
+            id="qr-tab-scan"
             type="button"
             role="tab"
             aria-selected={tab() === "scan"}
+            aria-controls="qr-tabpanel"
+            tabindex={tab() === "scan" ? 0 : -1}
             classList={{ "is-active": tab() === "scan" }}
             onClick={() => setTab("scan")}
           >
             スキャン
           </button>
         </div>
-        <div class="p-sheet-body p-qr-body">
+        <div
+          id="qr-tabpanel"
+          role="tabpanel"
+          aria-labelledby={tab() === "myqr" ? "qr-tab-myqr" : "qr-tab-scan"}
+          class="p-sheet-body p-qr-body"
+        >
           <Show
             when={tab() === "myqr"}
             fallback={

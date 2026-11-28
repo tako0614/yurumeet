@@ -342,7 +342,8 @@ export default function SettingsPage() {
           class="yc-confirm-scrim"
           role="presentation"
           onClick={(event) => {
-            if (event.target === event.currentTarget) setDeleteOpen(false);
+            if (event.target === event.currentTarget && !deleteBusy())
+              setDeleteOpen(false);
           }}
         >
           <div
@@ -354,38 +355,48 @@ export default function SettingsPage() {
           >
             <DialogA11y
               root={() => deleteDialogRoot}
-              onClose={() => setDeleteOpen(false)}
+              onClose={() => {
+                if (!deleteBusy()) setDeleteOpen(false);
+              }}
             />
-            <strong>アカウントを削除</strong>
-            <p>
-              この操作は取り消せません。続けるには「削除」と入力してください。
-            </p>
-            <input
-              class="p-settings-delete-input"
-              type="text"
-              value={deleteText()}
-              placeholder="削除"
-              aria-label="確認のため「削除」と入力"
-              autofocus
-              onInput={(event) => setDeleteText(event.currentTarget.value)}
-            />
-            <div class="yc-confirm-actions">
-              <button
-                type="button"
-                class="yc-confirm-cancel"
-                onClick={() => setDeleteOpen(false)}
-              >
-                キャンセル
-              </button>
-              <button
-                type="button"
-                class="yc-confirm-ok is-danger"
-                disabled={!deleteConfirmed() || deleteBusy()}
-                onClick={() => void confirmDelete()}
-              >
-                {deleteBusy() ? "削除中" : "削除する"}
-              </button>
-            </div>
+            <form
+              onSubmit={(event) => {
+                event.preventDefault();
+                void confirmDelete();
+              }}
+            >
+              <strong>アカウントを削除</strong>
+              <p>
+                この操作は取り消せません。続けるには「削除」と入力してください。
+              </p>
+              <input
+                class="p-settings-delete-input"
+                type="text"
+                value={deleteText()}
+                placeholder="削除"
+                aria-label="確認のため「削除」と入力"
+                disabled={deleteBusy()}
+                autofocus
+                onInput={(event) => setDeleteText(event.currentTarget.value)}
+              />
+              <div class="yc-confirm-actions">
+                <button
+                  type="button"
+                  class="yc-confirm-cancel"
+                  disabled={deleteBusy()}
+                  onClick={() => setDeleteOpen(false)}
+                >
+                  キャンセル
+                </button>
+                <button
+                  type="submit"
+                  class="yc-confirm-ok is-danger"
+                  disabled={!deleteConfirmed() || deleteBusy()}
+                >
+                  {deleteBusy() ? "削除中" : "削除する"}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       </Show>

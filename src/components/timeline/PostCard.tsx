@@ -104,6 +104,11 @@ export function PostMedia(props: {
                 href={image.src}
                 target="_blank"
                 rel="noopener noreferrer"
+                aria-label={
+                  image.name
+                    ? `${image.name} を新しいタブで開く`
+                    : "画像を新しいタブで開く"
+                }
                 onClick={(e) => e.stopPropagation()}
               >
                 <img src={image.src} alt={image.name ?? ""} loading="lazy" />
@@ -304,7 +309,11 @@ export function PostCard(props: {
   return (
     <article class="c-timeline-post">
       <header>
-        <A href={profilePath(props.post.author.ap_id)} class="c-post-avatar">
+        <A
+          href={profilePath(props.post.author.ap_id)}
+          class="c-post-avatar"
+          aria-label={`${titleFor(props.post.author)} のプロフィール`}
+        >
           <UserAvatar value={props.post.author} />
         </A>
         <div class="c-post-ident">
@@ -421,7 +430,14 @@ export function PostCard(props: {
               tabindex="0"
               onClick={openDetail}
               onKeyDown={(event) => {
-                if (event.key === "Enter") openDetail();
+                if (event.isComposing || event.keyCode === 229) return;
+                if (
+                  event.target === event.currentTarget &&
+                  event.key === "Enter"
+                ) {
+                  event.preventDefault();
+                  openDetail();
+                }
               }}
             >
               {renderRichText(body())}

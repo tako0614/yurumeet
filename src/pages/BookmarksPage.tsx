@@ -54,8 +54,9 @@ export default function BookmarksPage() {
         <Show
           when={!loading() || posts().length > 0}
           fallback={
-            <div class="p-detail-loading">
+            <div class="p-detail-loading" role="status">
               <SpinnerIcon />
+              <span class="yc-visually-hidden">読み込み中…</span>
             </div>
           }
         >
@@ -72,7 +73,7 @@ export default function BookmarksPage() {
           <Show
             when={!error() || posts().length > 0}
             fallback={
-              <div class="p-timeline-state">
+              <div class="p-timeline-state" role="alert">
                 <p>ブックマークを読み込めませんでした</p>
                 <button type="button" onClick={() => void feed.refresh()}>
                   再読み込み

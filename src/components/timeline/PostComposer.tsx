@@ -248,6 +248,7 @@ export function PostComposer(props: {
                   value={summary()}
                   maxLength={MAX_SUMMARY}
                   placeholder="内容の警告 (任意)"
+                  aria-label="内容の警告"
                   onInput={(event) => setSummary(event.currentTarget.value)}
                 />
               </Show>
@@ -255,6 +256,7 @@ export function PostComposer(props: {
                 class="p-composer-text"
                 value={content()}
                 placeholder={props.replyTo ? "返信を入力" : "いまどうしてる?"}
+                aria-label={props.replyTo ? "返信の本文" : "投稿の本文"}
                 onInput={(event) => setContent(event.currentTarget.value)}
                 autofocus
               />
@@ -277,6 +279,7 @@ export function PostComposer(props: {
                           type="text"
                           value={item.name}
                           placeholder="代替テキスト"
+                          aria-label={`画像 ${index() + 1} の代替テキスト`}
                           onInput={(event) =>
                             setMedia((prev) =>
                               prev.map((m, i) =>

@@ -50,6 +50,10 @@ import {
   storyIntentSession,
   type StoryIntentSessionEntry,
 } from "./lib/story-intent-session.ts";
+import {
+  resolveStoryDeepLink,
+  syncStoryVideoPlayback,
+} from "./lib/story-viewer.ts";
 import { createTimelineFeed } from "./lib/timeline-feed.ts";
 import { useApp } from "./lib/app-context.tsx";
 import { useChat } from "./lib/chat-context.tsx";
@@ -493,7 +497,12 @@ function HomeView(props: {
                     </span>
                     <button
                       type="button"
-                      class="p-home-join"
+                      classList={{
+                        "p-home-join": true,
+                        "is-invite":
+                          community.join_policy === "invite" &&
+                          community.join_status !== "pending",
+                      }}
                       disabled={
                         joiningId() === community.ap_id ||
                         community.join_status === "pending"
@@ -833,6 +842,7 @@ function HomeNoteBar(props: {
               maxLength={MAX_NOTE_LENGTH}
               onInput={(event) => setDraft(event.currentTarget.value)}
               placeholder="いまの一言"
+              aria-label="ノートの内容"
               autofocus
             />
             <Show when={myNote()?.expires_at}>
@@ -873,6 +883,8 @@ function HomeNoteBar(props: {
   );
 }
 
+type TalkListView = "list" | "requests" | "archived";
+
 function TalkListPane(props: {
   contacts: DMContact[];
   contactsLoading: boolean;
@@ -881,6 +893,7 @@ function TalkListPane(props: {
   onRetryContacts: () => void;
   selected: DMContact | null;
   onSelect: (contact: DMContact) => void;
+  onViewChange?: (view: TalkListView) => void;
 }) {
   const app = useApp();
   const chat = useChat();
@@ -915,9 +928,9 @@ function TalkListPane(props: {
       },
     ),
   );
-  const [view, setView] = createSignal<"list" | "requests" | "archived">(
-    "list",
-  );
+  const [view, setView] = createSignal<TalkListView>("list");
+  createEffect(() => props.onViewChange?.(view()));
+  onCleanup(() => props.onViewChange?.("list"));
   const searching = () => query().trim().length > 0;
   const contacts = createMemo(() => {
     const needle = query().trim().toLowerCase();
@@ -1166,7 +1179,7 @@ function TalkListPane(props: {
             onClick={() => setView("requests")}
           >
             リクエスト
-            <Show when={(requests()?.length ?? 0) > 0}>
+            <Show when={!requests.error && (requests()?.length ?? 0) > 0}>
               <em>{requests()?.length}</em>
             </Show>
           </button>
@@ -1284,43 +1297,59 @@ function TalkListPane(props: {
 
         <Show when={view() === "requests"}>
           <ul class="p-talk-list-rooms__ul">
-            <For
-              each={requests() ?? []}
+            <Show
+              when={!requests.error}
               fallback={
-                <li class="p-home-empty">メッセージリクエストはありません</li>
+                <li class="p-home-empty" role="alert">
+                  メッセージリクエストを読み込めませんでした。
+                  <button
+                    type="button"
+                    class="p-home-empty-cta"
+                    onClick={() => void refetchRequests()}
+                  >
+                    再試行
+                  </button>
+                </li>
               }
             >
-              {(request) => (
-                <li class="c-talk-request">
-                  <A
-                    href={profilePath(request.sender.ap_id)}
-                    class="c-talk-request-who"
-                  >
-                    <Avatar value={request.sender} />
-                    <span>
-                      <strong>{titleFor(request.sender)}</strong>
-                      <small>{request.content}</small>
-                    </span>
-                  </A>
-                  <div class="c-talk-request-actions">
-                    <button
-                      type="button"
-                      class="is-primary"
-                      onClick={() => void openRequest(request)}
+              <For
+                each={requests() ?? []}
+                fallback={
+                  <li class="p-home-empty">メッセージリクエストはありません</li>
+                }
+              >
+                {(request) => (
+                  <li class="c-talk-request">
+                    <A
+                      href={profilePath(request.sender.ap_id)}
+                      class="c-talk-request-who"
                     >
-                      開く
-                    </button>
-                    <button
-                      type="button"
-                      disabled={busyId() === request.sender.ap_id}
-                      onClick={() => void rejectRequest(request)}
-                    >
-                      拒否
-                    </button>
-                  </div>
-                </li>
-              )}
-            </For>
+                      <Avatar value={request.sender} />
+                      <span>
+                        <strong>{titleFor(request.sender)}</strong>
+                        <small>{request.content}</small>
+                      </span>
+                    </A>
+                    <div class="c-talk-request-actions">
+                      <button
+                        type="button"
+                        class="is-primary"
+                        onClick={() => void openRequest(request)}
+                      >
+                        開く
+                      </button>
+                      <button
+                        type="button"
+                        disabled={busyId() === request.sender.ap_id}
+                        onClick={() => void rejectRequest(request)}
+                      >
+                        拒否
+                      </button>
+                    </div>
+                  </li>
+                )}
+              </For>
+            </Show>
           </ul>
         </Show>
 
@@ -1328,46 +1357,68 @@ function TalkListPane(props: {
           <ul class="p-talk-list-rooms__ul">
             <Show
               when={!archived.loading}
-              fallback={<li class="p-home-empty">読み込み中...</li>}
+              fallback={
+                <li class="p-home-empty" role="status">
+                  読み込み中...
+                </li>
+              }
             >
-              <For
-                each={archived() ?? []}
-                fallback={<li class="p-home-empty">アーカイブはありません</li>}
-              >
-                {(contact) => (
-                  <li class="c-talk-rooms">
+              <Show
+                when={!archived.error}
+                fallback={
+                  <li class="p-home-empty" role="alert">
+                    アーカイブを読み込めませんでした。
                     <button
                       type="button"
-                      disabled={busyId() === contact.ap_id}
-                      onClick={() => void openArchived(contact)}
+                      class="p-home-empty-cta"
+                      onClick={() => void refetchArchived()}
                     >
-                      <span class="c-talk-rooms-icon">
-                        <Avatar value={contact} />
-                      </span>
-                      <span class="c-talk-rooms-box">
-                        <span class="c-talk-rooms-name">
-                          <span>{titleFor(contact)}</span>
-                        </span>
-                        <span class="c-talk-rooms-msg">
-                          <span>{contactSubtitle(contact)}</span>
-                        </span>
-                      </span>
-                    </button>
-                    <button
-                      type="button"
-                      class="c-talk-rooms-archive"
-                      aria-label="アーカイブから戻す"
-                      disabled={busyId() === contact.ap_id}
-                      onClick={() => void unarchive(contact)}
-                    >
-                      <svg viewBox="0 0 24 24" aria-hidden="true">
-                        <path d="M3 7v12a1 1 0 0 0 1 1h16a1 1 0 0 0 1-1V7" />
-                        <path d="M1 5h22v2H1zM12 11v6M9 14l3-3 3 3" />
-                      </svg>
+                      再試行
                     </button>
                   </li>
-                )}
-              </For>
+                }
+              >
+                <For
+                  each={archived() ?? []}
+                  fallback={
+                    <li class="p-home-empty">アーカイブはありません</li>
+                  }
+                >
+                  {(contact) => (
+                    <li class="c-talk-rooms">
+                      <button
+                        type="button"
+                        disabled={busyId() === contact.ap_id}
+                        onClick={() => void openArchived(contact)}
+                      >
+                        <span class="c-talk-rooms-icon">
+                          <Avatar value={contact} />
+                        </span>
+                        <span class="c-talk-rooms-box">
+                          <span class="c-talk-rooms-name">
+                            <span>{titleFor(contact)}</span>
+                          </span>
+                          <span class="c-talk-rooms-msg">
+                            <span>{contactSubtitle(contact)}</span>
+                          </span>
+                        </span>
+                      </button>
+                      <button
+                        type="button"
+                        class="c-talk-rooms-archive"
+                        aria-label="アーカイブから戻す"
+                        disabled={busyId() === contact.ap_id}
+                        onClick={() => void unarchive(contact)}
+                      >
+                        <svg viewBox="0 0 24 24" aria-hidden="true">
+                          <path d="M3 7v12a1 1 0 0 0 1 1h16a1 1 0 0 0 1-1V7" />
+                          <path d="M1 5h22v2H1zM12 11v6M9 14l3-3 3 3" />
+                        </svg>
+                      </button>
+                    </li>
+                  )}
+                </For>
+              </Show>
             </Show>
           </ul>
         </Show>
@@ -1522,7 +1573,11 @@ function StoryViewerModal(props: {
   const [actorIndex, setActorIndex] = createSignal(0);
   const [storyIndex, setStoryIndex] = createSignal(0);
   const [mediaError, setMediaError] = createSignal(false);
-  const [paused, setPaused] = createSignal(false);
+  const [userPaused, setUserPaused] = createSignal(false);
+  const [pointerHeld, setPointerHeld] = createSignal(false);
+  const [confirmPaused, setConfirmPaused] = createSignal(false);
+  const [videoEl, setVideoEl] = createSignal<HTMLVideoElement | undefined>();
+  const paused = () => userPaused() || pointerHeld() || confirmPaused();
 
   // Adopt the open target ONLY when the viewer is (re)opened at a given
   // group — keyed on the index prop, NOT on actorStories content, so a
@@ -1547,7 +1602,9 @@ function StoryViewerModal(props: {
           ),
         );
         setMediaError(false);
-        setPaused(false);
+        setUserPaused(false);
+        setPointerHeld(false);
+        setConfirmPaused(false);
       },
     ),
   );
@@ -1629,7 +1686,7 @@ function StoryViewerModal(props: {
   const handleDelete = async () => {
     const story = currentStory();
     if (!story || !props.onDelete) return;
-    setPaused(true);
+    setConfirmPaused(true);
     const ok = await app.confirm({
       title: "ストーリーを削除",
       message: "このストーリーを削除しますか?",
@@ -1637,13 +1694,13 @@ function StoryViewerModal(props: {
       danger: true,
     });
     if (!ok) {
-      setPaused(false);
+      setConfirmPaused(false);
       return;
     }
     try {
       await props.onDelete(story);
     } finally {
-      setPaused(false);
+      setConfirmPaused(false);
     }
   };
 
@@ -1675,13 +1732,32 @@ function StoryViewerModal(props: {
     }),
   );
 
-  // Escape close + focus trap live in DialogA11y; this handles the arrows.
+  // Keep video stories paused/resumed in sync with the timer and progress bar.
+  createEffect(() => {
+    currentStory()?.ap_id;
+    syncStoryVideoPlayback(videoEl(), paused());
+  });
+
+  // Escape close + focus trap live in DialogA11y; this handles arrows and
+  // keyboard pause/resume (WCAG 2.2.2).
   createEffect(() => {
     if (props.initialActorIndex === null) return;
     const onKey = (event: KeyboardEvent) => {
       if (event.isComposing || event.keyCode === 229) return;
+      if (confirmPaused()) return;
       if (event.key === "ArrowLeft") goPrev();
       else if (event.key === "ArrowRight") goNext();
+      else if (event.key === " ") {
+        const target = event.target;
+        if (
+          target instanceof HTMLElement &&
+          target.closest("button, a, input, textarea, select")
+        ) {
+          return;
+        }
+        event.preventDefault();
+        setUserPaused((value) => !value);
+      }
     };
     document.addEventListener("keydown", onKey);
     onCleanup(() => document.removeEventListener("keydown", onKey));
@@ -1767,13 +1843,35 @@ function StoryViewerModal(props: {
                   </svg>
                 </button>
               </Show>
+              <button
+                class="p-story-pause"
+                type="button"
+                autofocus
+                aria-pressed={userPaused()}
+                aria-label="一時停止"
+                onClick={() => setUserPaused((value) => !value)}
+              >
+                <Show
+                  when={userPaused()}
+                  fallback={
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                      <rect x="6" y="5" width="4" height="14" rx="1" />
+                      <rect x="14" y="5" width="4" height="14" rx="1" />
+                    </svg>
+                  }
+                >
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <polygon points="7,5 19,12 7,19" />
+                  </svg>
+                </Show>
+              </button>
             </header>
             <div
               class="p-story-card"
-              onPointerDown={() => setPaused(true)}
-              onPointerUp={() => setPaused(false)}
-              onPointerLeave={() => setPaused(false)}
-              onPointerCancel={() => setPaused(false)}
+              onPointerDown={() => setPointerHeld(true)}
+              onPointerUp={() => setPointerHeld(false)}
+              onPointerLeave={() => setPointerHeld(false)}
+              onPointerCancel={() => setPointerHeld(false)}
             >
               <button
                 class="p-story-zone is-prev"
@@ -1813,10 +1911,19 @@ function StoryViewerModal(props: {
                     }
                   >
                     <video
+                      ref={(el) => {
+                        setVideoEl(el);
+                        onCleanup(() => {
+                          if (videoEl() === el) setVideoEl(undefined);
+                        });
+                      }}
                       src={src()}
-                      autoplay
+                      autoplay={!paused()}
                       muted
                       playsinline
+                      onPlay={(event) => {
+                        if (paused()) event.currentTarget.pause();
+                      }}
                       onError={() => setMediaError(true)}
                     />
                   </Show>
@@ -1833,6 +1940,7 @@ function StoryViewerModal(props: {
               <button
                 type="button"
                 classList={{ "is-active": !!story().liked }}
+                aria-pressed={!!story().liked}
                 onClick={() => void props.onLike?.(story())}
               >
                 いいね {story().like_count || ""}
@@ -2280,8 +2388,10 @@ function StoryComposerModal(props: {
               <label class="p-story-file">
                 <span>{file()?.name ?? "写真・動画を選択"}</span>
                 <input
+                  class="yc-visually-hidden"
                   type="file"
                   accept="image/jpeg,image/png,image/gif,image/webp,video/mp4,video/webm"
+                  aria-label="写真・動画を選択"
                   disabled={saving() || !!intent().record || intent().failed}
                   onInput={(event) => {
                     if (saving()) return;
@@ -2303,6 +2413,7 @@ function StoryComposerModal(props: {
                 value={caption()}
                 maxLength={120}
                 placeholder="キャプション"
+                aria-label="キャプション"
                 disabled={saving() || !!intent().record || intent().failed}
                 onInput={(event) => {
                   if (!saving()) setCaption(event.currentTarget.value);
@@ -2384,6 +2495,7 @@ export default function App() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const tab = (): AppTab => normalizeTab(searchParams.tab);
+  const [talkView, setTalkView] = createSignal<TalkListView>("list");
 
   createEffect(() => {
     const selected = chat.selected();
@@ -2396,7 +2508,11 @@ export default function App() {
         ? "ホーム"
         : tab() === "timeline"
           ? "タイムライン"
-          : "トーク";
+          : talkView() === "requests"
+            ? "メッセージリクエスト"
+            : talkView() === "archived"
+              ? "アーカイブ済み"
+              : "トーク";
     document.title = formatYurumeetTitle(label);
   });
 
@@ -2445,6 +2561,7 @@ export default function App() {
   const [postComposerOpen, setPostComposerOpen] = createSignal(false);
 
   const openStoryGroup = (group: ActorStories) => {
+    if (stories.error) return;
     const actualIndex = (stories() ?? []).findIndex(
       (item) => item.actor.ap_id === group.actor.ap_id,
     );
@@ -2460,21 +2577,18 @@ export default function App() {
   createEffect(() => {
     const raw = searchParams.story;
     const storyApId = Array.isArray(raw) ? raw[0] : raw;
-    const groups = stories() ?? [];
-    if (!storyApId || stories.loading || stories.error) return;
-    for (const [actorIndex, group] of groups.entries()) {
-      const storyIndex = group.stories.findIndex(
-        (story) => story.ap_id === storyApId,
-      );
-      if (storyIndex < 0) continue;
-      setStoryViewerStoryIndex(storyIndex);
-      setStoryViewerActorIndex(actorIndex);
-      // Consume the param immediately: a later stories() refetch must not
-      // re-run this effect and yank the open viewer back to the target.
-      setSearchParams({ story: undefined }, { replace: true });
-      return;
+    const resolution = resolveStoryDeepLink(storyApId, {
+      loading: stories.loading,
+      error: stories.error,
+      read: () => stories(),
+    });
+    if (resolution.kind === "wait") return;
+    if (resolution.kind === "open") {
+      setStoryViewerStoryIndex(resolution.storyIndex);
+      setStoryViewerActorIndex(resolution.actorIndex);
     }
-
+    // Consume the param immediately: a later stories() refetch must not
+    // re-run this effect and yank the open viewer back to the target.
     setSearchParams({ story: undefined }, { replace: true });
   });
 
@@ -2507,7 +2621,7 @@ export default function App() {
           contactsError={chat.contactsError()}
           contactsRefreshing={chat.contactsRefreshing()}
           onRetryContacts={() => void chat.refetchContacts()}
-          notes={notes() ?? []}
+          notes={notes.error ? [] : (notes() ?? [])}
           notesLoading={notes.loading}
           onTalk={chat.selectContact}
           onSaveNote={async (content) => {
@@ -2529,6 +2643,7 @@ export default function App() {
           onRetryContacts={() => void chat.refetchContacts()}
           selected={chat.selected()}
           onSelect={chat.selectContact}
+          onViewChange={setTalkView}
         />
       </Show>
       <Show when={tab() === "timeline"}>
@@ -2541,7 +2656,7 @@ export default function App() {
           loadingMore={loadingMore()}
           onLoadMore={() => void loadMoreFeed()}
           origin={app.origin()}
-          stories={stories() ?? []}
+          stories={stories.error ? [] : (stories() ?? [])}
           onStory={openStoryGroup}
           onAddStory={() => setStoryComposerOpen(true)}
           onRetry={() => void loadFeed()}
@@ -2551,7 +2666,7 @@ export default function App() {
       </Show>
       <StoryViewerModal
         actor={app.actor()}
-        actorStories={stories() ?? []}
+        actorStories={stories.error ? [] : (stories() ?? [])}
         initialActorIndex={storyViewerActorIndex()}
         initialStoryIndex={storyViewerStoryIndex()}
         origin={app.origin()}

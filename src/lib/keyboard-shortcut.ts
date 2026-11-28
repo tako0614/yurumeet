@@ -53,3 +53,44 @@ export function shouldHandleSearchShortcut(
   if (isEditableElement(doc?.activeElement)) return false;
   return true;
 }
+
+/**
+ * IME-safe roving arrow-key navigation for horizontal `role="tablist"` widgets
+ * (Notifications filter tabs, QR code modal tabs).
+ */
+export function handleTabListKeyDown(
+  event: Pick<
+    KeyboardEvent,
+    "key" | "isComposing" | "keyCode" | "preventDefault"
+  >,
+  tablist: HTMLElement,
+): boolean {
+  if (event.isComposing || event.keyCode === 229) return false;
+  if (
+    event.key !== "ArrowRight" &&
+    event.key !== "ArrowLeft" &&
+    event.key !== "Home" &&
+    event.key !== "End"
+  ) {
+    return false;
+  }
+  const tabs = Array.from(
+    tablist.querySelectorAll<HTMLElement>('[role="tab"]:not([disabled])'),
+  );
+  if (tabs.length === 0) return false;
+  const active = tablist.ownerDocument?.activeElement;
+  const current = tabs.findIndex((tab) => tab === active);
+  let next: number;
+  if (event.key === "Home") next = 0;
+  else if (event.key === "End") next = tabs.length - 1;
+  else if (event.key === "ArrowRight") {
+    next = current < 0 ? 0 : (current + 1) % tabs.length;
+  } else {
+    next =
+      current < 0 ? tabs.length - 1 : (current - 1 + tabs.length) % tabs.length;
+  }
+  event.preventDefault();
+  tabs[next]?.focus();
+  tabs[next]?.click();
+  return true;
+}

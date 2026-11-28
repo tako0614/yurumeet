@@ -849,11 +849,12 @@ function ReportModal(props: {
           </button>
         </div>
         <div class="p-edit-body">
-          <div class="p-report-reasons">
+          <div class="p-report-reasons" role="group" aria-label="報告の理由">
             <For each={REPORT_REASONS}>
               {(item) => (
                 <button
                   type="button"
+                  aria-pressed={reason() === item}
                   classList={{
                     "p-report-reason": true,
                     "is-active": reason() === item,
@@ -884,8 +885,9 @@ function ReportModal(props: {
 
 function ProfileLoading() {
   return (
-    <div class="p-detail-loading">
+    <div class="p-detail-loading" role="status">
       <SpinnerIcon />
+      <span class="yc-visually-hidden">読み込み中…</span>
     </div>
   );
 }
@@ -900,6 +902,7 @@ function FollowListModal(props: {
   const app = useApp();
   const [actors, setActors] = createSignal<Actor[]>([]);
   const [loading, setLoading] = createSignal(true);
+  const [error, setError] = createSignal(false);
   const [hasMore, setHasMore] = createSignal(false);
   const [loadingMore, setLoadingMore] = createSignal(false);
   const [followState, setFollowState] = createSignal<Record<string, boolean>>(
@@ -926,19 +929,33 @@ function FollowListModal(props: {
     });
   };
 
-  void (async () => {
-    try {
-      const page = await fetchPage(0);
-      fetchedCount = page.actors.length;
-      setActors(page.actors);
-      applyState(page.actors);
-      setHasMore(page.hasMore && page.actors.length > 0);
-    } catch {
-      setActors([]);
-    } finally {
-      setLoading(false);
-    }
-  })();
+  let mounted = true;
+  onCleanup(() => {
+    mounted = false;
+  });
+
+  const loadInitial = () => {
+    setLoading(true);
+    setError(false);
+    fetchedCount = 0;
+    void (async () => {
+      try {
+        const page = await fetchPage(0);
+        if (!mounted) return;
+        fetchedCount = page.actors.length;
+        setActors(page.actors);
+        applyState(page.actors);
+        setHasMore(page.hasMore && page.actors.length > 0);
+      } catch {
+        if (!mounted) return;
+        setActors([]);
+        setError(true);
+      } finally {
+        if (mounted) setLoading(false);
+      }
+    })();
+  };
+  loadInitial();
 
   const loadMore = async () => {
     if (loadingMore() || !hasMore()) return;
@@ -1005,54 +1022,71 @@ function FollowListModal(props: {
           <Show
             when={!loading()}
             fallback={
-              <div class="p-detail-loading">
+              <div class="p-detail-loading" role="status">
                 <SpinnerIcon />
+                <span class="yc-visually-hidden">読み込み中…</span>
               </div>
             }
           >
-            <For
-              each={actors()}
-              fallback={<p class="p-detail-empty">まだいません</p>}
-            >
-              {(actor) => (
-                <div class="p-sheet-row">
-                  <button
-                    type="button"
-                    class="p-sheet-row-open"
-                    onClick={() => props.onOpenProfile(actor.ap_id)}
-                  >
-                    <UserAvatar value={actor} size={40} />
-                    <span class="p-sheet-row-main">
-                      <strong>{titleFor(actor)}</strong>
-                      <small>{fullHandle(actor)}</small>
-                    </span>
+            <Show
+              when={!error()}
+              fallback={
+                <div class="p-timeline-state" role="alert">
+                  <p>
+                    {props.mode === "followers"
+                      ? "フォロワーを読み込めませんでした"
+                      : "フォロー中を読み込めませんでした"}
+                  </p>
+                  <button type="button" onClick={loadInitial}>
+                    再読み込み
                   </button>
-                  <Show when={actor.ap_id !== props.selfApId}>
+                </div>
+              }
+            >
+              <For
+                each={actors()}
+                fallback={<p class="p-detail-empty">まだいません</p>}
+              >
+                {(actor) => (
+                  <div class="p-sheet-row">
                     <button
                       type="button"
-                      classList={{
-                        "p-sheet-follow": true,
-                        "is-following": followState()[actor.ap_id],
-                      }}
-                      disabled={busyId() === actor.ap_id}
-                      onClick={() => void toggleFollow(actor)}
+                      class="p-sheet-row-open"
+                      onClick={() => props.onOpenProfile(actor.ap_id)}
                     >
-                      {followState()[actor.ap_id] ? "フォロー中" : "フォロー"}
+                      <UserAvatar value={actor} size={40} />
+                      <span class="p-sheet-row-main">
+                        <strong>{titleFor(actor)}</strong>
+                        <small>{fullHandle(actor)}</small>
+                      </span>
                     </button>
-                  </Show>
+                    <Show when={actor.ap_id !== props.selfApId}>
+                      <button
+                        type="button"
+                        classList={{
+                          "p-sheet-follow": true,
+                          "is-following": followState()[actor.ap_id],
+                        }}
+                        disabled={busyId() === actor.ap_id}
+                        onClick={() => void toggleFollow(actor)}
+                      >
+                        {followState()[actor.ap_id] ? "フォロー中" : "フォロー"}
+                      </button>
+                    </Show>
+                  </div>
+                )}
+              </For>
+              <Show when={hasMore()}>
+                <div class="p-timeline-more">
+                  <button
+                    type="button"
+                    disabled={loadingMore()}
+                    onClick={() => void loadMore()}
+                  >
+                    {loadingMore() ? "読み込み中…" : "もっと見る"}
+                  </button>
                 </div>
-              )}
-            </For>
-            <Show when={hasMore()}>
-              <div class="p-timeline-more">
-                <button
-                  type="button"
-                  disabled={loadingMore()}
-                  onClick={() => void loadMore()}
-                >
-                  {loadingMore() ? "読み込み中…" : "もっと見る"}
-                </button>
-              </div>
+              </Show>
             </Show>
           </Show>
         </div>

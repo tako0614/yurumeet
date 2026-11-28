@@ -40,6 +40,7 @@ export function QrSvg(props: {
       aria-label={props.label}
       class={props.class}
     >
+      <rect width={model().count} height={model().count} fill="#ffffff" />
       <path d={model().d} fill="#000000" />
     </svg>
   );
