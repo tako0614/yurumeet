@@ -61,12 +61,13 @@
         --surface: #ffffff;
         --ink: #14141a;
         --ink-2: #3a3a44;
-        --dim: #6a6a76;
-        --faint: #9a9aa6;
+        --dim: #5b5b66;
+        --faint: #5b5b66;
         --line: #ececf2;
         --line-2: #e0e0ea;
         --accent: #ff3b3b;
-        --accent-ink: #e01f1f;
+        --accent-ink: #c81e1e;
+        --accent-btn: #d42020;
         --sidebar: #242428;
         --w: 1120px;
         --sans:
@@ -126,7 +127,7 @@
         top: 0;
         z-index: 1000;
         padding: 0.5rem 0.9rem;
-        background: var(--accent);
+        background: var(--accent-btn);
         color: #fff;
         text-decoration: none;
         border-radius: 0 0 8px 0;
@@ -203,7 +204,7 @@
       /* One real action style: a button. Everything else is a plain link. */
       .btn {
         display: inline-block;
-        background: var(--accent);
+        background: var(--accent-btn);
         color: #fff;
         font-weight: 700;
         font-size: 0.92rem;
@@ -447,7 +448,7 @@
       /* The page closes on the mark's own field — the tile's red with white
          type, like the bubble inside it. */
       footer {
-        background: var(--accent);
+        background: var(--accent-ink);
         color: #fff;
         padding: 44px 0;
       }
@@ -471,7 +472,7 @@
       }
 
       .foot-links a {
-        color: rgba(255, 255, 255, 0.85);
+        color: rgba(255, 255, 255, 0.94);
         font-size: 0.88rem;
         transition: color 0.2s;
       }
@@ -484,7 +485,7 @@
 
       .foot-legal {
         width: 100%;
-        color: rgba(255, 255, 255, 0.75);
+        color: rgba(255, 255, 255, 0.9);
         font-size: 0.78rem;
         line-height: 1.7;
       }
@@ -529,14 +530,14 @@
     </script>
   </head>
   <body>
-    <a class="skip" href="#top">Skip to content</a>
+    <a class="skip" href="#top">本文へスキップ</a>
     <header class="nav" id="nav">
       <div class="wrap nav-in">
-        <a class="brand" href="#top" aria-label="yurumeet home">
+        <a class="brand" href="#top" aria-label="yurumeet ホーム">
           <img class="brand-mark" src="./assets/yurumeet-logo.png" alt="" />
           <span>yurumeet</span>
         </a>
-        <nav class="nav-links">
+        <nav class="nav-links" aria-label="サイト内メニュー">
           <a class="nav-link nav-opt" href="#features">特長</a>
           <a class="nav-link nav-opt" href="#own">セルフホスト</a>
           <a class="nav-link" href="#install">導入</a>
@@ -762,7 +763,7 @@ $ bun run check
             <img class="brand-mark" src="./assets/yurumeet-logo.png" alt="" />
             <span>yurumeet</span>
           </a>
-          <nav class="foot-links">
+          <nav class="foot-links" aria-label="フッターメニュー">
             <a href="https://github.com/tako0614/yurumeet">GitHub</a>
             <a href="#features">特長</a>
             <a href="#own">セルフホスト</a>

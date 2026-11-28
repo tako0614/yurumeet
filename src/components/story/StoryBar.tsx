@@ -58,6 +58,11 @@ export function StoryBar(props: StoryBarProps) {
               "is-new": !!myStories()?.has_unviewed,
               "is-empty": !hasMyStories(),
             }}
+            aria-label={
+              hasMyStories()
+                ? `${props.labels.yourStory}のストーリーを見る`
+                : `${props.labels.addStory}を追加`
+            }
             onClick={openMine}
           >
             <span>{props.renderAvatar(props.actor)}</span>

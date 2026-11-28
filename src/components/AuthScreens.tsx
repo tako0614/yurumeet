@@ -1,4 +1,4 @@
-import { createSignal, For, onMount, Show } from "solid-js";
+import { createEffect, createSignal, For, onMount, Show } from "solid-js";
 import {
   claimTakosumiOidcAutoStart,
   parseAuthConfig,
@@ -6,6 +6,7 @@ import {
   suppressTakosumiOidcAutoStart,
   type AuthConfig,
 } from "../lib/auth-config.ts";
+import { formatYurumeetTitle } from "../lib/page-title.ts";
 import {
   configureYurumeetServerOrigin,
   normalizeServerOrigin,
@@ -16,6 +17,9 @@ import {
 export function ServerConnect(props: { onConnect: (origin: string) => void }) {
   const [value, setValue] = createSignal("");
   const [error, setError] = createSignal<string | null>(null);
+  createEffect(() => {
+    document.title = formatYurumeetTitle("サーバーに接続");
+  });
   const connect = () => {
     const origin = normalizeServerOrigin(value());
     if (!origin) {
@@ -47,6 +51,7 @@ export function ServerConnect(props: { onConnect: (origin: string) => void }) {
             value={value()}
             onInput={(event) => setValue(event.currentTarget.value)}
             placeholder="開発用 API origin"
+            aria-label="開発用 API origin"
             inputmode="url"
             autocomplete="url"
           />
@@ -74,6 +79,9 @@ export function SignedOut(props: { origin: string }) {
   const [authConfigError, setAuthConfigError] = createSignal(false);
   const [callbackFailed, setCallbackFailed] = createSignal(false);
   let receivedCallbackError = false;
+  createEffect(() => {
+    document.title = formatYurumeetTitle("サインイン");
+  });
 
   const loadAuthConfig = async () => {
     setLoadingProviders(true);
@@ -189,7 +197,9 @@ export function SignedOut(props: { origin: string }) {
             }
             fallback={
               <Show when={!authConfigError()}>
-                <p class="p-connect-error">利用できる認証方法がありません。</p>
+                <p class="p-connect-error" role="alert">
+                  利用できる認証方法がありません。
+                </p>
               </Show>
             }
           >

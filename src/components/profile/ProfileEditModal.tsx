@@ -140,9 +140,11 @@ export function ProfileEditModal(props: {
               {uploading() === "header" ? "アップロード中…" : "ヘッダーを変更"}
             </span>
             <input
+              class="yc-visually-hidden"
               type="file"
               accept="image/*"
-              hidden
+              aria-label="ヘッダー画像を変更"
+              disabled={saving() || !!uploading()}
               onChange={(e) =>
                 void upload(e.currentTarget.files?.[0], "header")
               }
@@ -158,9 +160,11 @@ export function ProfileEditModal(props: {
               {uploading() === "icon" ? "…" : "変更"}
             </span>
             <input
+              class="yc-visually-hidden"
               type="file"
               accept="image/*"
-              hidden
+              aria-label="プロフィール画像を変更"
+              disabled={saving() || !!uploading()}
               onChange={(e) => void upload(e.currentTarget.files?.[0], "icon")}
             />
           </label>
@@ -213,6 +217,7 @@ export function ProfileEditModal(props: {
                       type="text"
                       value={field().name}
                       placeholder="ラベル"
+                      aria-label={`追加情報 ${index + 1} のラベル`}
                       onInput={(e) =>
                         updateField(index, "name", e.currentTarget.value)
                       }
@@ -221,6 +226,7 @@ export function ProfileEditModal(props: {
                       type="text"
                       value={field().value}
                       placeholder="内容"
+                      aria-label={`追加情報 ${index + 1} の内容`}
                       onInput={(e) =>
                         updateField(index, "value", e.currentTarget.value)
                       }

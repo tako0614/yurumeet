@@ -50,6 +50,7 @@ import {
 import { installStaleAssetReload } from "./lib/chunk-reload.ts";
 import { createUnreadBadgeRefresh } from "./lib/badge-refresh.ts";
 import { acquireInert, restoreOverlayFocus } from "./lib/mobile-overlay.ts";
+import { formatYurumeetTitle } from "./lib/page-title.ts";
 import "./lib/theme.ts";
 import "./styles.css";
 
@@ -444,6 +445,9 @@ function AppRoot(props: { children?: JSX.Element }) {
 }
 
 function NotFoundPage() {
+  createEffect(() => {
+    document.title = formatYurumeetTitle("ページが見つかりません");
+  });
   return (
     <main class="p-notfound">
       <section>
@@ -456,6 +460,9 @@ function NotFoundPage() {
 }
 
 function ConnectionError(props: { onRetry: () => void; message?: string }) {
+  createEffect(() => {
+    document.title = formatYurumeetTitle("接続エラー");
+  });
   return (
     <main class="p-connect">
       <section>
@@ -579,7 +586,7 @@ function Shell(props: { children?: JSX.Element }) {
           {props.children}
         </div>
         <div class="app-chat" tabIndex={-1} ref={(el) => setChatEl(el)}>
-          <ChatPane />
+          <ChatPane isMobile={isMobile()} />
         </div>
       </main>
     </>
@@ -651,6 +658,9 @@ function ConfirmHost(props: {
 // Router (most often a route chunk that no longer exists after a redeploy) has
 // to end in something the user can act on, not a blank page.
 function AppErrorFallback() {
+  createEffect(() => {
+    document.title = formatYurumeetTitle("問題が発生しました");
+  });
   return (
     <main class="p-connect">
       <section>

@@ -323,15 +323,16 @@ export default function CommunityPage() {
         <Show
           when={!loading()}
           fallback={
-            <div class="p-detail-loading">
+            <div class="p-detail-loading" role="status">
               <SpinnerIcon />
+              <span class="yc-visually-hidden">読み込み中…</span>
             </div>
           }
         >
           <Show
             when={!error() && community()}
             fallback={
-              <div class="p-timeline-state">
+              <div class="p-timeline-state" role="alert">
                 <p>グループを読み込めませんでした</p>
                 <button type="button" onClick={load}>
                   再読み込み
@@ -370,7 +371,13 @@ export default function CommunityPage() {
                       fallback={
                         <button
                           type="button"
-                          class="p-community-join"
+                          classList={{
+                            "p-community-join": true,
+                            "is-invite":
+                              c().join_policy === "invite" &&
+                              !inviteId() &&
+                              c().join_status !== "pending",
+                          }}
                           disabled={busy() || c().join_status === "pending"}
                           onClick={() => void handleJoin()}
                         >
@@ -465,7 +472,7 @@ export default function CommunityPage() {
                 <section class="p-community-section">
                   <h2>メンバー ({c().member_count})</h2>
                   <Show when={membersError()}>
-                    <div class="p-timeline-state">
+                    <div class="p-timeline-state" role="alert">
                       <p>メンバーを読み込めませんでした</p>
                       <button type="button" onClick={load}>
                         再読み込み
@@ -726,9 +733,11 @@ function CommunitySettingsModal(props: {
             />
             <span class="p-edit-avatar-cta">{uploading() ? "…" : "変更"}</span>
             <input
+              class="yc-visually-hidden"
               type="file"
               accept="image/*"
-              hidden
+              aria-label="グループアイコンを変更"
+              disabled={saving() || uploading()}
               onChange={(e) => void uploadIcon(e.currentTarget.files?.[0])}
             />
           </label>
@@ -767,7 +776,11 @@ function CommunitySettingsModal(props: {
             </label>
           </div>
           <Show when={error()}>
-            {(message) => <p class="p-composer-error">{message()}</p>}
+            {(message) => (
+              <p class="p-composer-error" role="alert">
+                {message()}
+              </p>
+            )}
           </Show>
         </div>
       </form>
